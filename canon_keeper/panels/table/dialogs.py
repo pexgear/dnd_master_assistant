@@ -1,27 +1,34 @@
-"""Host and join dialogs.
+"""Host, join, and manage who may log in.
 
 The join dialog listens for LAN beacons and lists what it hears, so on a home
-network nobody has to read an IP address aloud -- pick the session, type the
-code.
+network nobody has to read an IP address aloud -- pick the session, then log in.
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
 )
 
 from canon_keeper.net import discovery
-from canon_keeper.net.protocol import CODE_LENGTH
+from canon_keeper.net.auth import MIN_PASSWORD_LENGTH, AuthError
 from canon_keeper.net.server import DEFAULT_PORT
+from canon_keeper.repo.entities import KIND_PC
+
+_URL_ROLE = 256
 
 
 def local_addresses() -> list[str]:
@@ -30,7 +37,9 @@ def local_addresses() -> list[str]:
 
 
 class HostDialog(QDialog):
-    def __init__(self, default_name: str, parent=None) -> None:
+    """Start hosting the currently open campaign."""
+
+    def __init__(self, campaign_name: str, default_name: str, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Host a session")
 
@@ -40,7 +49,7 @@ class HostDialog(QDialog):
         self._name = QLineEdit(default_name)
         form.addRow("Your name", self._name)
 
-        self._session = QLineEdit("Our campaign")
+        self._session = QLineEdit(campaign_name)
         form.addRow("Session name", self._session)
 
         self._port = QSpinBox()
@@ -50,13 +59,13 @@ class HostDialog(QDialog):
         layout.addLayout(form)
 
         addresses = local_addresses()
-        hint = (
-            "Players on this network will see the session listed automatically.\n"
+        hint = QLabel(
+            f"Sharing the campaign {campaign_name!r}. Players on this network will "
+            "see the session listed and log in with the accounts you gave them.\n"
             + (f"If they need to type it: {', '.join(addresses)}" if addresses else "")
         )
-        label = QLabel(hint)
-        label.setWordWrap(True)
-        layout.addWidget(label)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -74,7 +83,7 @@ class HostDialog(QDialog):
 
 
 class JoinDialog(QDialog):
-    def __init__(self, default_name: str, last_url: str = "", parent=None) -> None:
+    def __init__(self, last_url: str = "", last_username: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Join a session")
 
@@ -87,18 +96,25 @@ class JoinDialog(QDialog):
         layout.addWidget(self._found)
 
         form = QFormLayout()
-        self._name = QLineEdit(default_name)
-        form.addRow("Your name", self._name)
-
         self._url = QLineEdit(last_url or "ws://192.168.1.10:8765")
         self._url.setToolTip("Filled in for you when you pick a session above.")
         form.addRow("Address", self._url)
 
-        self._code = QLineEdit()
-        self._code.setMaxLength(CODE_LENGTH + 2)  # room for a typed dash
-        self._code.setPlaceholderText("ABC234")
-        form.addRow("Join code", self._code)
+        self._username = QLineEdit(last_username)
+        form.addRow("Username", self._username)
+
+        self._password = QLineEdit()
+        self._password.setEchoMode(QLineEdit.EchoMode.Password)
+        self._password.returnPressed.connect(self.accept)
+        form.addRow("Password", self._password)
         layout.addLayout(form)
+
+        note = QLabel(
+            "Your password is never sent over the network -- the host asks a "
+            "question only someone who knows it can answer."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -116,12 +132,12 @@ class JoinDialog(QDialog):
 
     def _on_sessions(self, sessions) -> None:
         selected = self._found.currentItem()
-        selected_url = selected.data(256) if selected is not None else None
+        selected_url = selected.data(_URL_ROLE) if selected is not None else None
 
         self._found.clear()
         for session in sessions:
             item = QListWidgetItem(f"{session.name}  -  {session.host}:{session.port}")
-            item.setData(256, session.url)
+            item.setData(_URL_ROLE, session.url)
             self._found.addItem(item)
             if session.url == selected_url:
                 self._found.setCurrentItem(item)
@@ -131,18 +147,173 @@ class JoinDialog(QDialog):
 
     def _use_selected(self) -> None:
         item = self._found.currentItem()
-        if item is not None and item.data(256):
-            self._url.setText(item.data(256))
+        if item is not None and item.data(_URL_ROLE):
+            self._url.setText(item.data(_URL_ROLE))
 
     def values(self) -> tuple[str, str, str]:
-        from canon_keeper.net.protocol import normalise_code
-
         return (
             self._url.text().strip(),
-            normalise_code(self._code.text()),
-            self._name.text().strip() or "Player",
+            self._username.text().strip(),
+            self._password.text(),
         )
 
     def done(self, result: int) -> None:  # noqa: D102 - Qt naming
         self._listener.stop()
         super().done(result)
+
+
+class AccountsDialog(QDialog):
+    """Who may log in, and which character each of them plays."""
+
+    def __init__(self, ctx, parent=None) -> None:
+        super().__init__(parent)
+        self._ctx = ctx
+        self.setWindowTitle("Players")
+        self.resize(520, 380)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel("People with a login here can join your sessions.")
+        )
+
+        self._list = QListWidget()
+        self._list.currentItemChanged.connect(lambda *_: self._load_selected())
+        layout.addWidget(self._list, 1)
+
+        form = QFormLayout()
+        self._username = QLineEdit()
+        self._username.setPlaceholderText("marco")
+        form.addRow("Username", self._username)
+
+        self._password = QLineEdit()
+        self._password.setEchoMode(QLineEdit.EchoMode.Password)
+        self._password.setPlaceholderText(f"at least {MIN_PASSWORD_LENGTH} characters")
+        form.addRow("Password", self._password)
+
+        self._character = QComboBox()
+        self._character.setToolTip(
+            "The player edits this character, and the table sees its name in chat."
+        )
+        form.addRow("Plays", self._character)
+
+        self._is_dm = QCheckBox("Give this login the DM's full view")
+        form.addRow("", self._is_dm)
+        layout.addLayout(form)
+
+        row = QHBoxLayout()
+        add = QPushButton("Add / update")
+        add.clicked.connect(self._save)
+        row.addWidget(add)
+
+        reset = QPushButton("Set password")
+        reset.clicked.connect(self._set_password)
+        row.addWidget(reset)
+
+        remove = QPushButton("Remove")
+        remove.clicked.connect(self._remove)
+        row.addWidget(remove)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+        self._reload()
+
+    # ------------------------------------------------------------------ helpers
+
+    def _reload(self) -> None:
+        self._character.clear()
+        self._character.addItem("(no character)", None)
+        for pc in self._ctx.repos.entities.list(self._ctx.campaign_id, kinds=(KIND_PC,)):
+            self._character.addItem(pc.name, pc.id)
+
+        self._list.clear()
+        for account in self._ctx.repos.accounts.list(self._ctx.campaign_id):
+            character = ""
+            if account.character_entity_id is not None:
+                entity = self._ctx.repos.entities.get(account.character_entity_id)
+                character = f"  -  {entity.name}" if entity else ""
+            label = f"{account.username}{character}"
+            if account.is_dm:
+                label += "   [DM]"
+            item = QListWidgetItem(label)
+            item.setData(_URL_ROLE, account.id)
+            self._list.addItem(item)
+
+    def _selected_account(self):
+        item = self._list.currentItem()
+        if item is None:
+            return None
+        return self._ctx.repos.accounts.get(item.data(_URL_ROLE))
+
+    def _load_selected(self) -> None:
+        account = self._selected_account()
+        if account is None:
+            return
+        self._username.setText(account.username)
+        self._password.clear()
+        index = self._character.findData(account.character_entity_id)
+        self._character.setCurrentIndex(index if index >= 0 else 0)
+        self._is_dm.setChecked(account.is_dm)
+
+    # ------------------------------------------------------------------ actions
+
+    def _save(self) -> None:
+        username = self._username.text().strip()
+        if not username:
+            QMessageBox.warning(self, "Players", "A username is needed.")
+            return
+
+        repos = self._ctx.repos
+        existing = repos.accounts.by_username(self._ctx.campaign_id, username)
+        role = "dm" if self._is_dm.isChecked() else "player"
+
+        try:
+            if existing is None:
+                repos.accounts.create(
+                    self._ctx.campaign_id,
+                    username,
+                    self._password.text(),
+                    role=role,
+                    character_entity_id=self._character.currentData(),
+                )
+            else:
+                repos.accounts.set_character(existing.id, self._character.currentData())
+                if self._password.text():
+                    repos.accounts.set_password(existing.id, self._password.text())
+        except (ValueError, AuthError) as exc:
+            QMessageBox.warning(self, "Players", str(exc))
+            return
+
+        self._password.clear()
+        self._reload()
+
+    def _set_password(self) -> None:
+        account = self._selected_account()
+        if account is None:
+            QMessageBox.information(self, "Players", "Pick someone first.")
+            return
+        if not self._password.text():
+            QMessageBox.information(self, "Players", "Type the new password first.")
+            return
+        try:
+            self._ctx.repos.accounts.set_password(account.id, self._password.text())
+        except AuthError as exc:
+            QMessageBox.warning(self, "Players", str(exc))
+            return
+        self._password.clear()
+        QMessageBox.information(self, "Players", f"Password changed for {account.username}.")
+
+    def _remove(self) -> None:
+        account = self._selected_account()
+        if account is None:
+            return
+        confirm = QMessageBox.question(
+            self, "Players", f"Remove the login {account.username!r}?"
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            self._ctx.repos.accounts.delete(account.id)
+            self._reload()

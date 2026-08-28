@@ -51,6 +51,16 @@ def default_db_path() -> Path:
     return campaigns_dir() / "default.sqlite3"
 
 
+def profile_db_path() -> Path:
+    """Your own settings, theme and dock layout.
+
+    Deliberately outside the campaigns directory: it is not a campaign and must
+    not appear in the chooser. It is also where a player's preferences live,
+    since the campaign they joined belongs to someone else.
+    """
+    return data_dir() / "profile.sqlite3"
+
+
 def setup_logging(level: int = logging.INFO) -> logging.Logger:
     """Log to stderr and to a rotating-ish file in the per-OS log directory."""
     logger = logging.getLogger("canonkeeper")

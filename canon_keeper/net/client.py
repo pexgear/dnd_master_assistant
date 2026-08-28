@@ -14,6 +14,7 @@ import logging
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtWebSockets import QWebSocket
 
+from canon_keeper.net import auth
 from canon_keeper.net.protocol import (
     Member,
     MessageType,
@@ -22,6 +23,7 @@ from canon_keeper.net.protocol import (
     decode,
     encode,
 )
+from canon_keeper.net.state import SharedState
 
 log = logging.getLogger("canonkeeper.net.client")
 
@@ -43,8 +45,10 @@ class SessionClient(QObject):
     said = Signal(object, str)  # (Member, text)
     rolled = Signal(object, dict)  # (Member, roll payload)
     system = Signal(str)
+    #: Emitted once the host's filtered view of the campaign has arrived.
+    state_replaced = Signal()
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(self, parent: QObject | None = None, state: SharedState | None = None) -> None:
         super().__init__(parent)
         self._socket = QWebSocket()
         self._socket.connected.connect(self._on_connected)
@@ -54,11 +58,16 @@ class SessionClient(QObject):
             self._socket.errorOccurred.connect(self._on_error)
 
         self._url = ""
-        self._code = ""
+        self._username = ""
+        self._password = ""
+        self._token = ""
         self._name = ""
         self._role = Role.PLAYER.value
         self._me: Member | None = None
         self._members: list[Member] = []
+        #: The host's filtered view of the campaign, for player mode. Shared
+        #: with the panels via AppContext, so they need no socket of their own.
+        self.state = state if state is not None else SharedState(self)
 
         self._wanted = False  # whether the user wants to be connected
         self._attempt = 0
@@ -84,9 +93,31 @@ class SessionClient(QObject):
     def members(self) -> list[Member]:
         return list(self._members)
 
-    def join(self, url: str, code: str, name: str, role: str = Role.PLAYER.value) -> None:
+    def join(self, url: str, username: str, password: str, name: str = "") -> None:
+        """Log in with an account. The password never leaves this process."""
         self.leave()
-        self._url, self._code, self._name, self._role = url, code, name, role
+        self._url = url
+        self._username = username
+        self._password = password
+        self._token = ""
+        self._name = name or username
+        self._wanted = True
+        self._attempt = 0
+        self._open()
+
+    def join_as_host(self, url: str, token: str, name: str) -> None:
+        """Connect the DM's own app to the server it just started.
+
+        No password: the app already holds the campaign file, so asking for one
+        on the same machine would be friction with nothing behind it.
+        """
+        self.leave()
+        self._url = url
+        self._token = token
+        self._username = ""
+        self._password = ""
+        self._name = name
+        self._role = Role.DM.value
         self._wanted = True
         self._attempt = 0
         self._open()
@@ -97,6 +128,7 @@ class SessionClient(QObject):
         self._connect_timeout.stop()
         self._me = None
         self._members = []
+        self.state.clear()
         if self._socket.state().name != "UnconnectedState":
             self._socket.close()
 
@@ -129,6 +161,10 @@ class SessionClient(QObject):
     def send_roll(self, notation: str) -> bool:
         return self._send(MessageType.ROLL, notation=notation)
 
+    def send_edit(self, entity_id: int, changes: dict) -> bool:
+        """Ask the host to apply a change to your own character."""
+        return self._send(MessageType.EDIT, id=entity_id, changes=changes)
+
     def _send(self, message_type, **payload) -> bool:
         if not self.is_connected:
             self.failed.emit("Not connected.")
@@ -141,9 +177,14 @@ class SessionClient(QObject):
     def _on_connected(self) -> None:
         self._connect_timeout.stop()
         self._attempt = 0
-        self._socket.sendTextMessage(
-            encode(MessageType.HELLO, code=self._code, name=self._name, role=self._role)
-        )
+        if self._token:
+            self._socket.sendTextMessage(
+                encode(MessageType.HELLO, token=self._token, name=self._name)
+            )
+        else:
+            self._socket.sendTextMessage(
+                encode(MessageType.HELLO, username=self._username)
+            )
 
     def _on_disconnected(self) -> None:
         self._connect_timeout.stop()
@@ -173,7 +214,23 @@ class SessionClient(QObject):
             log.warning("unreadable frame from server: %s", exc)
             return
 
-        if message.type == MessageType.WELCOME:
+        if message.type == MessageType.CHALLENGE:
+            self._answer_challenge(message)
+
+        elif message.type == MessageType.SNAPSHOT:
+            entities = message.get("entities")
+            self.state.replace_all(entities if isinstance(entities, list) else [])
+            self.state_replaced.emit()
+
+        elif message.type == MessageType.ENTITY:
+            self.state.upsert(message.get("entity") or {})
+
+        elif message.type == MessageType.ENTITY_GONE:
+            entity_id = message.get("id")
+            if isinstance(entity_id, int):
+                self.state.remove(entity_id)
+
+        elif message.type == MessageType.WELCOME:
             self._me = Member.from_dict(message.get("you", {}))
             self._members = [Member.from_dict(m) for m in message.get("members", [])]
             self.welcomed.emit(self._me)
@@ -197,9 +254,24 @@ class SessionClient(QObject):
 
         elif message.type == MessageType.ERROR:
             text = str(message.get("message", "The host refused the connection."))
-            if message.get("code") == "bad_code":
-                # A wrong code will never succeed on retry, so stop rather than
-                # hammering the host every second.
+            if message.get("code") in ("bad_login", "refused"):
+                # Bad credentials will never come right on their own, so stop
+                # rather than hammering the host every second.
                 self._wanted = False
                 self._retry.stop()
             self.failed.emit(text)
+
+    def _answer_challenge(self, message) -> None:
+        """Prove we know the password without sending it."""
+        try:
+            salt = bytes.fromhex(str(message.get("salt", "")))
+            nonce = bytes.fromhex(str(message.get("nonce", "")))
+        except ValueError:
+            self.failed.emit("The host sent a login challenge we could not read.")
+            return
+        if not salt or not nonce:
+            return
+        verifier = auth.derive_verifier(self._password, salt)
+        self._socket.sendTextMessage(
+            encode(MessageType.LOGIN, proof=auth.proof(verifier, nonce))
+        )

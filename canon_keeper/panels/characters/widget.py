@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from canon_keeper.panels.sharing import ShareBar
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.entities import KIND_LOCATION, KIND_NPC, KIND_PC, Entity
 
@@ -132,6 +133,9 @@ class CharactersWidget(QWidget):
             self._texts[key] = edit
             form.addRow(label, edit)
 
+        self._share = ShareBar(self._ctx)
+        form.addRow("Players see", self._share)
+
         self._save_button = QPushButton("Save")
         self._save_button.setEnabled(False)
         self._save_button.clicked.connect(self.save_current)
@@ -202,6 +206,7 @@ class CharactersWidget(QWidget):
 
         if self._list.currentItem() is None:
             self._current_id = None
+            self._share.set_entity(None)
             self._set_form_enabled(False)
 
     def _reload_locations(self) -> None:
@@ -233,6 +238,8 @@ class CharactersWidget(QWidget):
         self._summary.setText(entity.summary)
         for key, edit in self._texts.items():
             edit.setPlainText(entity.data.get(key, ""))
+
+        self._share.set_entity(entity.id)
 
         self._loading = False
         self._save_button.setEnabled(False)

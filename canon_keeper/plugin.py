@@ -43,6 +43,7 @@ class AppContext:
         campaign_id: int,
         api_version: int = API_VERSION,
         role: str = "dm",
+        shared=None,
     ) -> None:
         self.repos = repos
         self.bus = bus
@@ -51,6 +52,14 @@ class AppContext:
         #: "dm" or "player". Players run the same app with a reduced panel set;
         #: see PanelPlugin.roles.
         self.role = role
+        #: In player mode, the host's filtered view of the campaign. Panels read
+        #: this instead of `repos`, because a player's app is only ever shown
+        #: what the host decided to send. None for the DM, who reads the real
+        #: database.
+        self.shared = shared
+        #: Set when the app was launched by joining a session: the Table panel
+        #: connects with it instead of making the player log in twice.
+        self.pending_join: tuple[str, str, str] | None = None
         #: Mutated by the shell when the DM opens a different campaign; the
         #: change is announced on ``bus.campaign_changed``.
         self.campaign_id = campaign_id

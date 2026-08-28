@@ -22,6 +22,14 @@ class Bus(QObject):
     active_entity_changed = Signal(int)
     active_location_changed = Signal(int)
 
+    # Who may see an entity changed. The host republishes it, so a revoked
+    # share actually takes the thing off the player's screen.
+    share_changed = Signal(int)
+
+    # A player asking the host to change their own character. The host decides;
+    # the change only becomes real when it is echoed back.
+    player_edit_requested = Signal(int, dict)
+
     # Canon.
     fact_committed = Signal(int)
     utterance_added = Signal(int)

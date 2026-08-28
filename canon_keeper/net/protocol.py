@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 #: No O/0 or I/1 -- these get read aloud across a table.
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -37,12 +37,18 @@ class Role(StrEnum):
 
 class MessageType(StrEnum):
     # client -> server
-    HELLO = "hello"
+    HELLO = "hello"        # {username} or {token} for the host's own app
+    LOGIN = "login"        # {proof} -- answers a challenge
     CHAT = "chat"
     ROLL = "roll"
+    EDIT = "edit"          # {id, changes} -- a player editing their own PC
 
     # server -> client
+    CHALLENGE = "challenge"  # {salt, nonce}
     WELCOME = "welcome"
+    SNAPSHOT = "snapshot"    # everything this account may see
+    ENTITY = "entity"        # one entity added or changed
+    ENTITY_GONE = "gone"     # {id} -- deleted, or no longer shared with you
     ERROR = "error"
     ROSTER = "roster"
     SAID = "said"
@@ -55,6 +61,13 @@ class Member:
     id: str
     name: str
     role: str
+    #: The character this person is playing. Chat shows this in preference to
+    #: the account name -- at the table people are their characters.
+    character: str = ""
+
+    @property
+    def label(self) -> str:
+        return self.character or self.name
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -65,6 +78,7 @@ class Member:
             id=str(raw.get("id", "")),
             name=clean_name(raw.get("name", "")),
             role=raw.get("role") if raw.get("role") in tuple(Role) else Role.PLAYER.value,
+            character=str(raw.get("character", ""))[:MAX_NAME_LENGTH],
         )
 
 

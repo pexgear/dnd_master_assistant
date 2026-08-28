@@ -11,9 +11,12 @@ Runs on Windows, macOS and Linux. Your data is a single SQLite file you own.
 
 ## Status
 
-Early. Phase 1 of the build plan: the plugin shell, the Characters panel and the
-Cities panel. No AI and no microphone yet — those arrive in phases 2 and 3, and
-nothing in this phase needs an API key or an internet connection.
+Early, but usable at a table. The plugin shell with Characters, Cities and
+Transcript panels; local speech-to-text; and LAN sessions with logins, shared
+chat and dice, and role-filtered sharing.
+
+No AI yet — nothing here needs an API key or an internet connection. The NPC
+conversation holder is the next phase.
 
 ## Install
 
@@ -34,46 +37,81 @@ python -m venv .venv
 
 On macOS and Linux the venv paths are `.venv/bin/` instead of `.venv/Scripts/`.
 
+## Starting a campaign
+
+The campaign comes first: the app opens a chooser before anything else, because
+a Characters panel with no campaign behind it is a list of nobody.
+
+- **On this computer** lists the campaigns you run. Each is a single `.sqlite3`
+  file you own, so there is no login -- holding the file makes you its DM. Copy
+  one to another machine and it appears there.
+- **Join a session** lists sessions running on your network, plus ones you have
+  joined before. That needs the username and password the DM gave you.
+
 ## Playing together (LAN)
 
-**Table** panel ▸ *Host session*. You get a six-character join code; read it out.
-Players open Canon Keeper, hit *Join session*, and your game is already listed —
-the host broadcasts a beacon on the local network, so nobody types an IP address.
-Then chat and shared dice.
+Open your campaign and press **Go online** in the Table panel. Players open
+Canon Keeper, pick your session from the list, and log in.
 
-Players can start in a reduced mode with just the table and none of your prep:
-
-```bash
-canonkeeper --player
-```
+Before anyone can join you need to give them a login -- **Table ▸ Players...**:
+a username, a password, and the character they play. Chat then shows the
+character's name, because at the table people are their characters.
 
 Dice are rolled **on the host**, never on the client that asked. `/roll 2d6+3`,
 `/roll 4d6kh3` (keep highest three), `/roll 2d20kl1` (disadvantage), or the quick
 buttons. `/r` works too.
 
+### What players see
+
+Every panel works for both roles, but a player's copy is built from what the
+host sent, and the host sends only what you shared.
+
+- **Characters** and **Cities** have a **Players see** button. Share an entity
+  with the whole party, or with particular people -- so only the rogue knows
+  about the contact in the Dock Ward.
+- Players get the name, the one-liner, and the text you wrote for them: *what
+  the party knows* on a character, *players read* on a place. Your motives,
+  secrets, notes and rumours are never sent. Not hidden on their screen -- never
+  sent.
+- An entity you have not shared does not appear at all. Its existence is itself
+  a secret.
+- Players own their character sheet: hit points, conditions, inventory, their
+  own notes. They cannot touch anyone else's, and the host enforces that rather
+  than trusting the client.
+- The Transcript stays yours alone.
+
+Take a share back and it disappears from their screen, rather than going stale.
+
+### Passwords
+
+Your password is never sent over the network. The host sends a challenge, your
+app proves it knows the password without transmitting it, and a recorded login
+cannot be replayed. That matters because a LAN has no TLS, and people reuse
+passwords.
+
+Stored passwords are scrypt verifiers, never the password itself. Anyone holding
+the campaign file could still log in as a player -- but they would already have
+your secrets, which is the thing actually worth protecting.
+
 ### Hosting somewhere else
 
-The DM's app hosting the session is the simple case, but the host can be a
-separate machine — a spare box on the LAN, or a server anyone can reach:
+The host can be a separate machine -- a spare box on the LAN, or a server anyone
+can reach. It hosts one campaign, and creating logins is part of the same
+command because a dedicated server has no other way to be told who may join:
 
 ```bash
-canonkeeper-server --name "Our campaign" --port 8765
+canonkeeper-server --db our-campaign.sqlite3 --add-player marco
+canonkeeper-server --db our-campaign.sqlite3
 ```
 
-It prints a join code and everyone connects to it, the DM included. Same server
-code as the in-app host; where it runs is a deployment choice.
+The DM then joins it like everyone else, with a `--add-dm` login.
 
 **Windows will ask** to allow the app on private networks the first time you
 host. Say yes, or nobody can connect.
 
 **Over the internet**, someone has to be reachable: port-forward the host, or put
-everyone on a tunnel like Tailscale. Nothing in a chat protocol can avoid that —
+everyone on a tunnel like Tailscale. Nothing in a chat protocol can avoid that --
 it is why the dedicated-server option exists.
-
-### What is and is not shared
-
-Only chat and dice cross the wire today. Your characters, places and transcript
-stay on your machine — including the `secrets` field, which is DM-only by design.
 
 ## Light and dark
 
@@ -86,9 +124,15 @@ each appearance, so names stay legible either way.
 
 ## Where your data lives
 
-One SQLite file per install, in the standard per-OS location — `%APPDATA%` on
-Windows, `~/Library/Application Support` on macOS, `~/.local/share` on Linux.
-Find it from the app with **File ▸ Open Data Folder**. Back it up by copying it.
+One SQLite file per campaign, in `campaigns/` under the standard per-OS location
+— `%APPDATA%` on Windows, `~/Library/Application Support` on macOS,
+`~/.local/share` on Linux. Find it from the app with **File ▸ Open Data Folder**.
+Back a campaign up by copying its file; move it to another machine and it shows
+up in the chooser there.
+
+Your own settings, theme and dock layout live separately in `profile.sqlite3`,
+so they follow you rather than the campaign — and so a player, whose campaign
+lives on someone else's machine, still has somewhere to keep them.
 
 Set `CANONKEEPER_DATA_DIR` to put it somewhere else, for example on a synced
 drive.

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from canon_keeper.panels.sharing import ShareBar
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.entities import KIND_LOCATION, Entity
 
@@ -106,6 +107,17 @@ class CitiesWidget(QWidget):
         self._notes.setMinimumHeight(90)
         self._notes.textChanged.connect(self._mark_dirty)
         form.addRow("Notes", self._notes)
+
+        self._shared_notes = QPlainTextEdit()
+        self._shared_notes.setMinimumHeight(60)
+        self._shared_notes.setPlaceholderText(
+            "What the party may read about this place. Everything else here stays yours."
+        )
+        self._shared_notes.textChanged.connect(self._mark_dirty)
+        form.addRow("Players read", self._shared_notes)
+
+        self._share = ShareBar(self._ctx)
+        form.addRow("Players see", self._share)
 
         self._rumours = QPlainTextEdit()
         self._rumours.setMinimumHeight(60)
@@ -211,6 +223,8 @@ class CitiesWidget(QWidget):
         self._summary.setText(place.summary)
         self._notes.setPlainText(place.data.get("notes", ""))
         self._rumours.setPlainText(place.data.get("rumours", ""))
+        self._shared_notes.setPlainText(place.data.get("shared_notes", ""))
+        self._share.set_entity(place.id)
         self._loading = False
 
         self._refresh_occupants(place.id)
@@ -330,6 +344,7 @@ class CitiesWidget(QWidget):
         place.data["place_type"] = self._place_type.currentText().strip()
         place.data["notes"] = self._notes.toPlainText().strip()
         place.data["rumours"] = self._rumours.toPlainText().strip()
+        place.data["shared_notes"] = self._shared_notes.toPlainText().strip()
 
         self._ctx.repos.entities.update(place)
         self._save_button.setEnabled(False)

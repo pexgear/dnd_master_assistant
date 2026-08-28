@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import sqlite3
 
+from canon_keeper.repo.accounts import Account, AccountRepo
 from canon_keeper.repo.campaigns import CampaignRepo
 from canon_keeper.repo.entities import Entity, EntityRepo
 from canon_keeper.repo.facts import Fact, FactRepo
 from canon_keeper.repo.layouts import LayoutRepo
 from canon_keeper.repo.sessions import Session, SessionRepo, Utterance, UtteranceRepo
 from canon_keeper.repo.settings import SettingsRepo
+from canon_keeper.repo.shares import Share, ShareRepo
 
 
 class Repos:
@@ -17,6 +19,7 @@ class Repos:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        self.accounts = AccountRepo(conn)
         self.campaigns = CampaignRepo(conn)
         self.entities = EntityRepo(conn)
         self.facts = FactRepo(conn)
@@ -24,6 +27,7 @@ class Repos:
         self.sessions = SessionRepo(conn)
         self.utterances = UtteranceRepo(conn)
         self.settings = SettingsRepo(conn)
+        self.shares = ShareRepo(conn)
 
 
 __all__ = [
@@ -39,4 +43,8 @@ __all__ = [
     "SessionRepo",
     "Utterance",
     "UtteranceRepo",
+    "Account",
+    "AccountRepo",
+    "Share",
+    "ShareRepo",
 ]
