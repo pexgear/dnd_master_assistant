@@ -271,3 +271,23 @@ def test_stopping_the_server_disconnects_clients(qtbot, server):
     with qtbot.waitSignal(client.disconnected, timeout=5000):
         server.stop()
     client.leave()
+
+
+def test_an_unreachable_host_fails_fast_with_a_useful_message(qtbot, monkeypatch):
+    """QWebSocket has no connect timeout, so an unreachable host would otherwise
+    hang for the OS TCP timeout -- ~40s on Windows -- looking like a freeze."""
+    from canon_keeper.net import client as client_module
+
+    monkeypatch.setattr(client_module, "CONNECT_TIMEOUT_MS", 400)
+    client = SessionClient()
+    try:
+        # RFC 5737 TEST-NET-1: guaranteed not routable, so the SYN goes nowhere.
+        with qtbot.waitSignal(client.failed, timeout=4000) as blocker:
+            client.join("ws://192.0.2.1:8765", "ABC234", "Marco")
+
+        message = blocker.args[0]
+        assert "192.0.2.1" in message
+        assert "firewall" in message.lower()
+        assert "8765" in message
+    finally:
+        client.leave()

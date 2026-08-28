@@ -27,6 +27,12 @@ log = logging.getLogger("canonkeeper.net.client")
 
 _BACKOFF_MS = (1000, 2000, 4000, 8000, 15000)
 
+#: QWebSocket has no connect timeout of its own, so an unreachable host falls
+#: back to the OS TCP timeout -- around 40 seconds on Windows, during which the
+#: app looks like it has simply hung. A firewall silently dropping the SYN is
+#: the common cause, and that deserves a fast, specific answer.
+CONNECT_TIMEOUT_MS = 8000
+
 
 class SessionClient(QObject):
     connected = Signal()
@@ -60,6 +66,10 @@ class SessionClient(QObject):
         self._retry.setSingleShot(True)
         self._retry.timeout.connect(self._reconnect)
 
+        self._connect_timeout = QTimer(self)
+        self._connect_timeout.setSingleShot(True)
+        self._connect_timeout.timeout.connect(self._on_connect_timeout)
+
     # ------------------------------------------------------------------ lifecycle
 
     @property
@@ -84,6 +94,7 @@ class SessionClient(QObject):
     def leave(self) -> None:
         self._wanted = False
         self._retry.stop()
+        self._connect_timeout.stop()
         self._me = None
         self._members = []
         if self._socket.state().name != "UnconnectedState":
@@ -91,7 +102,20 @@ class SessionClient(QObject):
 
     def _open(self) -> None:
         log.info("connecting to %s", self._url)
+        self._connect_timeout.start(CONNECT_TIMEOUT_MS)
         self._socket.open(QUrl(self._url))
+
+    def _on_connect_timeout(self) -> None:
+        url = QUrl(self._url)
+        where = url.host() or self._url
+        port = url.port(0)
+        log.warning("no response from %s within %sms", self._url, CONNECT_TIMEOUT_MS)
+        self._socket.abort()
+        if self._attempt <= 1:
+            self.failed.emit(
+                f"No answer from {where}. Check the host is running, and that its "
+                f"firewall allows incoming connections on port {port}."
+            )
 
     def _reconnect(self) -> None:
         if self._wanted:
@@ -115,12 +139,14 @@ class SessionClient(QObject):
     # ------------------------------------------------------------------- signals
 
     def _on_connected(self) -> None:
+        self._connect_timeout.stop()
         self._attempt = 0
         self._socket.sendTextMessage(
             encode(MessageType.HELLO, code=self._code, name=self._name, role=self._role)
         )
 
     def _on_disconnected(self) -> None:
+        self._connect_timeout.stop()
         was_in = self._me is not None
         self._me = None
         self._members = []

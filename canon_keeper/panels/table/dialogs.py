@@ -7,8 +7,6 @@ code.
 
 from __future__ import annotations
 
-import socket
-
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -27,16 +25,8 @@ from canon_keeper.net.server import DEFAULT_PORT
 
 
 def local_addresses() -> list[str]:
-    """Best-effort list of this machine's LAN addresses, for the host dialog."""
-    found: list[str] = []
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            address = info[4][0]
-            if not address.startswith("127.") and address not in found:
-                found.append(address)
-    except OSError:
-        pass
-    return found
+    """This machine's LAN addresses, for telling players what to type."""
+    return sorted(a for a in discovery.local_addresses() if not a.startswith("127."))
 
 
 class HostDialog(QDialog):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import time
 from dataclasses import dataclass
 
@@ -27,6 +28,17 @@ MAGIC = "canonkeeper-session"
 
 #: A session not heard from in this long has gone.
 STALE_AFTER = 4.0
+
+
+def local_addresses() -> set[str]:
+    """This machine's own IPv4 addresses, best effort."""
+    found: set[str] = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            found.add(info[4][0])
+    except OSError:
+        pass
+    return found
 
 
 @dataclass(slots=True)
@@ -149,6 +161,11 @@ class Listener(QObject):
 
         # IPv4-mapped IPv6 senders arrive as "::ffff:192.168.1.20".
         host = sender.rsplit(":", 1)[-1] if sender.startswith("::ffff:") else sender
+        # A session hosted on this very machine is always reachable over
+        # loopback, and loopback is never firewalled -- whereas the LAN address
+        # usually is until someone adds a rule. Prefer the one that works.
+        if host in local_addresses():
+            host = "127.0.0.1"
         name = str(parsed.get("name", "Session"))[:64]
 
         key = (host, port)
