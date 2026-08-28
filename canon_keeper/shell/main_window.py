@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from canon_keeper import __version__, config
+from canon_keeper import __version__, campaigns, config
 from canon_keeper.plugin import API_VERSION, AppContext
 from canon_keeper.repo.layouts import AUTOSAVE_NAME
 from canon_keeper.shell.loader import LoadedPanel, LoadError
@@ -48,6 +48,8 @@ class MainWindow(QMainWindow):
         self._ctx = ctx
         self._log = log
         self._theme = theme
+        #: Set when the user asks for the chooser again; app.main loops on it.
+        self.switch_requested = False
         self._errors = list(errors)
         self._docks: dict[str, QDockWidget] = {}
         self._panels: dict[str, LoadedPanel] = {}
@@ -131,6 +133,14 @@ class MainWindow(QMainWindow):
         act_rename.triggered.connect(self._rename_campaign)
         file_menu.addAction(act_rename)
 
+        act_switch = QAction("&Open a Different Campaign...", self)
+        act_switch.triggered.connect(self._switch_campaign_file)
+        file_menu.addAction(act_switch)
+
+        self._act_no_auto = QAction("Stop Opening This Automatically", self)
+        self._act_no_auto.triggered.connect(self._clear_autostart)
+        file_menu.addAction(self._act_no_auto)
+
         file_menu.addSeparator()
         act_folder = QAction("Open &Data Folder", self)
         act_folder.triggered.connect(self._open_data_folder)
@@ -189,6 +199,17 @@ class MainWindow(QMainWindow):
             return
         self._theme.set_theme(theme)
         self.statusBar().showMessage(f"Theme: {theme.label}", 4000)
+
+    def _switch_campaign_file(self) -> None:
+        """Close this workspace and go back to the chooser."""
+        self.switch_requested = True
+        self.close()
+
+    def _clear_autostart(self) -> None:
+        campaigns.clear_autostart()
+        self.statusBar().showMessage(
+            "The chooser will appear next time you start.", 5000
+        )
 
     def _open_data_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(config.data_dir())))

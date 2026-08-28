@@ -16,6 +16,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -32,7 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from canon_keeper import campaigns
+from canon_keeper import campaigns, credentials
 from canon_keeper.net import discovery
 
 LOCAL_TAB = 0
@@ -51,6 +52,10 @@ class Launch:
     url: str = ""
     username: str = ""
     password: str = ""
+    #: Keep the password in the OS credential store for next time.
+    remember: bool = False
+    #: Open this campaign on launch without asking again.
+    autostart: bool = False
 
     @property
     def is_remote(self) -> bool:
@@ -87,6 +92,7 @@ class CampaignDialog(QDialog):
 
         self._reload_local()
         self._reload_remote()
+        self._sync_local_autostart()
         if start_online:
             self._tabs.setCurrentIndex(ONLINE_TAB)
         self._update_buttons()
@@ -112,7 +118,22 @@ class CampaignDialog(QDialog):
         row.addWidget(delete_button)
         row.addStretch(1)
         layout.addLayout(row)
+
+        self._autostart_local = QCheckBox("Open this automatically next time")
+        layout.addWidget(self._autostart_local)
+        self._local_list.itemSelectionChanged.connect(self._sync_local_autostart)
         return page
+
+    def _sync_local_autostart(self) -> None:
+        """Show whether the highlighted campaign is the one that opens on launch."""
+        item = self._local_list.currentItem()
+        entry = campaigns.get_autostart()
+        self._autostart_local.setChecked(
+            item is not None
+            and entry is not None
+            and entry.kind == "local"
+            and entry.path == item.data(_DATA_ROLE)
+        )
 
     def _reload_local(self) -> None:
         self._local_list.clear()
@@ -177,8 +198,23 @@ class CampaignDialog(QDialog):
         form.addRow("Password", self._password)
         layout.addLayout(form)
 
+        self._remember = QCheckBox("Remember my password for this session")
+        self._remember.setEnabled(credentials.is_available())
+        if not credentials.is_available():
+            self._remember.setToolTip(
+                "This machine has no credential store, so passwords cannot be saved."
+            )
+        layout.addWidget(self._remember)
+
+        self._autostart_remote = QCheckBox("Open this automatically next time")
+        self._autostart_remote.toggled.connect(
+            lambda on: on and self._remember.setChecked(True)
+        )
+        layout.addWidget(self._autostart_remote)
+
         note = QLabel(
-            "Your password is never sent over the network, and is not saved here."
+            "Your password is never sent over the network. If saved, it goes to "
+            "this computer's credential store, never to a file."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -222,8 +258,18 @@ class CampaignDialog(QDialog):
         for remembered in campaigns.list_remote():
             if remembered.url == url and remembered.username:
                 self._username.setText(remembered.username)
-                self._password.setFocus()
+                saved = credentials.load(url, remembered.username)
+                if saved:
+                    self._password.setText(saved)
+                    self._remember.setChecked(True)
+                else:
+                    self._password.setFocus()
                 break
+
+        entry = campaigns.get_autostart()
+        self._autostart_remote.setChecked(
+            entry is not None and entry.kind == "remote" and entry.url == url
+        )
 
     # ---------------------------------------------------------------- result
 
@@ -247,7 +293,13 @@ class CampaignDialog(QDialog):
             item = self._remote_list.currentItem()
             name = item.text().split("\n")[0] if item is not None else ""
             self._launch = Launch(
-                kind="remote", url=url, username=username, password=password, name=name
+                kind="remote",
+                url=url,
+                username=username,
+                password=password,
+                name=name,
+                remember=self._remember.isChecked(),
+                autostart=self._autostart_remote.isChecked(),
             )
         else:
             item = self._local_list.currentItem()
@@ -260,7 +312,10 @@ class CampaignDialog(QDialog):
                 return
             path = Path(item.data(_DATA_ROLE))
             self._launch = Launch(
-                kind="local", path=path, name=item.text().split("\n")[0]
+                kind="local",
+                path=path,
+                name=item.text().split("\n")[0],
+                autostart=self._autostart_local.isChecked(),
             )
         self.accept()
 

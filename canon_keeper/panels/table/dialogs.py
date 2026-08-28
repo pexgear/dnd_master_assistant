@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from canon_keeper import campaigns, credentials
 from canon_keeper.net import discovery
 from canon_keeper.net.auth import MIN_PASSWORD_LENGTH, AuthError
 from canon_keeper.net.server import DEFAULT_PORT
@@ -109,9 +110,18 @@ class JoinDialog(QDialog):
         form.addRow("Password", self._password)
         layout.addLayout(form)
 
+        self._remember = QCheckBox("Remember my password for this session")
+        self._remember.setEnabled(credentials.is_available())
+        if not credentials.is_available():
+            self._remember.setToolTip(
+                "This machine has no credential store, so passwords cannot be saved."
+            )
+        layout.addWidget(self._remember)
+
         note = QLabel(
             "Your password is never sent over the network -- the host asks a "
-            "question only someone who knows it can answer."
+            "question only someone who knows it can answer. If saved, it goes to "
+            "this computer's credential store."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -129,6 +139,18 @@ class JoinDialog(QDialog):
             self._found.addItem(
                 QListWidgetItem("(could not listen for sessions - type the address)")
             )
+
+        self._load_saved()
+
+    def _load_saved(self) -> None:
+        """Fill in the password for a session already joined once."""
+        url, username = self._url.text().strip(), self._username.text().strip()
+        if not url or not username:
+            return
+        saved = credentials.load(url, username)
+        if saved:
+            self._password.setText(saved)
+            self._remember.setChecked(True)
 
     def _on_sessions(self, sessions) -> None:
         selected = self._found.currentItem()
@@ -149,6 +171,11 @@ class JoinDialog(QDialog):
         item = self._found.currentItem()
         if item is not None and item.data(_URL_ROLE):
             self._url.setText(item.data(_URL_ROLE))
+            for remembered in campaigns.list_remote():
+                if remembered.url == item.data(_URL_ROLE) and remembered.username:
+                    self._username.setText(remembered.username)
+                    break
+            self._load_saved()
 
     def values(self) -> tuple[str, str, str]:
         return (
@@ -156,6 +183,9 @@ class JoinDialog(QDialog):
             self._username.text().strip(),
             self._password.text(),
         )
+
+    def should_remember(self) -> bool:
+        return self._remember.isChecked()
 
     def done(self, result: int) -> None:  # noqa: D102 - Qt naming
         self._listener.stop()

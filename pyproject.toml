@@ -24,10 +24,12 @@ classifiers = [
 dependencies = [
   "PySide6>=6.6",
   "platformdirs>=4.0",
+  # Saved session passwords go to the OS credential store, never a file.
+  "keyring>=25.0",
 ]
 
 [project.optional-dependencies]
-llm = ["anthropic>=0.40", "keyring>=25.0"]
+llm = ["anthropic>=0.40"]
 whisper = ["faster-whisper>=1.0"]
 dev = ["pytest>=8.0", "pytest-qt>=4.4"]
 

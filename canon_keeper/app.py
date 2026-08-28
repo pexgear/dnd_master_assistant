@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from canon_keeper import __version__, campaigns, config
+from canon_keeper import __version__, campaigns, config, credentials
 from canon_keeper.bus import Bus
 from canon_keeper.db import connect, migrate
 from canon_keeper.net.state import SharedState
@@ -36,6 +36,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--player", action="store_true", help="open the chooser on the join tab"
+    )
+    parser.add_argument(
+        "--choose",
+        action="store_true",
+        help="always show the chooser, ignoring any automatic campaign",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     return parser.parse_args(argv)
@@ -65,13 +70,73 @@ def build_context(
     return ctx, conn
 
 
-def _resolve_launch(args) -> Launch | None:
-    """Decide which campaign to open, asking unless we were told."""
+def _from_autostart(log: logging.Logger) -> Launch | None:
+    """Rebuild a launch from the saved automatic choice, if it is still usable."""
+    entry = campaigns.get_autostart()
+    if entry is None:
+        return None
+
+    if entry.kind == "local":
+        return Launch(kind="local", path=Path(entry.path), name=entry.name)
+
+    password = credentials.load(entry.url, entry.username)
+    if not password:
+        # Saved without a password, or the credential store said no. Ask rather
+        # than failing a login the user never got to see.
+        log.info("no saved password for %s; showing the chooser", entry.url)
+        return None
+    return Launch(
+        kind="remote",
+        url=entry.url,
+        username=entry.username,
+        password=password,
+        name=entry.name,
+    )
+
+
+def _resolve_launch(
+    args, log: logging.Logger, force_chooser: bool = False
+) -> Launch | None:
+    """Decide which campaign to open, asking unless we already know."""
     if args.db is not None:
         return Launch(
             kind="local", path=args.db, name=campaigns.campaign_name_of(args.db)
         )
+    if not force_chooser and not args.choose:
+        automatic = _from_autostart(log)
+        if automatic is not None:
+            log.info("opening %r automatically", automatic.name or automatic.url)
+            return automatic
     return choose_campaign(start_online=args.player)
+
+
+def _remember_choices(launch: Launch) -> None:
+    """Apply the "remember me" and "open automatically" boxes."""
+    if launch.is_remote:
+        campaigns.remember_remote(launch.url, launch.name, launch.username)
+        if launch.remember:
+            credentials.save(launch.url, launch.username, launch.password)
+        else:
+            credentials.forget(launch.url, launch.username)
+
+    if launch.autostart:
+        campaigns.set_autostart(
+            campaigns.Autostart(
+                kind=launch.kind,
+                path=str(launch.path or ""),
+                url=launch.url,
+                username=launch.username,
+                name=launch.name,
+            )
+        )
+    else:
+        # Unticking the box on the campaign that was set must actually clear it.
+        current = campaigns.get_autostart()
+        if current is not None and (
+            (launch.kind == "local" and current.path == str(launch.path or ""))
+            or (launch.is_remote and current.url == launch.url)
+        ):
+            campaigns.clear_autostart()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,40 +156,51 @@ def main(argv: list[str] | None = None) -> int:
     profile_ctx, _profile_conn = build_context(config.profile_db_path(), log)
     ThemeController(app, profile_ctx.repos.settings).apply()
 
-    launch = _resolve_launch(args)
-    if launch is None:
-        log.info("no campaign chosen; exiting")
-        return 0
+    # Looping lets "Open a Different Campaign" work without restarting: the
+    # window closes, the chooser comes back, and a new context is built.
+    force_chooser = False
+    while True:
+        launch = _resolve_launch(args, log, force_chooser)
+        if launch is None:
+            log.info("no campaign chosen; exiting")
+            return 0
 
-    # A player's settings and dock layout live in their own profile: the
-    # campaign they joined is not theirs to write to, and may not be a local
-    # file at all.
-    db_path = launch.path if launch.kind == "local" else config.profile_db_path()
+        # A player's settings and dock layout live in their own profile: the
+        # campaign they joined is not theirs to write to, and may not be a
+        # local file at all.
+        db_path = launch.path if launch.kind == "local" else config.profile_db_path()
 
-    try:
-        ctx, _conn = build_context(db_path, log, role=launch.role)
-    except Exception as exc:  # noqa: BLE001 - show the user something actionable
-        log.exception("could not open the campaign")
-        QMessageBox.critical(
-            None, "Canon Keeper", f"Could not open:\n\n{db_path}\n\n{exc}"
-        )
-        return 1
+        try:
+            ctx, conn = build_context(db_path, log, role=launch.role)
+        except Exception as exc:  # noqa: BLE001 - show something actionable
+            log.exception("could not open the campaign")
+            QMessageBox.critical(
+                None, "Canon Keeper", f"Could not open:\n\n{db_path}\n\n{exc}"
+            )
+            return 1
 
-    if launch.is_remote:
-        # Picked up by the Table panel, which connects as soon as it is built.
-        ctx.pending_join = (launch.url, launch.username, launch.password)
-        campaigns.remember_remote(launch.url, launch.name, launch.username)
+        _remember_choices(launch)
+        if launch.is_remote:
+            # Picked up by the Table panel, which connects once it is built.
+            ctx.pending_join = (launch.url, launch.username, launch.password)
 
-    theme = ThemeController(app, ctx.repos.settings)
-    theme.changed.connect(ctx.bus.theme_changed)
-    theme.apply()
+        theme = ThemeController(app, ctx.repos.settings)
+        theme.changed.connect(ctx.bus.theme_changed)
+        theme.apply()
 
-    panels, errors = discover_panels(log, role=launch.role)
-    if not panels:
-        log.warning("no panels were discovered; is the package installed?")
+        panels, errors = discover_panels(log, role=launch.role)
+        if not panels:
+            log.warning("no panels were discovered; is the package installed?")
 
-    window = MainWindow(ctx, panels, errors, log, theme)
-    if launch.is_remote:
-        window.setWindowTitle(f"Canon Keeper - {launch.name or launch.url} (player)")
-    window.show()
-    return app.exec()
+        window = MainWindow(ctx, panels, errors, log, theme)
+        if launch.is_remote:
+            window.setWindowTitle(
+                f"Canon Keeper - {launch.name or launch.url} (player)"
+            )
+        window.show()
+        app.exec()
+
+        if not window.switch_requested:
+            return 0
+        conn.close()
+        force_chooser = True

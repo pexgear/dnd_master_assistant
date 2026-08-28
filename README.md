@@ -48,6 +48,23 @@ a Characters panel with no campaign behind it is a list of nobody.
 - **Join a session** lists sessions running on your network, plus ones you have
   joined before. That needs the username and password the DM gave you.
 
+### Skipping the chooser
+
+Tick **Remember my password for this session** when you join, and next time
+picking that session fills the password in for you. Tick **Open this
+automatically next time** and the app goes straight in without asking at all --
+on either tab, so it works for the campaign you run as well as one you join.
+
+Passwords go to the operating system's credential store: Windows Credential
+Manager, the macOS Keychain, or the Secret Service on Linux. Never to a file of
+ours. On a machine with no credential store the box is simply disabled and you
+type your password each time.
+
+To get the chooser back: **File > Open a Different Campaign...**, or **File >
+Stop Opening This Automatically**, or start with `canonkeeper --choose`. If the
+campaign file has been deleted or the saved password no longer works, the
+chooser comes back on its own rather than failing a login you never saw.
+
 ## Playing together (LAN)
 
 Open your campaign and press **Go online** in the Table panel. Players open

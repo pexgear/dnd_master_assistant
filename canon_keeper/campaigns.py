@@ -25,6 +25,7 @@ log = logging.getLogger("canonkeeper.campaigns")
 
 SUFFIX = ".sqlite3"
 RECENT_SERVERS_FILE = "servers.json"
+AUTOSTART_FILE = "autostart.json"
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9 _-]+")
 
@@ -50,6 +51,17 @@ class RemoteCampaign:
     @property
     def label(self) -> str:
         return self.name or self.url
+
+
+@dataclass(slots=True)
+class Autostart:
+    """The campaign to open without asking, if the user chose one."""
+
+    kind: str  # "local" or "remote"
+    path: str = ""
+    url: str = ""
+    username: str = ""
+    name: str = ""
 
 
 # --------------------------------------------------------------------- local
@@ -168,6 +180,63 @@ def remember_remote(url: str, name: str = "", username: str = "") -> None:
 
 def forget_remote(url: str) -> None:
     _write_remote([s for s in list_remote() if s.url != url])
+
+
+# ----------------------------------------------------------------- autostart
+
+
+def _autostart_path() -> Path:
+    return config.data_dir() / AUTOSTART_FILE
+
+
+def get_autostart() -> Autostart | None:
+    """The campaign to open on launch, or None to show the chooser."""
+    path = _autostart_path()
+    if not path.exists():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        log.warning("could not read %s; ignoring it", path)
+        return None
+    if not isinstance(raw, dict) or raw.get("kind") not in ("local", "remote"):
+        return None
+
+    entry = Autostart(
+        kind=str(raw["kind"]),
+        path=str(raw.get("path", "")),
+        url=str(raw.get("url", "")),
+        username=str(raw.get("username", "")),
+        name=str(raw.get("name", "")),
+    )
+    # A campaign file that has since been deleted or moved must not lock the
+    # user out of their own app.
+    if entry.kind == "local" and not Path(entry.path).exists():
+        log.info("autostart campaign %s is gone; showing the chooser", entry.path)
+        clear_autostart()
+        return None
+    return entry
+
+
+def set_autostart(entry: Autostart | None) -> None:
+    if entry is None:
+        clear_autostart()
+        return
+    try:
+        _autostart_path().write_text(
+            json.dumps(asdict(entry), indent=2), encoding="utf-8"
+        )
+    except OSError:
+        log.warning("could not save the autostart choice")
+
+
+def clear_autostart() -> None:
+    path = _autostart_path()
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            log.warning("could not clear the autostart choice")
 
 
 def _write_remote(servers: list[RemoteCampaign]) -> None:

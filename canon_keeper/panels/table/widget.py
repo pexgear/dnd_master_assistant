@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from canon_keeper import campaigns, credentials
 from canon_keeper.net import discovery
 from canon_keeper.net.client import SessionClient
 from canon_keeper.net.protocol import Member, Role
@@ -39,6 +40,9 @@ class TableWidget(QWidget):
         super().__init__()
         self._ctx = ctx
         self._server: SessionServer | None = None
+        #: Credentials to save once the host actually accepts them. Saving
+        #: before that would store a password we have no reason to believe.
+        self._pending_credentials: tuple[str, str, str] | None = None
         self._client = SessionClient(self, state=ctx.shared)
 
         self._client.connected.connect(self._on_connected)
@@ -209,6 +213,12 @@ class TableWidget(QWidget):
             self._append("error", "A username and password are needed to join.")
             return
 
+        self._pending_credentials = (
+            (url, username, password) if dialog.should_remember() else None
+        )
+        if not dialog.should_remember():
+            credentials.forget(url, username)
+
         self._ctx.repos.settings.set("session_last_url", url)
         self._ctx.repos.settings.set("session_username", username)
         self._append_system(f"Connecting to {url}...")
@@ -252,6 +262,13 @@ class TableWidget(QWidget):
     # ----------------------------------------------------------------- events
 
     def _on_connected(self) -> None:
+        # Only now do we know the credentials were good, so only now save them.
+        if self._pending_credentials is not None:
+            url, username, password = self._pending_credentials
+            self._pending_credentials = None
+            campaigns.remember_remote(url, self._client.me.name if self._client.me else "", username)
+            if credentials.save(url, username, password):
+                self._append_system("Password saved for this session.")
         self._update_state()
 
     def _on_disconnected(self) -> None:
