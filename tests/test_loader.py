@@ -114,7 +114,7 @@ def test_builtin_fallback_when_nothing_is_registered(monkeypatch):
     """Running from a source checkout with no install still gets its panels."""
     monkeypatch.setattr(loader, "entry_points", lambda group: [])
     loaded, errors = loader.discover_panels(log)
-    assert {entry.plugin.id for entry in loaded} == {"characters", "cities"}
+    assert {entry.plugin.id for entry in loaded} == set(loader.BUILTIN_PANELS)
     assert errors == []
 
 
@@ -125,4 +125,4 @@ def test_first_party_panels_are_registered_as_entry_points():
     names = {ep.name for ep in entry_points(group=loader.ENTRY_POINT_GROUP)}
     if not names:
         pytest.skip("package is not installed; entry points unavailable")
-    assert {"characters", "cities"} <= names
+    assert set(loader.BUILTIN_PANELS) <= names, "a built-in panel is missing from pyproject.toml"

@@ -60,7 +60,16 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
     logger.setLevel(level)
     fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
+    # Audio device names routinely contain characters the Windows console
+    # codepage cannot encode -- a Logitech webcam reports itself in Chinese, for
+    # one -- and an unencodable log line would otherwise raise from inside the
+    # logging call. Degrade the character, never the log.
     stream = logging.StreamHandler()
+    if hasattr(stream.stream, "reconfigure"):
+        try:
+            stream.stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, OSError, ValueError):
+            pass
     stream.setFormatter(fmt)
     logger.addHandler(stream)
 

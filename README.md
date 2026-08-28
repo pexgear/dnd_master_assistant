@@ -52,6 +52,41 @@ stay in your books.
 **Cities & Places** — region, city, district, building, room. Characters are
 parented to a place, so every location knows who is standing in it.
 
+**Transcript** — press **F9** (or the Record button), narrate a beat, press it
+again. The clip is transcribed locally and appears on screen. You can also just
+type a line instead. Rows stay editable, because the text here is what
+everything downstream will treat as what you actually said.
+
+### Transcription
+
+Transcription runs entirely on your machine — no audio leaves it, and there is
+nothing to pay for. It needs one extra package:
+
+```bash
+pip install faster-whisper
+```
+
+Without it the panel still opens and tells you the command; recording is
+disabled until it is installed.
+
+The first recording downloads the chosen model (a few hundred MB for `small`,
+the default). Larger models in the dropdown are more accurate and slower. If you
+have an NVIDIA GPU *and* the CUDA runtime installed it will use it, and quietly
+falls back to the CPU if the CUDA libraries are missing.
+
+**The glossary is the reason this works on fantasy names.** Before every
+transcription the app builds a prompt from the names in your Characters and
+Cities panels and primes Whisper with it. Same audio, same `tiny` model:
+
+| | Result |
+|---|---|
+| Without glossary | "Crag**more** Castle … **Silder Hall Winter**" |
+| With glossary | "**Cragmaw** Castle … **Sildar Hallwinter**" |
+
+So the more you write down, the better the transcription gets. If a name still
+comes out wrong, fix the row — and add the name to an entity so it is right next
+time.
+
 ## Writing a plugin
 
 Every panel in the app, first-party ones included, loads through the same entry

@@ -69,6 +69,7 @@ def _validate(plugin: object, name: str) -> str | None:
 BUILTIN_PANELS = {
     "characters": "canon_keeper.panels.characters:CharactersPanel",
     "cities": "canon_keeper.panels.cities:CitiesPanel",
+    "transcript": "canon_keeper.panels.transcript:TranscriptPanel",
 }
 
 
