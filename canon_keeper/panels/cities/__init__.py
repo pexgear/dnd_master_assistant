@@ -15,6 +15,8 @@ class CitiesPanel:
     id = "cities"
     title = "Cities & Places"
     api_version = API_VERSION
+    # The DM's own prep and canon. Players never see this panel.
+    roles = ("dm",)
 
     def create_widget(self, ctx: AppContext) -> QWidget:
         return CitiesWidget(ctx)

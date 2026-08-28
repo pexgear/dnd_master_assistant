@@ -15,6 +15,8 @@ class CharactersPanel:
     id = "characters"
     title = "Characters"
     api_version = API_VERSION
+    # The DM's own prep and canon. Players never see this panel.
+    roles = ("dm",)
 
     def create_widget(self, ctx: AppContext) -> QWidget:
         return CharactersWidget(ctx)

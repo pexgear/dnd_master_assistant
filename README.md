@@ -34,6 +34,47 @@ python -m venv .venv
 
 On macOS and Linux the venv paths are `.venv/bin/` instead of `.venv/Scripts/`.
 
+## Playing together (LAN)
+
+**Table** panel ▸ *Host session*. You get a six-character join code; read it out.
+Players open Canon Keeper, hit *Join session*, and your game is already listed —
+the host broadcasts a beacon on the local network, so nobody types an IP address.
+Then chat and shared dice.
+
+Players can start in a reduced mode with just the table and none of your prep:
+
+```bash
+canonkeeper --player
+```
+
+Dice are rolled **on the host**, never on the client that asked. `/roll 2d6+3`,
+`/roll 4d6kh3` (keep highest three), `/roll 2d20kl1` (disadvantage), or the quick
+buttons. `/r` works too.
+
+### Hosting somewhere else
+
+The DM's app hosting the session is the simple case, but the host can be a
+separate machine — a spare box on the LAN, or a server anyone can reach:
+
+```bash
+canonkeeper-server --name "Our campaign" --port 8765
+```
+
+It prints a join code and everyone connects to it, the DM included. Same server
+code as the in-app host; where it runs is a deployment choice.
+
+**Windows will ask** to allow the app on private networks the first time you
+host. Say yes, or nobody can connect.
+
+**Over the internet**, someone has to be reachable: port-forward the host, or put
+everyone on a tunnel like Tailscale. Nothing in a chat protocol can avoid that —
+it is why the dedicated-server option exists.
+
+### What is and is not shared
+
+Only chat and dice cross the wire today. Your characters, places and transcript
+stay on your machine — including the `secrets` field, which is DM-only by design.
+
 ## Light and dark
 
 **View ▸ Theme** offers *Follow System*, *Light* and *Dark*. The default follows

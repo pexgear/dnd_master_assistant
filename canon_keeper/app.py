@@ -28,11 +28,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="campaign database to open (default: the per-user data directory)",
     )
+    parser.add_argument(
+        "--player",
+        action="store_true",
+        help="start in player mode: the shared table only, no DM panels",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     return parser.parse_args(argv)
 
 
-def build_context(db_path: Path, log: logging.Logger) -> tuple[AppContext, object]:
+def build_context(
+    db_path: Path, log: logging.Logger, role: str = "dm"
+) -> tuple[AppContext, object]:
     """Open the database, migrate it, and assemble the panel context."""
     conn = connect(db_path)
     version = migrate(conn)
@@ -40,7 +47,9 @@ def build_context(db_path: Path, log: logging.Logger) -> tuple[AppContext, objec
 
     repos = Repos(conn)
     campaign = repos.campaigns.ensure_default()
-    ctx = AppContext(repos=repos, bus=Bus(), log=log, campaign_id=campaign.id)
+    ctx = AppContext(
+        repos=repos, bus=Bus(), log=log, campaign_id=campaign.id, role=role
+    )
     return ctx, conn
 
 
@@ -56,9 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     # Fusion keeps the three platforms looking like the same application.
     app.setStyle("Fusion")
 
+    role = "player" if args.player else "dm"
     db_path = args.db or config.default_db_path()
     try:
-        ctx, _conn = build_context(db_path, log)
+        ctx, _conn = build_context(db_path, log, role)
     except Exception as exc:  # noqa: BLE001 - show the user something actionable
         log.exception("could not open the campaign database")
         QMessageBox.critical(
@@ -74,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     theme.changed.connect(ctx.bus.theme_changed)
     theme.apply()
 
-    panels, errors = discover_panels(log)
+    panels, errors = discover_panels(log, role=role)
     if not panels:
         log.warning("no panels were discovered; is the package installed?")
 

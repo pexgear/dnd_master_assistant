@@ -42,11 +42,15 @@ class AppContext:
         log: logging.Logger,
         campaign_id: int,
         api_version: int = API_VERSION,
+        role: str = "dm",
     ) -> None:
         self.repos = repos
         self.bus = bus
         self.log = log
         self.api_version = api_version
+        #: "dm" or "player". Players run the same app with a reduced panel set;
+        #: see PanelPlugin.roles.
+        self.role = role
         #: Mutated by the shell when the DM opens a different campaign; the
         #: change is announced on ``bus.campaign_changed``.
         self.campaign_id = campaign_id
@@ -71,6 +75,11 @@ class PanelPlugin(Protocol):
     #: The API_VERSION this panel was written against.
     api_version: int
 
+    #: Optional. Which roles the panel appears for -- ("dm",), ("player",) or
+    #: both. A panel that does not declare it is shown in every role, so
+    #: existing plugins are unaffected.
+    roles: tuple[str, ...]
+
     def create_widget(self, ctx: AppContext) -> QWidget:
         """Build the panel's contents. Raising here disables only this panel."""
         ...
@@ -86,6 +95,7 @@ class BasePanel:
     id: str = "unnamed"
     title: str = "Unnamed"
     api_version: int = API_VERSION
+    roles: tuple[str, ...] = ("dm", "player")
 
     def create_widget(self, ctx: AppContext) -> QWidget:  # pragma: no cover
         raise NotImplementedError

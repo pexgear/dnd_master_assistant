@@ -70,6 +70,7 @@ BUILTIN_PANELS = {
     "characters": "canon_keeper.panels.characters:CharactersPanel",
     "cities": "canon_keeper.panels.cities:CitiesPanel",
     "transcript": "canon_keeper.panels.transcript:TranscriptPanel",
+    "table": "canon_keeper.panels.table:TablePanel",
 }
 
 
@@ -83,8 +84,13 @@ def _builtin_entry_points() -> list[EntryPoint]:
 def discover_panels(
     log: logging.Logger | None = None,
     group: str = ENTRY_POINT_GROUP,
+    role: str | None = None,
 ) -> tuple[list[LoadedPanel], list[LoadError]]:
-    """Load every registered panel. Returns ``(loaded, errors)``."""
+    """Load every registered panel. Returns ``(loaded, errors)``.
+
+    ``role`` filters to panels that declare they belong in it. A panel with no
+    ``roles`` attribute is shown in every role.
+    """
     log = log or logging.getLogger("canonkeeper.loader")
     loaded: list[LoadedPanel] = []
     errors: list[LoadError] = []
@@ -129,6 +135,12 @@ def discover_panels(
             log.warning("plugin %r rejected: duplicate id %r", point.name, plugin.id)
             errors.append(LoadError(point.name, f"duplicate panel id {plugin.id!r}"))
             continue
+
+        if role is not None:
+            roles = getattr(plugin, "roles", None)
+            if roles is not None and role not in roles:
+                log.debug("panel %r is not shown in role %r", plugin.id, role)
+                continue
 
         seen_ids.add(plugin.id)
         loaded.append(LoadedPanel(plugin=plugin, entry_point=point.name, module=point.value))

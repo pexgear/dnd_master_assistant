@@ -37,6 +37,7 @@ Issues = "https://github.com/pexgear/dnd_master_assistant/issues"
 
 [project.scripts]
 canonkeeper = "canon_keeper.__main__:main"
+canonkeeper-server = "canon_keeper.server_main:main"
 
 [project.gui-scripts]
 canonkeeper-gui = "canon_keeper.__main__:main"
@@ -47,6 +48,7 @@ canonkeeper-gui = "canon_keeper.__main__:main"
 characters = "canon_keeper.panels.characters:CharactersPanel"
 cities = "canon_keeper.panels.cities:CitiesPanel"
 transcript = "canon_keeper.panels.transcript:TranscriptPanel"
+table = "canon_keeper.panels.table:TablePanel"
 
 [tool.hatch.build.targets.wheel]
 packages = ["canon_keeper"]
