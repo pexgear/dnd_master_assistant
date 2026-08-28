@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.canonkeeper/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.idea/
+
+# Keep the shared VS Code run configuration, ignore personal state
+!.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/extensions.json

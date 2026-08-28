@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "canon-keeper"
+version = "0.1.0"
+description = "A dockable desktop assistant for running D&D 5e: characters, cities, and NPC conversation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["dnd", "ttrpg", "dungeon-master", "qt", "desktop"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: X11 Applications :: Qt",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Games/Entertainment :: Role-Playing",
+]
+dependencies = [
+  "PySide6>=6.6",
+  "platformdirs>=4.0",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40", "keyring>=25.0"]
+whisper = ["faster-whisper>=1.0"]
+dev = ["pytest>=8.0", "pytest-qt>=4.4"]
+
+[project.urls]
+Homepage = "https://github.com/pexgear/dnd_master_assistant"
+Issues = "https://github.com/pexgear/dnd_master_assistant/issues"
+
+[project.scripts]
+canonkeeper = "canon_keeper.__main__:main"
+
+[project.gui-scripts]
+canonkeeper-gui = "canon_keeper.__main__:main"
+
+# First-party panels load through exactly the same entry-point group that
+# third-party plugins use. If it breaks for us, it breaks for them.
+[project.entry-points."canonkeeper.panels"]
+characters = "canon_keeper.panels.characters:CharactersPanel"
+cities = "canon_keeper.panels.cities:CitiesPanel"
+
+[tool.hatch.build.targets.wheel]
+packages = ["canon_keeper"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
