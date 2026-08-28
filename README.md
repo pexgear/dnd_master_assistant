@@ -54,8 +54,23 @@ parented to a place, so every location knows who is standing in it.
 
 **Transcript** — press **F9** (or the Record button), narrate a beat, press it
 again. The clip is transcribed locally and appears on screen. You can also just
-type a line instead. Rows stay editable, because the text here is what
-everything downstream will treat as what you actually said.
+type a line instead.
+
+Names you already know are **highlighted as they appear** — places in green,
+characters in blue, factions and items in their own colours. Double-click one to
+jump to it in the panel that owns it.
+
+Names you *don't* know yet are one gesture away from existing: select the words
+(or just right-click a single word) and choose **Add "…" as ▸ Character /
+Place / Faction / Item**. The name lights up immediately, the owning panel
+selects it so you can fill in details, and — the part that compounds — it joins
+the Whisper glossary, so the next time you say it out loud it is transcribed
+correctly.
+
+Right-click a line for **Edit this line… / Transcribe again / Delete**. Editing
+matters: an utterance is the only thing allowed to be the source of a fact, so
+the text here is what everything downstream will treat as what you actually
+said.
 
 ### Transcription
 

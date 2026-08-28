@@ -1,57 +1,50 @@
-"""Record a beat, see it transcribed, fix it if Whisper got a name wrong.
+"""Record a beat, see it transcribed, turn the names in it into entities.
 
 The row appears the moment you stop recording, marked as pending, and fills in
 when the model finishes. Nothing blocks the GUI thread, so a slow transcription
 never freezes the app mid-session.
 
-Rows stay editable on purpose. An utterance is the only thing allowed to be the
-source of a fact, so the text you see here is the text everything downstream
-will trust -- correcting a mangled name is the cheapest fix in the whole app.
+Names you already know are highlighted as they appear. Select words you do not
+know yet and the right-click menu will make them a character or a place -- which
+also feeds them back into the Whisper glossary, so the next time you say the
+name it is transcribed correctly.
 """
 
 from __future__ import annotations
 
 import time
-from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioDevice
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QComboBox,
     QHBoxLayout,
-    QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
-    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from canon_keeper import config
 from canon_keeper.audio import capture, transcribe
+from canon_keeper.matching import EntityMatcher
+from canon_keeper.panels.transcript.view import TranscriptView
 from canon_keeper.plugin import AppContext
+from canon_keeper.repo.entities import Entity
 
 RECORD_SHORTCUT = "F9"
-_PENDING = "(transcribing...)"
-
-COL_TIME = 0
-COL_TEXT = 1
 
 
 class TranscriptWidget(QWidget):
     def __init__(self, ctx: AppContext) -> None:
         super().__init__()
         self._ctx = ctx
-        self._loading = False
-        self._rows_by_utterance: dict[int, int] = {}
         self._pending_by_audio: dict[str, int] = {}
 
         self._recorder = capture.Recorder(self)
@@ -71,7 +64,11 @@ class TranscriptWidget(QWidget):
         self._session = ctx.repos.sessions.ensure_open(ctx.campaign_id)
 
         self._build_ui()
+
         ctx.bus.campaign_changed.connect(self._on_campaign_changed)
+        # Any entity edit anywhere changes what should light up in here.
+        ctx.bus.entity_changed.connect(lambda _id: self.refresh_matcher())
+        ctx.bus.entity_deleted.connect(lambda _id: self.refresh_matcher())
 
         self.reload()
 
@@ -82,7 +79,6 @@ class TranscriptWidget(QWidget):
         outer.setContentsMargins(6, 6, 6, 6)
         outer.setSpacing(6)
 
-        # --- toolbar ---
         bar = QHBoxLayout()
 
         self._record_button = QPushButton(f"Record  ({RECORD_SHORTCUT})")
@@ -122,25 +118,17 @@ class TranscriptWidget(QWidget):
         self._status.setWordWrap(True)
         outer.addWidget(self._status)
 
-        # --- the transcript ---
-        self._table = QTableWidget(0, 2)
-        self._table.setHorizontalHeaderLabels(["Time", "What you said"])
-        self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setWordWrap(True)
-        self._table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked
-            | QAbstractItemView.EditTrigger.EditKeyPressed
+        self._view = TranscriptView(self._build_matcher(), self)
+        self._view.setToolTip(
+            "Select a name, then right-click to add it as a character or place."
         )
-        header = self._table.horizontalHeader()
-        header.setSectionResizeMode(COL_TIME, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(COL_TEXT, QHeaderView.ResizeMode.Stretch)
-        self._table.itemChanged.connect(self._on_item_changed)
-        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._table.customContextMenuRequested.connect(self._show_context_menu)
-        outer.addWidget(self._table, 1)
+        self._view.add_entity_requested.connect(self._add_entity_from_text)
+        self._view.open_entity_requested.connect(self._open_entity)
+        self._view.edit_requested.connect(self._edit_line)
+        self._view.delete_requested.connect(self._delete_utterance)
+        self._view.retry_requested.connect(self._retry)
+        outer.addWidget(self._view, 1)
 
-        # --- typed entry ---
         typed = QHBoxLayout()
         self._typed = QLineEdit()
         self._typed.setPlaceholderText("...or type a beat and press Enter")
@@ -192,6 +180,52 @@ class TranscriptWidget(QWidget):
                 return device
         return None
 
+    # -------------------------------------------------------------- highlights
+
+    def _build_matcher(self) -> EntityMatcher:
+        return EntityMatcher.from_repos(self._ctx.repos, self._ctx.campaign_id)
+
+    def refresh_matcher(self) -> None:
+        """Rebuild the name index and repaint the transcript."""
+        self._view.set_matcher(self._build_matcher())
+
+    def _add_entity_from_text(self, name: str, kind: str) -> None:
+        """Turn selected words into a character or a place."""
+        name = name.strip()
+        if not name:
+            return
+
+        existing = self._view.matcher.lookup(name)
+        if existing is not None:
+            self._open_entity(existing.entity_id)
+            return
+
+        entity = self._ctx.repos.entities.create(
+            Entity(
+                id=None,
+                campaign_id=self._ctx.campaign_id,
+                kind=kind,
+                name=name,
+                data={"status": "alive"} if kind in ("npc", "pc") else {},
+            )
+        )
+        # entity_changed rebuilds the matcher here and refreshes the other
+        # panels, so the name lights up immediately and the next transcription
+        # is primed with it.
+        self._ctx.bus.entity_changed.emit(entity.id)
+        self._ctx.bus.active_entity_changed.emit(entity.id)
+        self._ctx.bus.status_message.emit(f"Added {name}")
+
+    def _open_entity(self, entity_id: int) -> None:
+        entity = self._ctx.repos.entities.get(entity_id)
+        if entity is None:
+            return
+        if entity.kind == "location":
+            self._ctx.bus.active_location_changed.emit(entity_id)
+        else:
+            self._ctx.bus.active_entity_changed.emit(entity_id)
+        self._ctx.bus.status_message.emit(entity.name)
+
     # -------------------------------------------------------------- recording
 
     def _toggle_recording(self) -> None:
@@ -213,7 +247,7 @@ class TranscriptWidget(QWidget):
         self._record_button.setText(f"Record  ({RECORD_SHORTCUT})")
         self._level.setValue(0)
 
-        destination = self._audio_dir() / f"{datetime.now():%Y%m%d-%H%M%S}.wav"
+        destination = self._audio_dir() / f"{time.strftime('%Y%m%d-%H%M%S')}.wav"
         path = self._recorder.stop(destination)
         if path is None:
             self._ctx.bus.status_message.emit("Nothing was recorded.")
@@ -224,9 +258,8 @@ class TranscriptWidget(QWidget):
         utterance = self._ctx.repos.utterances.add(
             self._session.id, "", audio_path=str(path)
         )
-        self._append_row(utterance.id, utterance.t, _PENDING, pending=True)
         self._pending_by_audio[str(path)] = utterance.id
-
+        self.reload()
         self._queue_transcription(path)
 
     def _queue_transcription(self, path: Path) -> None:
@@ -286,9 +319,8 @@ class TranscriptWidget(QWidget):
         if utterance_id is None:
             return
 
-        text = result.text.strip() or "(nothing was heard)"
         self._ctx.repos.utterances.update_text(utterance_id, result.text.strip())
-        self._set_row_text(utterance_id, text, pending=not result.text.strip())
+        self.reload()
         self._ctx.bus.utterance_added.emit(utterance_id)
         self._ctx.bus.status_message.emit(f"Transcribed {result.duration:.0f}s of audio")
 
@@ -296,111 +328,34 @@ class TranscriptWidget(QWidget):
         self._status.setText(f"Transcription failed: {message}")
         utterance_id = self._pending_by_audio.pop(str(path), None)
         if utterance_id is not None:
-            # The audio survives, so the row can be retried or typed in by hand.
-            self._set_row_text(utterance_id, "(transcription failed)", pending=True)
+            # The audio survives, so the line can be retried or typed by hand.
+            self._ctx.repos.utterances.update_text(utterance_id, "(transcription failed)")
+            self.reload()
 
-    # ------------------------------------------------------------------ table
+    # --------------------------------------------------------------- the lines
 
-    def reload(self) -> None:
-        self._loading = True
-        self._table.setRowCount(0)
-        self._rows_by_utterance.clear()
-        for utterance in self._ctx.repos.utterances.for_session(self._session.id):
-            text = utterance.text or _PENDING
-            self._append_row(
-                utterance.id, utterance.t, text, pending=not utterance.text, scroll=False
-            )
-        self._loading = False
-        self._scroll_to_bottom()
+    def reload(self, scroll_to_end: bool = True) -> None:
+        self._view.render_utterances(
+            self._ctx.repos.utterances.for_session(self._session.id),
+            scroll_to_end=scroll_to_end,
+        )
 
-    def _append_row(
-        self, utterance_id: int, t: float, text: str, pending: bool = False, scroll: bool = True
-    ) -> None:
-        was_loading = self._loading
-        self._loading = True
-
-        row = self._table.rowCount()
-        self._table.insertRow(row)
-
-        time_item = QTableWidgetItem(datetime.fromtimestamp(t).strftime("%H:%M:%S"))
-        time_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-        time_item.setData(Qt.ItemDataRole.UserRole, utterance_id)
-        self._table.setItem(row, COL_TIME, time_item)
-
-        text_item = QTableWidgetItem(text)
-        text_item.setData(Qt.ItemDataRole.UserRole, utterance_id)
-        if pending:
-            text_item.setForeground(Qt.GlobalColor.gray)
-        self._table.setItem(row, COL_TEXT, text_item)
-        self._table.resizeRowToContents(row)
-
-        self._rows_by_utterance[utterance_id] = row
-        self._loading = was_loading
-        if scroll:
-            self._scroll_to_bottom()
-
-    def _set_row_text(self, utterance_id: int, text: str, pending: bool = False) -> None:
-        row = self._rows_by_utterance.get(utterance_id)
-        if row is None:
-            return
-        was_loading = self._loading
-        self._loading = True
-        item = self._table.item(row, COL_TEXT)
-        if item is not None:
-            item.setText(text)
-            item.setForeground(
-                Qt.GlobalColor.gray if pending else self._table.palette().text().color()
-            )
-            self._table.resizeRowToContents(row)
-        self._loading = was_loading
-
-    def _scroll_to_bottom(self) -> None:
-        self._table.scrollToBottom()
-
-    def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        """A hand-corrected transcription is the version everything else trusts."""
-        if self._loading or item.column() != COL_TEXT:
-            return
-        utterance_id = item.data(Qt.ItemDataRole.UserRole)
-        if utterance_id is None:
-            return
-        text = item.text().strip()
-        if text in (_PENDING, "(nothing was heard)", "(transcription failed)"):
-            return
-        self._ctx.repos.utterances.update_text(utterance_id, text)
-        item.setForeground(self._table.palette().text().color())
-        self._ctx.bus.utterance_added.emit(utterance_id)
-
-    def _show_context_menu(self, position) -> None:
-        item = self._table.itemAt(position)
-        if item is None:
-            return
-        utterance_id = item.data(Qt.ItemDataRole.UserRole)
-
-        menu = QMenu(self)
-        act_copy = QAction("Copy text", self)
-        act_copy.triggered.connect(lambda: self._copy_row(utterance_id))
-        menu.addAction(act_copy)
-
-        act_retry = QAction("Transcribe again", self)
-        act_retry.triggered.connect(lambda: self._retry(utterance_id))
-        act_retry.setEnabled(transcribe.is_available())
-        menu.addAction(act_retry)
-
-        menu.addSeparator()
-        act_delete = QAction("Delete", self)
-        act_delete.triggered.connect(lambda: self._delete(utterance_id))
-        menu.addAction(act_delete)
-
-        menu.exec(self._table.viewport().mapToGlobal(position))
-
-    def _copy_row(self, utterance_id: int) -> None:
-        from PySide6.QtWidgets import QApplication
-
+    def _edit_line(self, utterance_id: int) -> None:
+        """A hand-corrected transcription is what everything downstream trusts."""
         utterance = self._ctx.repos.utterances.get(utterance_id)
-        if utterance:
-            QApplication.clipboard().setText(utterance.text)
-            self._ctx.bus.status_message.emit("Copied")
+        if utterance is None:
+            return
+        text, ok = QInputDialog.getMultiLineText(
+            self, "Edit line", "What you said:", utterance.text
+        )
+        if not ok:
+            return
+        self._set_line_text(utterance_id, text.strip())
+
+    def _set_line_text(self, utterance_id: int, text: str) -> None:
+        self._ctx.repos.utterances.update_text(utterance_id, text)
+        self.reload(scroll_to_end=False)
+        self._ctx.bus.utterance_added.emit(utterance_id)
 
     def _retry(self, utterance_id: int) -> None:
         utterance = self._ctx.repos.utterances.get(utterance_id)
@@ -411,13 +366,14 @@ class TranscriptWidget(QWidget):
         if not path.exists():
             self._ctx.bus.status_message.emit(f"Audio file is missing: {path.name}")
             return
-        self._set_row_text(utterance_id, _PENDING, pending=True)
+        self._ctx.repos.utterances.update_text(utterance_id, "")
+        self.reload(scroll_to_end=False)
         self._pending_by_audio[str(path)] = utterance_id
         self._queue_transcription(path)
 
-    def _delete(self, utterance_id: int) -> None:
+    def _delete_utterance(self, utterance_id: int) -> None:
         self._ctx.repos.utterances.delete(utterance_id)
-        self.reload()
+        self.reload(scroll_to_end=False)
 
     # ------------------------------------------------------------------ typed
 
@@ -426,8 +382,8 @@ class TranscriptWidget(QWidget):
         if not text:
             return
         utterance = self._ctx.repos.utterances.add(self._session.id, text, t=time.time())
-        self._append_row(utterance.id, utterance.t, text)
         self._typed.clear()
+        self.reload()
         self._ctx.bus.utterance_added.emit(utterance.id)
 
     # --------------------------------------------------------------- campaign
@@ -439,6 +395,7 @@ class TranscriptWidget(QWidget):
             self._record_button.setText(f"Record  ({RECORD_SHORTCUT})")
             self._elapsed_timer.stop()
         self._session = self._ctx.repos.sessions.ensure_open(campaign_id)
+        self.refresh_matcher()
         self.reload()
 
     def _audio_dir(self) -> Path:
