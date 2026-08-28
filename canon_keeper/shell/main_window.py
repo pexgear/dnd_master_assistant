@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import QByteArray, Qt, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QInputDialog,
@@ -27,6 +27,7 @@ from canon_keeper import __version__, config
 from canon_keeper.plugin import API_VERSION, AppContext
 from canon_keeper.repo.layouts import AUTOSAVE_NAME
 from canon_keeper.shell.loader import LoadedPanel, LoadError
+from canon_keeper.shell.theme import Theme, ThemeController
 
 #: Bumped if the set of docks changes in a way that makes old saved states
 #: meaningless. Qt refuses to restore a state saved under a different version,
@@ -41,10 +42,12 @@ class MainWindow(QMainWindow):
         panels: list[LoadedPanel],
         errors: list[LoadError],
         log: logging.Logger,
+        theme: "ThemeController | None" = None,
     ) -> None:
         super().__init__()
         self._ctx = ctx
         self._log = log
+        self._theme = theme
         self._errors = list(errors)
         self._docks: dict[str, QDockWidget] = {}
         self._panels: dict[str, LoadedPanel] = {}
@@ -150,6 +153,23 @@ class MainWindow(QMainWindow):
         act_show_all.triggered.connect(self._show_all_panels)
         panels_menu.addAction(act_show_all)
 
+        # --- View -----------------------------------------------------------
+        view_menu = bar.addMenu("&View")
+        theme_menu = view_menu.addMenu("&Theme")
+        self._theme_group = QActionGroup(self)
+        self._theme_group.setExclusive(True)
+        for choice in Theme:
+            action = QAction(choice.label, self)
+            action.setCheckable(True)
+            action.setData(choice.value)
+            action.setChecked(self._theme is not None and self._theme.theme is choice)
+            action.setEnabled(self._theme is not None)
+            action.triggered.connect(
+                lambda _checked=False, value=choice: self._set_theme(value)
+            )
+            self._theme_group.addAction(action)
+            theme_menu.addAction(action)
+
         # --- Layouts --------------------------------------------------------
         self._layouts_menu = bar.addMenu("&Layouts")
         self._layouts_menu.aboutToShow.connect(self._populate_layouts_menu)
@@ -163,6 +183,12 @@ class MainWindow(QMainWindow):
         act_about = QAction("&About", self)
         act_about.triggered.connect(self._show_about)
         help_menu.addAction(act_about)
+
+    def _set_theme(self, theme: Theme) -> None:
+        if self._theme is None:
+            return
+        self._theme.set_theme(theme)
+        self.statusBar().showMessage(f"Theme: {theme.label}", 4000)
 
     def _open_data_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(config.data_dir())))

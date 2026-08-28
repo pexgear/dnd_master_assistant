@@ -143,6 +143,11 @@ class TranscriptView(QTextEdit):
         base = self.palette().base().color()
         return base.lightness() < 128
 
+    def set_dark(self, is_dark: bool) -> None:
+        """Repaint for a new appearance. Driven by ``bus.theme_changed``."""
+        self.highlighter.set_theme(is_dark)
+        self.highlighter.rehighlight()
+
     def set_matcher(self, matcher: EntityMatcher) -> None:
         """Swap the name index and repaint. Called whenever entities change."""
         self.matcher = matcher

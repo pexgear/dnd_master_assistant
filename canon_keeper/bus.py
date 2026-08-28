@@ -29,5 +29,9 @@ class Bus(QObject):
     # The open campaign was switched.
     campaign_changed = Signal(int)
 
+    # Light/dark switched. True when the new appearance is dark. Panels that
+    # paint their own colours -- syntax highlighting, charts -- should listen.
+    theme_changed = Signal(bool)
+
     # Free-text status for the main window's status bar.
     status_message = Signal(str)

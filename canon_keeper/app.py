@@ -16,6 +16,7 @@ from canon_keeper.plugin import AppContext
 from canon_keeper.repo import Repos
 from canon_keeper.shell.loader import discover_panels
 from canon_keeper.shell.main_window import MainWindow
+from canon_keeper.shell.theme import ThemeController
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -67,10 +68,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    # Applied before any window exists, so nothing flashes white on a dark
+    # desktop while the panels are being built.
+    theme = ThemeController(app, ctx.repos.settings)
+    theme.changed.connect(ctx.bus.theme_changed)
+    theme.apply()
+
     panels, errors = discover_panels(log)
     if not panels:
         log.warning("no panels were discovered; is the package installed?")
 
-    window = MainWindow(ctx, panels, errors, log)
+    window = MainWindow(ctx, panels, errors, log, theme)
     window.show()
     return app.exec()

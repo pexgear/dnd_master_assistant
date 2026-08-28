@@ -34,6 +34,15 @@ python -m venv .venv
 
 On macOS and Linux the venv paths are `.venv/bin/` instead of `.venv/Scripts/`.
 
+## Light and dark
+
+**View ▸ Theme** offers *Follow System*, *Light* and *Dark*. The default follows
+your desktop and switches live when your OS does — handy if your machine already
+goes dark in the evening, which is when you are usually running a game.
+
+The choice is remembered. Transcript highlight colours are picked separately for
+each appearance, so names stay legible either way.
+
 ## Where your data lives
 
 One SQLite file per install, in the standard per-OS location — `%APPDATA%` on

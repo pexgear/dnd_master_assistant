@@ -69,6 +69,9 @@ class TranscriptWidget(QWidget):
         # Any entity edit anywhere changes what should light up in here.
         ctx.bus.entity_changed.connect(lambda _id: self.refresh_matcher())
         ctx.bus.entity_deleted.connect(lambda _id: self.refresh_matcher())
+        # The name colours are chosen per appearance, so they must be rebuilt
+        # when the user switches between light and dark.
+        ctx.bus.theme_changed.connect(self._view_set_dark)
 
         self.reload()
 
@@ -184,6 +187,9 @@ class TranscriptWidget(QWidget):
 
     def _build_matcher(self) -> EntityMatcher:
         return EntityMatcher.from_repos(self._ctx.repos, self._ctx.campaign_id)
+
+    def _view_set_dark(self, is_dark: bool) -> None:
+        self._view.set_dark(is_dark)
 
     def refresh_matcher(self) -> None:
         """Rebuild the name index and repaint the transcript."""
