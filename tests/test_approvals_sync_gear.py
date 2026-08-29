@@ -231,24 +231,26 @@ def isolated_cache(tmp_path, monkeypatch):
 
 def test_the_cache_round_trips():
     entities = {1: {"id": 1, "name": "Elara", "version": 3}}
-    save("ws://host:8765", "marco", entities)
+    save("ws://host:8765", "marco", entities, campaign_key="abc")
 
-    assert load("ws://host:8765", "marco") == entities
+    held, key = load("ws://host:8765", "marco")
+    assert held == entities
+    assert key == "abc"
 
 
 def test_two_logins_on_one_machine_do_not_mix():
     save("ws://host:8765", "marco", {1: {"id": 1, "name": "Elara", "version": 1}})
     save("ws://host:8765", "elsa", {2: {"id": 2, "name": "Brakk", "version": 1}})
 
-    assert list(load("ws://host:8765", "marco")) == [1]
-    assert list(load("ws://host:8765", "elsa")) == [2]
+    assert list(load("ws://host:8765", "marco")[0]) == [1]
+    assert list(load("ws://host:8765", "elsa")[0]) == [2]
 
 
 def test_two_campaigns_do_not_mix():
     save("ws://a:8765", "marco", {1: {"id": 1, "version": 1}})
     save("ws://b:8765", "marco", {2: {"id": 2, "version": 1}})
 
-    assert list(load("ws://a:8765", "marco")) == [1]
+    assert list(load("ws://a:8765", "marco")[0]) == [1]
 
 
 def test_the_cache_filename_reveals_nothing():
@@ -265,13 +267,13 @@ def test_a_corrupt_cache_is_survivable():
     path = cache._path("ws://host:8765", "marco")
     path.write_text("{ not json", encoding="utf-8")
 
-    assert load("ws://host:8765", "marco") == {}
+    assert load("ws://host:8765", "marco") == ({}, "")
 
 
 def test_forgetting_removes_it():
     save("ws://host:8765", "marco", {1: {"id": 1, "version": 1}})
     forget("ws://host:8765", "marco")
-    assert load("ws://host:8765", "marco") == {}
+    assert load("ws://host:8765", "marco") == ({}, "")
 
 
 def test_versions_are_string_keyed_for_the_wire():
@@ -281,3 +283,45 @@ def test_versions_are_string_keyed_for_the_wire():
 
 def test_entities_without_a_version_are_not_claimed():
     assert versions({1: {"name": "no version here"}}) == {}
+
+
+def test_a_cache_from_another_campaign_is_not_believed(repos, campaign):
+    """The bug behind two apps showing different characters under one name.
+
+    Entity ids and versions both restart in a new campaign, so a cache from a
+    different one looks perfectly current. The host must not take the client's
+    word for what it holds without knowing which game it came from.
+    """
+    from canon_keeper.net.server import SessionServer
+
+    server = SessionServer(repos, campaign.id)
+
+    assert server._trusted_versions({"known": {"1": 2}, "campaign": "someone-else"}) == {}
+    assert server._trusted_versions(
+        {"known": {"1": 2}, "campaign": server.campaign_key}
+    ) == {1: 2}
+    assert server._trusted_versions({"known": {"1": 2}}) == {}, "no key means no trust"
+
+
+def test_a_campaign_keeps_its_key(repos, campaign):
+    from canon_keeper.net.server import SessionServer
+
+    first = SessionServer(repos, campaign.id).campaign_key
+    assert SessionServer(repos, campaign.id).campaign_key == first
+    assert len(first) >= 16
+
+
+def test_two_campaigns_get_different_keys(repos, campaign, tmp_path):
+    from canon_keeper.db import connect, migrate
+    from canon_keeper.net.server import SessionServer
+    from canon_keeper.repo import Repos
+
+    other_conn = connect(tmp_path / "other.sqlite3")
+    migrate(other_conn)
+    other = Repos(other_conn)
+    other_campaign = other.campaigns.ensure_default("Other")
+
+    assert (
+        SessionServer(repos, campaign.id).campaign_key
+        != SessionServer(other, other_campaign.id).campaign_key
+    )

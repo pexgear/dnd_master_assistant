@@ -576,3 +576,49 @@ def test_even_the_host_limit_is_bounded():
 
     with pytest.raises(ProtocolError, match="too large"):
         decode("x" * (MAX_HOST_FRAME_BYTES + 10), max_bytes=MAX_HOST_FRAME_BYTES)
+
+
+# ---------------------------------------------------------- live to the player
+
+
+def test_deleting_a_shared_entity_reaches_the_player(qtbot, server, repos, campaign):
+    """It used to linger on their screen until they reconnected.
+
+    Every path that changes data has to remember to publish; deletion did not.
+    """
+    npc = repos.entities.create(
+        Entity(id=None, campaign_id=campaign.id, kind=KIND_NPC, name="Toblen")
+    )
+    repos.shares.share(campaign.id, npc.id)
+
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        assert client.state.get(npc.id) is not None
+
+        repos.entities.delete(npc.id)
+        with qtbot.waitSignal(client.state.changed, timeout=5000):
+            server.publish_entity(npc.id)
+
+        assert client.state.get(npc.id) is None
+    finally:
+        client.leave()
+
+
+def test_an_edit_by_the_dm_reaches_the_player(qtbot, server, repos, campaign):
+    npc = repos.entities.create(
+        Entity(id=None, campaign_id=campaign.id, kind=KIND_NPC, name="Sildar")
+    )
+    repos.shares.share(campaign.id, npc.id)
+
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        changed = repos.entities.get(npc.id)
+        changed.summary = "A weary man"
+        repos.entities.update(changed)
+
+        with qtbot.waitSignal(client.state.changed, timeout=5000):
+            server.publish_entity(npc.id)
+
+        assert client.state.get(npc.id)["summary"] == "A weary man"
+    finally:
+        client.leave()

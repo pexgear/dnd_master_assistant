@@ -76,6 +76,9 @@ class SessionClient(QObject):
 
         #: Where this session's cache lives, once we know who we are talking to.
         self._cache_key: tuple[str, str] | None = None
+        #: Which campaign the cache belongs to. Sent with the versions we
+        #: hold, so the host can tell whether to believe them.
+        self._campaign_key = ""
         self._wanted = False  # whether the user wants to be connected
         self._attempt = 0
         self._retry = QTimer(self)
@@ -112,7 +115,7 @@ class SessionClient(QObject):
 
         # Show what we had before the socket is even open, and tell the host
         # about it so it can reply with only what changed.
-        held = cache.load(url, username)
+        held, self._campaign_key = cache.load(url, username)
         if held:
             self.state.replace_all(list(held.values()))
 
@@ -205,12 +208,21 @@ class SessionClient(QObject):
         if self._token:
             self._socket.sendTextMessage(
                 encode(
-                    MessageType.HELLO, token=self._token, name=self._name, known=known
+                    MessageType.HELLO,
+                    token=self._token,
+                    name=self._name,
+                    known=known,
+                    campaign=self._campaign_key,
                 )
             )
         else:
             self._socket.sendTextMessage(
-                encode(MessageType.HELLO, username=self._username, known=known)
+                encode(
+                    MessageType.HELLO,
+                    username=self._username,
+                    known=known,
+                    campaign=self._campaign_key,
+                )
             )
 
     def _on_disconnected(self) -> None:
@@ -283,6 +295,12 @@ class SessionClient(QObject):
                 self._remember()
 
         elif message.type == MessageType.WELCOME:
+            key = str(message.get("campaign_key", ""))
+            if key and key != self._campaign_key:
+                # A different campaign from the one we cached. Ids and versions
+                # both restart, so what we are holding is another game's.
+                self.state.clear()
+                self._campaign_key = key
             self._me = Member.from_dict(message.get("you", {}))
             self._members = [Member.from_dict(m) for m in message.get("members", [])]
             self.welcomed.emit(self._me)
@@ -322,6 +340,7 @@ class SessionClient(QObject):
             url,
             username,
             {e["id"]: e for e in self.state.all() if isinstance(e.get("id"), int)},
+            campaign_key=self._campaign_key,
         )
 
     def _answer_challenge(self, message) -> None:

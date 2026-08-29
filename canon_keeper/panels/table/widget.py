@@ -96,6 +96,10 @@ class TableWidget(QWidget):
         ctx.bus.player_edit_requested.connect(self._on_player_edit)
         ctx.bus.panel_names_changed.connect(self._on_panel_names_changed)
         ctx.bus.entity_changed.connect(self._on_share_changed)
+        # Deletion too, or a character removed mid-session stays on every
+        # player's screen until they reconnect. publish_entity turns a missing
+        # entity into a removal, so the same handler covers it.
+        ctx.bus.entity_deleted.connect(self._on_share_changed)
         ctx.bus.theme_changed.connect(lambda _dark: self._refresh_colours())
         self._refresh_colours()
         self._update_state()
@@ -553,8 +557,6 @@ class TableWidget(QWidget):
         if self._funnel_url:
             funnel.stop()
             self._funnel_url = ""
-        self._proposals: list[dict] = []
-        self._approvals_dialog = None
         if self._server is not None:
             self._server.stop()
 

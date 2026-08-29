@@ -107,10 +107,23 @@ class SessionServer(QObject):
         #: per run and never leaves the process except to the local client.
         self.local_token = secrets.token_urlsafe(32)
 
+        #: A campaign's own identity, generated once and kept in its settings.
+        #: Entity ids and versions both restart at one in a new campaign, so
+        #: without this a client's cache from a different campaign looks
+        #: perfectly up to date and is served back to them unchanged.
+        self.campaign_key = self._campaign_key()
+
         self._server: QWebSocketServer | None = None
         self._sessions: dict[QWebSocket, _Session] = {}
         self._pending: dict[QWebSocket, _Pending] = {}
         self._beacon = discovery.Beacon(self)
+
+    def _campaign_key(self) -> str:
+        key = self.repos.settings.get("campaign_key", "")
+        if not isinstance(key, str) or not key:
+            key = secrets.token_hex(16)
+            self.repos.settings.set("campaign_key", key)
+        return key
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -255,11 +268,11 @@ class SessionServer(QObject):
         # The host's own app: it already owns the campaign file.
         token = str(message.get("token", ""))
         if token and secrets.compare_digest(token, self.local_token):
-            pending.known = _known_versions(message.get("known"))
+            pending.known = self._trusted_versions(message)
             self._admit(socket, pending, account=None, name=str(message.get("name", "")))
             return
 
-        pending.known = _known_versions(message.get("known"))
+        pending.known = self._trusted_versions(message)
 
         username = clean_name(message.get("username", ""))
         account = self.repos.accounts.by_username(self.campaign_id, username)
@@ -279,6 +292,16 @@ class SessionServer(QObject):
             salt=salt.hex(),
             nonce=pending.nonce.hex(),
         )
+
+    def _trusted_versions(self, message) -> dict[int, int]:
+        """What the client holds, but only if it is holding *this* campaign.
+
+        A cache from another campaign has the same ids and the same versions, so
+        believing it would serve someone a different game's characters.
+        """
+        if str(message.get("campaign", "")) != self.campaign_key:
+            return {}
+        return _known_versions(message.get("known"))
 
     def _decoy_salt(self, username: str) -> bytes:
         import hashlib
@@ -365,6 +388,7 @@ class SessionServer(QObject):
             you=member.to_dict(),
             session=self.session_name,
             campaign=campaign.name if campaign else "",
+            campaign_key=self.campaign_key,
             members=[m.to_dict() for m in self.members],
         )
         self._send_snapshot(socket, session, known=pending.known)

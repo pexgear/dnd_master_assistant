@@ -397,3 +397,33 @@ def test_stopping_clears_the_published_address(table):
 
     assert table._funnel_url == ""
     assert table._funnel_button.text() == "Share on the internet"
+
+
+# ----------------------------------------------- what reaches a player live
+
+
+def test_every_change_signal_reaches_the_host(table):
+    """A path that changes data and forgets to publish fails silently.
+
+    Deletion was exactly that: characters removed mid-session stayed on every
+    player's screen until they reconnected, because entity_deleted was never
+    wired to the host.
+    """
+    published = []
+
+    class _Listening:
+        is_running = True
+
+        def publish_entity(self, entity_id):
+            published.append(entity_id)
+
+        def stop(self):
+            pass
+
+    table._server = _Listening()
+
+    table._ctx.bus.entity_changed.emit(1)
+    table._ctx.bus.entity_deleted.emit(2)
+    table._ctx.bus.share_changed.emit(3)
+
+    assert published == [1, 2, 3], "a change signal is not reaching the host"

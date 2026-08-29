@@ -44,35 +44,46 @@ def _path(url: str, username: str) -> Path:
     return directory / _key(url, username)
 
 
-def load(url: str, username: str) -> dict[int, dict]:
-    """What we last held for this session, keyed by entity id."""
+def load(url: str, username: str) -> tuple[dict[int, dict], str]:
+    """What we last held for this session, and which campaign it came from.
+
+    The campaign key matters as much as the entities: ids and versions restart
+    in a new campaign, so a cache from a different one looks current and is not.
+    """
     path = _path(url, username)
     if not path.exists():
-        return {}
+        return {}, ""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         log.warning("could not read the session cache; starting empty")
-        return {}
+        return {}, ""
 
     if not isinstance(raw, dict) or raw.get("schema") != SCHEMA:
-        return {}
+        return {}, ""
 
     entities = raw.get("entities")
     if not isinstance(entities, list):
-        return {}
-    return {
+        return {}, ""
+    held = {
         entity["id"]: entity
         for entity in entities
         if isinstance(entity, dict) and isinstance(entity.get("id"), int)
     }
+    return held, str(raw.get("campaign_key", ""))
 
 
-def save(url: str, username: str, entities: dict[int, dict]) -> None:
+def save(
+    url: str, username: str, entities: dict[int, dict], campaign_key: str = ""
+) -> None:
     try:
         _path(url, username).write_text(
             json.dumps(
-                {"schema": SCHEMA, "entities": list(entities.values())},
+                {
+                    "schema": SCHEMA,
+                    "campaign_key": campaign_key,
+                    "entities": list(entities.values()),
+                },
                 separators=(",", ":"),
             ),
             encoding="utf-8",
