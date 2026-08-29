@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from canon_keeper import __version__, campaigns, config
+from canon_keeper.content import ATTRIBUTION as SRD_ATTRIBUTION
 from canon_keeper.plugin import API_VERSION, AppContext
 from canon_keeper.repo.layouts import AUTOSAVE_NAME
 from canon_keeper.shell.loader import LoadedPanel, LoadError
@@ -436,7 +437,8 @@ class MainWindow(QMainWindow):
             "About Canon Keeper",
             f"<b>Canon Keeper</b> {__version__}<br><br>"
             "A dockable desktop assistant for running D&amp;D 5e.<br>"
-            "What the DM actually says is the only source of truth.",
+            "What the DM actually says is the only source of truth."
+            "<br><br><small>" + SRD_ATTRIBUTION + "</small>",
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming

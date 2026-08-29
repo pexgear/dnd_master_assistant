@@ -349,6 +349,13 @@ Canon Keeper uses PySide6, which is licensed under the LGPLv3. Installing it
 from PyPI links it dynamically, which is what the LGPL asks for. If you
 redistribute a bundled build, read the Qt licensing terms first.
 
+This app includes material from the **System Reference Document 5.1**
+("SRD 5.1") by Wizards of the Coast LLC, available at
+<https://dnd.wizards.com/resources/systems-reference-document>, licensed under
+the [Creative Commons Attribution 4.0 International
+License](https://creativecommons.org/licenses/by/4.0/legalcode). The JSON
+transcription comes from [5e-bits/5e-database](https://github.com/5e-bits/5e-database).
+
 No adventure text ships with this repository. Loading your own copy of a
 published module into a tool you run privately is ordinary personal use; putting
 that text in a public repository is not.
