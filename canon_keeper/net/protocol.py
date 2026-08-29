@@ -50,12 +50,14 @@ class MessageType(StrEnum):
     CHAT = "chat"
     ROLL = "roll"
     EDIT = "edit"          # {id, changes} -- a player editing their own PC
+    DECIDE = "decide"      # {proposal, approve} -- the DM answering one
 
     # server -> client
     CHALLENGE = "challenge"  # {salt, nonce}
     WELCOME = "welcome"
     SNAPSHOT = "snapshot"    # everything this account may see
     PANEL_NAMES = "panels"   # what the DM calls each panel
+    PROPOSALS = "proposals"  # build changes waiting on the DM
     ENTITY = "entity"        # one entity added or changed
     ENTITY_GONE = "gone"     # {id} -- deleted, or no longer shared with you
     ERROR = "error"

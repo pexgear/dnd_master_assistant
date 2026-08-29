@@ -29,6 +29,8 @@ from canon_keeper.net.dice import DiceError, roll
 from canon_keeper.repo.entities import StaleWrite
 from canon_keeper.net.projection import (
     EditRefused,
+    snapshot_since,
+    split_sheet_change,
     Viewer,
     apply_player_edit,
     project_entity,
@@ -66,6 +68,9 @@ class _Pending:
     nonce: bytes = b""
     account_id: int | None = None
     attempts: int = 0
+    #: Versions the client already holds, so the first reply can be a delta
+    #: rather than the whole campaign.
+    known: dict[int, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -239,6 +244,8 @@ class SessionServer(QObject):
             self._handle_roll(socket, session, message)
         elif message.type == MessageType.EDIT:
             self._handle_edit(socket, session, message)
+        elif message.type == MessageType.DECIDE:
+            self._handle_decision(socket, session, message)
         else:
             log.debug("ignoring unknown message type %r", message.type)
 
@@ -248,8 +255,11 @@ class SessionServer(QObject):
         # The host's own app: it already owns the campaign file.
         token = str(message.get("token", ""))
         if token and secrets.compare_digest(token, self.local_token):
+            pending.known = _known_versions(message.get("known"))
             self._admit(socket, pending, account=None, name=str(message.get("name", "")))
             return
+
+        pending.known = _known_versions(message.get("known"))
 
         username = clean_name(message.get("username", ""))
         account = self.repos.accounts.by_username(self.campaign_id, username)
@@ -357,19 +367,45 @@ class SessionServer(QObject):
             campaign=campaign.name if campaign else "",
             members=[m.to_dict() for m in self.members],
         )
-        self._send_snapshot(socket, session)
+        self._send_snapshot(socket, session, known=pending.known)
         self._send(socket, MessageType.PANEL_NAMES, names=self.panel_names)
+        if session.viewer.is_dm:
+            self._send(socket, MessageType.PROPOSALS, proposals=self.proposals)
         self._broadcast_system(f"{member.label} joined", exclude=socket)
         self._send_roster()
         self.roster_changed.emit(self.members)
 
     # ---------------------------------------------------------------------- state
 
-    def _send_snapshot(self, socket: QWebSocket, session: _Session) -> None:
+    def _send_snapshot(
+        self, socket: QWebSocket, session: _Session, known: dict[int, int] | None = None
+    ) -> None:
+        """Everything they may see, or only what has changed since they looked."""
+        if known:
+            entities, gone = snapshot_since(
+                self.repos, self.campaign_id, session.viewer, known
+            )
+            log.info(
+                "%s reconnected holding %d entities; sending %d changed, %d gone",
+                session.member.label,
+                len(known),
+                len(entities),
+                len(gone),
+            )
+            self._send(
+                socket,
+                MessageType.SNAPSHOT,
+                entities=entities,
+                gone=gone,
+                partial=True,
+            )
+            return
+
         self._send(
             socket,
             MessageType.SNAPSHOT,
             entities=snapshot(self.repos, self.campaign_id, session.viewer),
+            partial=False,
         )
 
     @property
@@ -454,6 +490,17 @@ class SessionServer(QObject):
         changes = message.get("changes")
         if not isinstance(entity_id, int) or not isinstance(changes, dict):
             return
+
+        # Split the sheet before applying anything: hit points go through now,
+        # a change of level goes to the DM.
+        proposed = (changes.get("data") or {}).get("sheet")
+        if isinstance(proposed, dict) and session.viewer.owns(entity_id):
+            entity = self.repos.entities.get(entity_id)
+            existing = (entity.data.get("sheet") or {}) if entity else {}
+            state, build = split_sheet_change(existing, proposed)
+            changes = {**changes, "data": {**(changes.get("data") or {}), "sheet": state}}
+            if build:
+                self._propose(session, entity_id, build, entity.version if entity else 0)
         expected = message.get("version")
         try:
             apply_player_edit(
@@ -474,6 +521,96 @@ class SessionServer(QObject):
             return
         self.publish_entity(entity_id)
 
+    # ---------------------------------------------------------------- proposals
+
+    def _propose(self, session: _Session, entity_id: int, build: dict, version: int) -> None:
+        """Queue a change to what a character *is*, and tell the table."""
+        proposal = self.repos.proposals.propose(
+            self.campaign_id, entity_id, session.account_id, build, version
+        )
+        entity = self.repos.entities.get(entity_id)
+        described = describe_changes(build)
+        log.info("%s proposed %s for %s", session.member.label, described, entity_id)
+
+        self._broadcast_system(
+            f"{session.member.label} asks to change "
+            f"{entity.name if entity else 'a character'}: {described}"
+        )
+        self.publish_proposals()
+        return proposal
+
+    @property
+    def proposals(self) -> list[dict]:
+        """Open proposals, described for the DM's list."""
+        out = []
+        for proposal in self.repos.proposals.open_for(self.campaign_id):
+            entity = self.repos.entities.get(proposal.entity_id)
+            account = (
+                self.repos.accounts.get(proposal.account_id)
+                if proposal.account_id
+                else None
+            )
+            out.append(
+                {
+                    "id": proposal.id,
+                    "entity_id": proposal.entity_id,
+                    "character": entity.name if entity else "?",
+                    "who": account.display_name or account.username if account else "?",
+                    "changes": proposal.changes,
+                    "description": describe_changes(proposal.changes),
+                    "stale": bool(entity and entity.version != proposal.base_version),
+                }
+            )
+        return out
+
+    def publish_proposals(self) -> None:
+        """Only the DM needs the queue; players see the chat line."""
+        frame = encode(MessageType.PROPOSALS, proposals=self.proposals)
+        for socket, session in self._sessions.items():
+            if session.viewer.is_dm:
+                socket.sendTextMessage(frame)
+
+    def decide(self, proposal_id: int, approve: bool) -> bool:
+        """Apply or discard a proposal. Called by the DM's app."""
+        proposal = self.repos.proposals.get(proposal_id)
+        if proposal is None or not proposal.is_open:
+            return False
+
+        if not approve:
+            self.repos.proposals.decide(proposal_id, "rejected")
+            self.publish_proposals()
+            return True
+
+        entity = self.repos.entities.get(proposal.entity_id)
+        if entity is None:
+            self.repos.proposals.decide(proposal_id, "stale", "the character is gone")
+            self.publish_proposals()
+            return False
+
+        sheet = dict(entity.data.get("sheet") or {})
+        sheet.update(proposal.changes)
+        entity.data["sheet"] = sheet
+        self.repos.entities.update(entity)
+
+        self.repos.proposals.decide(proposal_id, "approved")
+        self._broadcast_system(
+            f"{entity.name}: {describe_changes(proposal.changes)} approved"
+        )
+        self.publish_entity(proposal.entity_id)
+        self.publish_proposals()
+        return True
+
+    def _handle_decision(self, socket: QWebSocket, session: _Session, message) -> None:
+        if not session.viewer.is_dm:
+            self._send(
+                socket, MessageType.ERROR, code="refused",
+                message="only the DM decides these",
+            )
+            return
+        proposal_id = message.get("proposal")
+        if isinstance(proposal_id, int):
+            self.decide(proposal_id, bool(message.get("approve")))
+
     # --------------------------------------------------------------------- output
 
     @staticmethod
@@ -491,6 +628,35 @@ class SessionServer(QObject):
 
     def _send_roster(self) -> None:
         self._broadcast(MessageType.ROSTER, members=[m.to_dict() for m in self.members])
+
+
+def _known_versions(raw) -> dict[int, int]:
+    """What the client says it holds, taken as a hint and never trusted.
+
+    A wrong version costs at most a resend, so the only real risk is a client
+    sending something enormous; the size is capped for that reason alone.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    known: dict[int, int] = {}
+    for key, value in list(raw.items())[:5000]:
+        try:
+            known[int(key)] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return known
+
+
+def describe_changes(changes: dict) -> str:
+    """'level 5 to 6' rather than a dump of JSON."""
+    parts = []
+    for key, value in sorted(changes.items()):
+        caption = key.replace("_index", "").replace("_", " ")
+        if isinstance(value, dict):
+            parts.append(caption)
+        else:
+            parts.append(f"{caption} to {value}")
+    return ", ".join(parts) or "something"
 
 
 def _silence(socket: QWebSocket) -> None:

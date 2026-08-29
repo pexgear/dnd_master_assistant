@@ -218,3 +218,192 @@ def test_saving_bumps_the_version(ctx, panel, elara):
     panel._sheet_tab.save()
 
     assert ctx.repos.entities.get(elara.id).version > before
+
+
+# ------------------------------------------------------------ gear and spells
+
+
+def test_equipment_can_be_added_and_changes_the_armour_class(ctx, panel, elara):
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+    before = tab._derived_labels["ac"].text()
+
+    tab._equipment_picker.setCurrentIndex(
+        tab._equipment_picker.findData("chain-mail")
+    )
+    tab._add_equipment()
+
+    assert tab._equipment.count() == 1
+    assert tab._derived_labels["ac"].text() != before, "worn armour should count"
+    assert tab._derived_labels["ac"].text() == "16"
+
+
+def test_adding_the_same_item_twice_stacks_it(ctx, panel, elara):
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+    tab._equipment_picker.setCurrentIndex(tab._equipment_picker.findData("dagger"))
+    tab._add_equipment()
+    tab._add_equipment()
+
+    assert tab._equipment.count() == 1
+    assert "×2" in tab._equipment.item(0).text()
+
+
+def test_equipment_can_be_removed(ctx, panel, elara):
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+    tab._equipment_picker.setCurrentIndex(tab._equipment_picker.findData("dagger"))
+    tab._add_equipment()
+    tab._equipment.setCurrentRow(0)
+    tab._remove_equipment()
+
+    assert tab._equipment.count() == 0
+
+
+def test_the_spellbook_offers_only_the_classs_list(ctx, panel, elara):
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+
+    offered = {
+        tab._spell_picker.itemData(i) for i in range(tab._spell_picker.count())
+    }
+    assert "magic-missile" in offered
+    assert "cure-wounds" not in offered
+
+
+def test_learning_a_spell_puts_it_in_the_book(ctx, panel, elara):
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+    tab._spell_picker.setCurrentIndex(tab._spell_picker.findData("magic-missile"))
+    tab._add_spell()
+
+    assert tab._spell_list.count() == 1
+    assert "Magic Missile" in tab._spell_list.item(0).text()
+    assert "magic-missile" not in {
+        tab._spell_picker.itemData(i) for i in range(tab._spell_picker.count())
+    }, "a known spell should not be offered again"
+
+
+def test_cantrips_are_always_prepared(ctx, panel, elara):
+    """Ticking a cantrip would imply it could be unprepared, which is a lie."""
+    from PySide6.QtCore import Qt
+
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+    tab._spell_picker.setCurrentIndex(tab._spell_picker.findData("fire-bolt"))
+    tab._add_spell()
+
+    assert tab._spell_list.item(0).checkState() == Qt.CheckState.Checked
+
+
+def test_preparing_and_unpreparing_is_saved(ctx, panel, elara):
+    from PySide6.QtCore import Qt
+
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+    for index in ("magic-missile", "shield"):
+        tab._spell_picker.setCurrentIndex(tab._spell_picker.findData(index))
+        tab._add_spell()
+
+    tab._spell_list.item(0).setCheckState(Qt.CheckState.Checked)
+    tab._spell_list.item(1).setCheckState(Qt.CheckState.Unchecked)
+    tab.save()
+
+    sheet = ctx.repos.entities.get(elara.id).data["sheet"]
+    assert len(sheet["spells_known"]) == 2
+    assert len(sheet["spells_prepared"]) == 1
+
+
+def test_forgetting_a_spell_also_unprepares_it(ctx, panel, elara):
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+    tab._spell_picker.setCurrentIndex(tab._spell_picker.findData("magic-missile"))
+    tab._add_spell()
+    tab._spell_list.setCurrentRow(0)
+    tab._remove_spell()
+    tab.save()
+
+    sheet = ctx.repos.entities.get(elara.id).data["sheet"]
+    assert sheet["spells_known"] == []
+    assert sheet["spells_prepared"] == []
+
+
+def test_the_spellbook_hides_for_a_non_caster(ctx, panel, elara):
+    tab = panel._sheet_tab
+    _build_wizard(tab)
+    assert tab._spellbook.isHidden() is False
+
+    tab._class.setCurrentIndex(tab._class.findData("fighter"))
+    assert tab._spellbook.isHidden() is True
+
+
+# --------------------------------------------------------------------- ownership
+
+
+def test_a_character_can_be_handed_to_a_player(ctx, panel, elara):
+    """Without this there was no way to give anyone a character at all."""
+    marco = ctx.repos.accounts.create(ctx.campaign_id, "marco", "goblin-teeth")
+    panel.reload(keep_selection=True)
+    panel._select_entity(elara.id)
+
+    panel._owner.setCurrentIndex(panel._owner.findData(marco.id))
+    panel._mark_dirty()
+    panel.save_current()
+
+    assert ctx.repos.entities.get(elara.id).owner_account_id == marco.id
+    assert ctx.repos.entities.owned_ids(marco.id) == {elara.id}
+
+
+def test_ownership_can_be_taken_back(ctx, panel, elara):
+    marco = ctx.repos.accounts.create(ctx.campaign_id, "marco", "goblin-teeth")
+    ctx.repos.entities.set_owner(elara.id, marco.id)
+    panel.reload(keep_selection=False)
+    panel._select_entity(elara.id)
+
+    panel._owner.setCurrentIndex(panel._owner.findData(None))
+    panel._mark_dirty()
+    panel.save_current()
+
+    assert ctx.repos.entities.get(elara.id).owner_account_id is None
+
+
+def test_the_owner_shown_is_the_one_stored(ctx, panel, elara):
+    marco = ctx.repos.accounts.create(
+        ctx.campaign_id, "marco", "goblin-teeth", display_name="Marco"
+    )
+    ctx.repos.entities.set_owner(elara.id, marco.id)
+
+    panel.reload(keep_selection=False)
+    panel._select_entity(elara.id)
+
+    assert panel._owner.currentData() == marco.id
+    assert panel._owner.currentText() == "Marco"
+
+
+def test_only_players_are_offered_as_owners(ctx, panel, elara):
+    ctx.repos.accounts.create(ctx.campaign_id, "gm", "run-the-game", role="dm")
+    ctx.repos.accounts.create(ctx.campaign_id, "marco", "goblin-teeth")
+    panel.reload(keep_selection=True)
+
+    offered = {panel._owner.itemText(i) for i in range(panel._owner.count())}
+    assert "marco" in offered
+    assert "gm" not in offered, "the DM does not need to be given a character"
+
+
+def test_assigning_a_character_in_the_players_dialog_grants_ownership(ctx, qtbot):
+    """The other place you naturally think about who plays what."""
+    from canon_keeper.panels.table.dialogs import AccountsDialog
+
+    elara = ctx.repos.entities.create(
+        Entity(id=None, campaign_id=ctx.campaign_id, kind=KIND_PC, name="Elara")
+    )
+    dialog = AccountsDialog(ctx)
+    qtbot.addWidget(dialog)
+
+    dialog._username.setText("marco")
+    dialog._password.setText("goblin-teeth")
+    dialog._character.setCurrentIndex(dialog._character.findData(elara.id))
+    dialog._save()
+
+    account = ctx.repos.accounts.by_username(ctx.campaign_id, "marco")
+    assert ctx.repos.entities.get(elara.id).owner_account_id == account.id

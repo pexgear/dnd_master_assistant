@@ -30,6 +30,7 @@ from canon_keeper.net import discovery, funnel
 from canon_keeper.net.client import SessionClient
 from canon_keeper.net.protocol import Member, Role
 from canon_keeper.net.server import DEFAULT_PORT, SessionServer
+from canon_keeper.panels.table.approvals import ApprovalsDialog
 from canon_keeper.panels.table.dialogs import AccountsDialog, HostDialog, JoinDialog
 from canon_keeper.plugin import AppContext
 
@@ -71,6 +72,8 @@ class TableWidget(QWidget):
         #: before that would store a password we have no reason to believe.
         self._pending_credentials: tuple[str, str, str] | None = None
         self._funnel_url = ""
+        self._proposals: list[dict] = []
+        self._approvals_dialog = None
         self._funnel_pool = QThreadPool(self)
         self._funnel_pool.setMaxThreadCount(1)
         self._client = SessionClient(self, state=ctx.shared)
@@ -85,6 +88,7 @@ class TableWidget(QWidget):
         # The DM's panel names arrive with the campaign; hand them to the
         # shell, which re-titles the docks.
         self._client.panel_names_received.connect(self._on_panel_names)
+        self._client.proposals_received.connect(self._on_proposals)
 
         self._build_ui()
         # A share changed while hosting: push it to whoever may now see it.
@@ -135,6 +139,14 @@ class TableWidget(QWidget):
         )
         self._funnel_button.clicked.connect(self._toggle_funnel)
         bar.addWidget(self._funnel_button)
+
+        self._approvals_button = QPushButton("Waiting for you")
+        self._approvals_button.setToolTip(
+            "Changes players have asked for: levels, classes, ability scores"
+        )
+        self._approvals_button.clicked.connect(self._show_approvals)
+        self._approvals_button.setVisible(False)
+        bar.addWidget(self._approvals_button)
 
         self._players_button = QPushButton("Players...")
         self._players_button.setToolTip("Who may log in, and which character they play")
@@ -205,6 +217,28 @@ class TableWidget(QWidget):
         if not self._client.send_edit(entity_id, changes):
             self._append("error", "Not connected, so that change was not saved.")
 
+    def _on_proposals(self, proposals: list) -> None:
+        """The DM's queue changed. Make it visible without being a nuisance."""
+        self._proposals = proposals
+        waiting = len(proposals)
+        self._approvals_button.setVisible(waiting > 0)
+        self._approvals_button.setText(
+            f"Waiting for you ({waiting})" if waiting else "Waiting for you"
+        )
+        if self._approvals_dialog is not None:
+            self._approvals_dialog.set_proposals(proposals)
+
+    def _show_approvals(self) -> None:
+        dialog = ApprovalsDialog(self._proposals, self)
+        dialog.decided.connect(self._decide_proposal)
+        self._approvals_dialog = dialog
+        dialog.exec()
+        self._approvals_dialog = None
+
+    def _decide_proposal(self, proposal_id: int, approve: bool) -> None:
+        # Through the client, so the host applies it -- even when the host is us.
+        self._client.send_decision(proposal_id, approve)
+
     def _on_panel_names(self, names: dict) -> None:
         if self._ctx.names is not None:
             self._ctx.names.apply_party_names(names)
@@ -238,6 +272,8 @@ class TableWidget(QWidget):
     def _stop_funnel(self) -> None:
         self._funnel_button.setEnabled(False)
         self._funnel_url = ""
+        self._proposals: list[dict] = []
+        self._approvals_dialog = None
         self._run_funnel(funnel.stop, None, self._on_funnel_stopped)
 
     def _run_funnel(self, action, argument, on_done) -> None:
@@ -517,6 +553,8 @@ class TableWidget(QWidget):
         if self._funnel_url:
             funnel.stop()
             self._funnel_url = ""
+        self._proposals: list[dict] = []
+        self._approvals_dialog = None
         if self._server is not None:
             self._server.stop()
 

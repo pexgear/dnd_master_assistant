@@ -25,7 +25,7 @@ from canon_keeper.repo.entities import (
     KIND_PC,
     Entity,
 )
-from canon_keeper.rules.sheet import STATE_FIELDS, is_sheet
+from canon_keeper.rules.sheet import BUILD_FIELDS, STATE_FIELDS, is_sheet
 
 #: Keys inside ``entity.data`` a player may see on a shared entity.
 _SHARED_DATA_FIELDS: dict[str, tuple[str, ...]] = {
@@ -183,8 +183,51 @@ def snapshot(repos, campaign_id: int, viewer: Viewer) -> list[dict]:
     ]
 
 
+def snapshot_since(
+    repos, campaign_id: int, viewer: Viewer, known: dict[int, int]
+) -> tuple[list[dict], list[int]]:
+    """What changed since the client last looked.
+
+    Returns ``(entities, gone)``. An entity the client holds but may no longer
+    see is listed as gone -- a share taken back must actually leave their
+    screen, and silence would leave a stale copy sitting there.
+    """
+    visible = visible_entity_ids(repos, campaign_id, viewer)
+    changed: list[dict] = []
+
+    for entity in repos.entities.list(campaign_id):
+        if entity.id not in visible:
+            continue
+        if known.get(entity.id) == entity.version:
+            continue
+        changed.append(project_entity(entity, viewer, visible))
+
+    gone = [entity_id for entity_id in known if entity_id not in visible]
+    return changed, gone
+
+
 class EditRefused(PermissionError):
     """A player tried to change something that is not theirs."""
+
+
+def split_sheet_change(existing: dict, proposed: dict) -> tuple[dict, dict]:
+    """Separate what a player may apply from what the DM must confirm.
+
+    Returns ``(state, build)``, each holding only the fields that actually
+    differ. Comparing rather than copying matters: a client sends the whole
+    sheet back, so without this every save would look like a proposal to change
+    everything to what it already is.
+    """
+    state: dict = {}
+    build: dict = {}
+    for key, value in proposed.items():
+        if existing.get(key) == value:
+            continue
+        if key in STATE_FIELDS:
+            state[key] = value
+        elif key in BUILD_FIELDS:
+            build[key] = value
+    return state, build
 
 
 def apply_player_edit(

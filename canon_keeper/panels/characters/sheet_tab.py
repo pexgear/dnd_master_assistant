@@ -16,6 +16,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QListWidget,
+    QListWidgetItem,
     QComboBox,
     QFormLayout,
     QGridLayout,
@@ -63,6 +65,9 @@ class SheetWidget(QWidget):
         #: health follows the maximum up when constitution or level changes
         #: instead of being stranded on the old number.
         self._last_max_hp: int | None = None
+        #: Which class the spell picker was filled for, so it is refilled when
+        #: the class changes and not on every keystroke.
+        self._picker_class: str | None = None
 
         self._build_ui()
         self.set_entity(None)
@@ -94,8 +99,11 @@ class SheetWidget(QWidget):
         body.addWidget(self._build_derived())
         body.addWidget(self._build_saves())
         body.addWidget(self._build_skills())
+        body.addWidget(self._build_equipment())
         self._spell_box = self._build_spellcasting()
         body.addWidget(self._spell_box)
+        self._spellbook = self._build_spellbook()
+        body.addWidget(self._spellbook)
         body.addStretch(1)
 
         scroll = QScrollArea()
@@ -239,6 +247,62 @@ class SheetWidget(QWidget):
             self._skill_labels[index] = value
         return box
 
+    def _build_equipment(self) -> QWidget:
+        box = QGroupBox("Equipment")
+        layout = QVBoxLayout(box)
+
+        self._equipment = QListWidget()
+        self._equipment.setMaximumHeight(140)
+        self._equipment.setToolTip(
+            "Worn armour and a held shield change the armour class above."
+        )
+        layout.addWidget(self._equipment)
+
+        row = QHBoxLayout()
+        self._equipment_picker = QComboBox()
+        self._equipment_picker.setEditable(True)
+        self._equipment_picker.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._equipment_picker.setToolTip("Type to search")
+        row.addWidget(self._equipment_picker, 1)
+
+        add = QPushButton("Add")
+        add.clicked.connect(self._add_equipment)
+        row.addWidget(add)
+
+        remove = QPushButton("Remove")
+        remove.clicked.connect(self._remove_equipment)
+        row.addWidget(remove)
+        layout.addLayout(row)
+        return box
+
+    def _build_spellbook(self) -> QWidget:
+        box = QGroupBox("Spells")
+        layout = QVBoxLayout(box)
+
+        self._spell_list = QListWidget()
+        self._spell_list.setMaximumHeight(180)
+        self._spell_list.itemChanged.connect(self._on_prepared_changed)
+        self._spell_list.setToolTip(
+            "Ticked spells are prepared. Untick to keep it known but not ready."
+        )
+        layout.addWidget(self._spell_list)
+
+        row = QHBoxLayout()
+        self._spell_picker = QComboBox()
+        self._spell_picker.setEditable(True)
+        self._spell_picker.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        row.addWidget(self._spell_picker, 1)
+
+        learn = QPushButton("Learn")
+        learn.clicked.connect(self._add_spell)
+        row.addWidget(learn)
+
+        forget = QPushButton("Forget")
+        forget.clicked.connect(self._remove_spell)
+        row.addWidget(forget)
+        layout.addLayout(row)
+        return box
+
     def _build_spellcasting(self) -> QWidget:
         box = QGroupBox("Spellcasting")
         layout = QVBoxLayout(box)
@@ -329,7 +393,9 @@ class SheetWidget(QWidget):
             if self._editable and not self._build_editable:
                 widget.setToolTip("Your DM sets this.")
 
-        for widget in (self._hp_current,):
+        # Equipment and prepared spells are state, not build: a player picks
+        # up a torch and prepares different spells without asking anyone.
+        for widget in (self._hp_current, self._equipment, self._spell_list):
             widget.setEnabled(self._editable)
 
         self._save_button.setVisible(self._editable)
@@ -411,9 +477,142 @@ class SheetWidget(QWidget):
         self._hp_current.setValue(current)
         self._last_max_hp = maximum
 
+        self._load_equipment(sheet)
+        self._load_spells(sheet)
+
         self._loading = False
         self._refresh()
         self._save_button.setEnabled(False)
+
+    def _load_equipment(self, sheet: dict) -> None:
+        self._equipment.clear()
+        for item in sheet.get("equipment") or ():
+            index = item.get("index") if isinstance(item, dict) else str(item)
+            quantity = int(item.get("qty", 1)) if isinstance(item, dict) else 1
+            entry = self._content.get("equipment", index) or {}
+            name = entry.get("name", index)
+            listed = QListWidgetItem(f"{name}  ×{quantity}" if quantity > 1 else name)
+            listed.setData(Qt.ItemDataRole.UserRole, index)
+            self._equipment.addItem(listed)
+
+        if self._equipment_picker.count() == 0:
+            for entry in self._content.equipment():
+                self._equipment_picker.addItem(
+                    entry.get("name", entry["index"]), entry["index"]
+                )
+
+    def _load_spells(self, sheet: dict) -> None:
+        was_loading = self._loading
+        self._loading = True
+
+        prepared = set(sheet.get("spells_prepared") or ())
+        self._spell_list.clear()
+        for index in sheet.get("spells_known") or ():
+            entry = self._content.get("spells", index) or {}
+            level = entry.get("level")
+            caption = entry.get("name", index)
+            if level == 0:
+                caption += "   (cantrip)"
+            elif level:
+                caption += f"   (level {level})"
+            listed = QListWidgetItem(caption)
+            listed.setData(Qt.ItemDataRole.UserRole, index)
+            listed.setFlags(listed.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            # Cantrips are always available, so ticking one would be a lie.
+            listed.setCheckState(
+                Qt.CheckState.Checked
+                if index in prepared or level == 0
+                else Qt.CheckState.Unchecked
+            )
+            self._spell_list.addItem(listed)
+
+        self._refill_spell_picker(sheet)
+        self._picker_class = sheet.get("class_index")
+        self._loading = was_loading
+
+    def _refill_spell_picker(self, sheet: dict) -> None:
+        """Offer this class's list, minus what they already know."""
+        known = set(sheet.get("spells_known") or ())
+        self._spell_picker.clear()
+        class_index = sheet.get("class_index", "")
+        if not class_index:
+            return
+        for entry in self._content.spells_for(class_index):
+            if entry["index"] in known:
+                continue
+            level = entry.get("level", 0)
+            label = f"{entry.get('name', entry['index'])}"
+            label += "  (cantrip)" if level == 0 else f"  (level {level})"
+            self._spell_picker.addItem(label, entry["index"])
+
+    # -------------------------------------------------------- gear and spells
+
+    def _add_equipment(self) -> None:
+        index = self._equipment_picker.currentData()
+        if not index or self._sheet is None:
+            return
+        items = list(self._sheet.get("equipment") or [])
+        for item in items:
+            if isinstance(item, dict) and item.get("index") == index:
+                item["qty"] = int(item.get("qty", 1)) + 1
+                break
+        else:
+            items.append({"index": index, "qty": 1})
+        self._sheet["equipment"] = items
+        self._load_equipment(self._sheet)
+        self._changed()
+
+    def _remove_equipment(self) -> None:
+        item = self._equipment.currentItem()
+        if item is None or self._sheet is None:
+            return
+        index = item.data(Qt.ItemDataRole.UserRole)
+        self._sheet["equipment"] = [
+            entry
+            for entry in (self._sheet.get("equipment") or [])
+            if (entry.get("index") if isinstance(entry, dict) else entry) != index
+        ]
+        self._load_equipment(self._sheet)
+        self._changed()
+
+    def _add_spell(self) -> None:
+        index = self._spell_picker.currentData()
+        if not index or self._sheet is None:
+            return
+        known = list(self._sheet.get("spells_known") or [])
+        if index in known:
+            return
+        known.append(index)
+        self._sheet["spells_known"] = known
+        self._load_spells(self._sheet)
+        self._changed()
+
+    def _remove_spell(self) -> None:
+        item = self._spell_list.currentItem()
+        if item is None or self._sheet is None:
+            return
+        index = item.data(Qt.ItemDataRole.UserRole)
+        self._sheet["spells_known"] = [
+            spell for spell in (self._sheet.get("spells_known") or []) if spell != index
+        ]
+        self._sheet["spells_prepared"] = [
+            spell
+            for spell in (self._sheet.get("spells_prepared") or [])
+            if spell != index
+        ]
+        self._load_spells(self._sheet)
+        self._changed()
+
+    def _on_prepared_changed(self, _item) -> None:
+        if not self._loading:
+            self._changed()
+
+    def _prepared(self) -> list[str]:
+        return [
+            self._spell_list.item(row).data(Qt.ItemDataRole.UserRole)
+            for row in range(self._spell_list.count())
+            if self._spell_list.item(row).checkState() == Qt.CheckState.Checked
+        ]
 
     # ----------------------------------------------------------------- editing
 
@@ -450,6 +649,9 @@ class SheetWidget(QWidget):
             index for index, check in self._skill_checks.items() if check.isChecked()
         ]
         sheet["hp_current"] = self._hp_current.value()
+        sheet["equipment"] = list((self._sheet or {}).get("equipment") or [])
+        sheet["spells_known"] = list((self._sheet or {}).get("spells_known") or [])
+        sheet["spells_prepared"] = self._prepared()
         return sheet
 
     # ---------------------------------------------------------------- derived
@@ -506,9 +708,15 @@ class SheetWidget(QWidget):
     def _refresh_spellcasting(self, sheet: dict, summary: dict) -> None:
         if not derive.is_caster(sheet):
             self._spell_box.setVisible(False)
+            self._spellbook.setVisible(False)
             return
 
         self._spell_box.setVisible(True)
+        self._spellbook.setVisible(True)
+
+        if self._picker_class != sheet.get("class_index"):
+            self._picker_class = sheet.get("class_index")
+            self._refill_spell_picker(sheet)
         ability = derive.spellcasting_ability(sheet)
         self._spell_summary.setText(
             f"{ABILITY_NAMES[ability]} caster  ·  save DC {summary['spell_save_dc']}"
@@ -543,6 +751,7 @@ class SheetWidget(QWidget):
             # A player: the host decides, and the change comes back to us.
             self._commit(self._entity_id, sheet)
             self._save_button.setEnabled(False)
+            self._problems.setText("Sent to your DM.")
             return True
 
         if self._entity is None:

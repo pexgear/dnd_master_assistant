@@ -222,7 +222,8 @@ class AccountsDialog(QDialog):
 
         self._character = QComboBox()
         self._character.setToolTip(
-            "The player edits this character, and the table sees its name in chat."
+            "The character this login plays: they own it, see its whole sheet, "
+            "and the table sees its name in chat."
         )
         form.addRow("Plays", self._character)
 
@@ -314,6 +315,12 @@ class AccountsDialog(QDialog):
                 repos.accounts.set_character(existing.id, self._character.currentData())
                 if self._password.text():
                     repos.accounts.set_password(existing.id, self._password.text())
+
+            account = repos.accounts.by_username(self._ctx.campaign_id, username)
+            chosen = self._character.currentData()
+            if account is not None and chosen is not None:
+                # Playing a character and owning it are the same intent here.
+                repos.entities.set_owner(chosen, account.id)
         except (ValueError, AuthError) as exc:
             QMessageBox.warning(self, "Players", str(exc))
             return

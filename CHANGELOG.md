@@ -5,6 +5,16 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+- **Players propose, you confirm.** A player changing their level or class sends
+  it to you instead of applying it — chat says so, and a **Waiting for you**
+  button appears with the queue. Hit points, conditions, gear and prepared
+  spells still apply at once.
+- **Hand a character to a player** with *Played by* in the Characters panel, or
+  by assigning it in **Table ▸ Players…**. They then see its whole sheet.
+- **Reconnecting is cheap.** Your copy is cached, so the app shows your
+  character before it connects and a reconnect fetches only what changed.
+- **Equipment and spells on the sheet**: add gear (worn armour changes the
+  armour class), learn and forget spells, tick which are prepared.
 - **Guided character creation.** **Build...** in the Characters panel walks
   through species, class, abilities, skills and spells, with the standard array
   and point buy, and adds the class's starting equipment at the end.

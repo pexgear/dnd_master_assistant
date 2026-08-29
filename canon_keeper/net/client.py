@@ -14,7 +14,7 @@ import logging
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtWebSockets import QWebSocket
 
-from canon_keeper.net import auth
+from canon_keeper.net import auth, cache
 from canon_keeper.net.protocol import (
     MAX_HOST_FRAME_BYTES,
     Member,
@@ -50,6 +50,8 @@ class SessionClient(QObject):
     state_replaced = Signal()
     #: What the DM calls each panel, as a {panel_id: name} mapping.
     panel_names_received = Signal(dict)
+    #: Build changes waiting on the DM. Only the DM's client sees these.
+    proposals_received = Signal(list)
 
     def __init__(self, parent: QObject | None = None, state: SharedState | None = None) -> None:
         super().__init__(parent)
@@ -72,6 +74,8 @@ class SessionClient(QObject):
         #: with the panels via AppContext, so they need no socket of their own.
         self.state = state if state is not None else SharedState(self)
 
+        #: Where this session's cache lives, once we know who we are talking to.
+        self._cache_key: tuple[str, str] | None = None
         self._wanted = False  # whether the user wants to be connected
         self._attempt = 0
         self._retry = QTimer(self)
@@ -104,6 +108,14 @@ class SessionClient(QObject):
         self._password = password
         self._token = ""
         self._name = name or username
+        self._cache_key = (url, username)
+
+        # Show what we had before the socket is even open, and tell the host
+        # about it so it can reply with only what changed.
+        held = cache.load(url, username)
+        if held:
+            self.state.replace_all(list(held.values()))
+
         self._wanted = True
         self._attempt = 0
         self._open()
@@ -131,6 +143,9 @@ class SessionClient(QObject):
         self._connect_timeout.stop()
         self._me = None
         self._members = []
+        # The cache is deliberately left in place: it is what makes the next
+        # connection cheap, and the host removes anything we may no longer see.
+        self._cache_key = None
         self.state.clear()
         if self._socket.state().name != "UnconnectedState":
             self._socket.close()
@@ -168,6 +183,10 @@ class SessionClient(QObject):
         """Ask the host to apply a change to your own character."""
         return self._send(MessageType.EDIT, id=entity_id, changes=changes)
 
+    def send_decision(self, proposal_id: int, approve: bool) -> bool:
+        """The DM answering a proposal."""
+        return self._send(MessageType.DECIDE, proposal=proposal_id, approve=approve)
+
     def _send(self, message_type, **payload) -> bool:
         if not self.is_connected:
             self.failed.emit("Not connected.")
@@ -180,13 +199,18 @@ class SessionClient(QObject):
     def _on_connected(self) -> None:
         self._connect_timeout.stop()
         self._attempt = 0
+        known = cache.versions(
+            {e["id"]: e for e in self.state.all() if isinstance(e.get("id"), int)}
+        )
         if self._token:
             self._socket.sendTextMessage(
-                encode(MessageType.HELLO, token=self._token, name=self._name)
+                encode(
+                    MessageType.HELLO, token=self._token, name=self._name, known=known
+                )
             )
         else:
             self._socket.sendTextMessage(
-                encode(MessageType.HELLO, username=self._username)
+                encode(MessageType.HELLO, username=self._username, known=known)
             )
 
     def _on_disconnected(self) -> None:
@@ -224,20 +248,39 @@ class SessionClient(QObject):
 
         elif message.type == MessageType.SNAPSHOT:
             entities = message.get("entities")
-            self.state.replace_all(entities if isinstance(entities, list) else [])
+            entities = entities if isinstance(entities, list) else []
+            if message.get("partial"):
+                # A delta: keep what we had, apply what changed, drop what the
+                # host says we may no longer see.
+                for entity in entities:
+                    self.state.upsert(entity)
+                for entity_id in message.get("gone") or ():
+                    if isinstance(entity_id, int):
+                        self.state.remove(entity_id)
+            else:
+                self.state.replace_all(entities)
+            self._remember()
             self.state_replaced.emit()
 
         elif message.type == MessageType.PANEL_NAMES:
             names = message.get("names")
             self.panel_names_received.emit(names if isinstance(names, dict) else {})
 
+        elif message.type == MessageType.PROPOSALS:
+            proposals = message.get("proposals")
+            self.proposals_received.emit(
+                proposals if isinstance(proposals, list) else []
+            )
+
         elif message.type == MessageType.ENTITY:
             self.state.upsert(message.get("entity") or {})
+            self._remember()
 
         elif message.type == MessageType.ENTITY_GONE:
             entity_id = message.get("id")
             if isinstance(entity_id, int):
                 self.state.remove(entity_id)
+                self._remember()
 
         elif message.type == MessageType.WELCOME:
             self._me = Member.from_dict(message.get("you", {}))
@@ -269,6 +312,17 @@ class SessionClient(QObject):
                 self._wanted = False
                 self._retry.stop()
             self.failed.emit(text)
+
+    def _remember(self) -> None:
+        """Keep the cache in step with what we hold."""
+        if self._cache_key is None:
+            return
+        url, username = self._cache_key
+        cache.save(
+            url,
+            username,
+            {e["id"]: e for e in self.state.all() if isinstance(e.get("id"), int)},
+        )
 
     def _answer_challenge(self, message) -> None:
         """Prove we know the password without sending it."""

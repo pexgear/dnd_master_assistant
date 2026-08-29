@@ -9,6 +9,7 @@ from canon_keeper.repo.campaigns import CampaignRepo
 from canon_keeper.repo.entities import Entity, EntityRepo, StaleWrite
 from canon_keeper.repo.facts import Fact, FactRepo
 from canon_keeper.repo.layouts import LayoutRepo
+from canon_keeper.repo.proposals import Proposal, ProposalRepo
 from canon_keeper.repo.sessions import Session, SessionRepo, Utterance, UtteranceRepo
 from canon_keeper.repo.settings import SettingsRepo
 from canon_keeper.repo.shares import Share, ShareRepo
@@ -24,6 +25,7 @@ class Repos:
         self.entities = EntityRepo(conn)
         self.facts = FactRepo(conn)
         self.layouts = LayoutRepo(conn)
+        self.proposals = ProposalRepo(conn)
         self.sessions = SessionRepo(conn)
         self.utterances = UtteranceRepo(conn)
         self.settings = SettingsRepo(conn)
@@ -46,6 +48,8 @@ __all__ = [
     "UtteranceRepo",
     "Account",
     "AccountRepo",
+    "Proposal",
+    "ProposalRepo",
     "Share",
     "ShareRepo",
 ]

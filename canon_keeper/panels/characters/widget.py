@@ -144,6 +144,14 @@ class CharactersWidget(QWidget):
             self._texts[key] = edit
             form.addRow(label, edit)
 
+        self._owner = QComboBox()
+        self._owner.setToolTip(
+            "The player who owns this character. They see the whole sheet and "
+            "keep their own hit points; you still confirm changes of level."
+        )
+        self._owner.currentIndexChanged.connect(self._mark_dirty)
+        form.addRow("Played by", self._owner)
+
         self._share = ShareBar(self._ctx)
         form.addRow("Players see", self._share)
 
@@ -228,6 +236,7 @@ class CharactersWidget(QWidget):
         self._loading = False
 
         self._reload_locations()
+        self._reload_owners()
 
         if self._list.currentItem() is None:
             self._current_id = None
@@ -241,6 +250,19 @@ class CharactersWidget(QWidget):
         if sheet is None:
             return ""
         return derive.describe(sheet, self._sheet_tab._content)
+
+    def _reload_owners(self) -> None:
+        """Who could own a character: the campaign's player logins."""
+        current = self._owner.currentData()
+        self._loading = True
+        self._owner.clear()
+        self._owner.addItem("(nobody — it is yours)", None)
+        for account in self._ctx.repos.accounts.players(self._ctx.campaign_id):
+            label = account.display_name or account.username
+            self._owner.addItem(label, account.id)
+        index = self._owner.findData(current)
+        self._owner.setCurrentIndex(index if index >= 0 else 0)
+        self._loading = False
 
     def _reload_locations(self) -> None:
         current = self._location.currentData()
@@ -271,6 +293,9 @@ class CharactersWidget(QWidget):
         self._summary.setText(entity.summary)
         for key, edit in self._texts.items():
             edit.setPlainText(entity.data.get(key, ""))
+
+        owner_index = self._owner.findData(entity.owner_account_id)
+        self._owner.setCurrentIndex(owner_index if owner_index >= 0 else 0)
 
         self._share.set_entity(entity.id)
         self._sheet_tab.set_entity(entity)
@@ -391,6 +416,7 @@ class CharactersWidget(QWidget):
         entity.kind = self._kind.currentData()
         entity.parent_id = self._location.currentData()
         entity.summary = self._summary.text().strip()
+        entity.owner_account_id = self._owner.currentData()
         entity.data["status"] = self._status.currentText().strip() or "unknown"
         for key, edit in self._texts.items():
             entity.data[key] = edit.toPlainText().strip()
