@@ -5,6 +5,8 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.3.1
+
 - **Speak into the chat.** A **Speak** button beside the chat box transcribes
   what you said into the box for you to correct before sending — useful for
   anyone who would rather talk than type mid-scene. Local, and primed with your
