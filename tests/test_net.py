@@ -141,18 +141,22 @@ def accounts(repos, campaign):
     elara = repos.entities.create(
         Entity(id=None, campaign_id=campaign.id, kind=KIND_PC, name="Elara")
     )
+    marco = repos.accounts.create(
+        campaign.id,
+        "marco",
+        "goblin-teeth",
+        display_name="Marco",
+        character_entity_id=elara.id,
+    )
+    # Ownership now lives on the entity, so a player can have more than one.
+    repos.entities.set_owner(elara.id, marco.id)
+
     return {
         "elara_entity": elara,
         "dm": repos.accounts.create(
             campaign.id, "gm", "run-the-game", role="dm", display_name="The DM"
         ),
-        "marco": repos.accounts.create(
-            campaign.id,
-            "marco",
-            "goblin-teeth",
-            display_name="Marco",
-            character_entity_id=elara.id,
-        ),
+        "marco": marco,
         "elsa": repos.accounts.create(campaign.id, "elsa", "silver-moon"),
     }
 

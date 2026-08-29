@@ -26,6 +26,7 @@ from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 
 from canon_keeper.net import auth, discovery
 from canon_keeper.net.dice import DiceError, roll
+from canon_keeper.repo.entities import StaleWrite
 from canon_keeper.net.projection import (
     EditRefused,
     Viewer,
@@ -328,7 +329,7 @@ class SessionServer(QObject):
             viewer = Viewer(
                 account_id=account.id,
                 is_dm=account.is_dm,
-                own_entity_id=account.character_entity_id,
+                owned_entity_ids=self.repos.entities.owned_ids(account.id),
             )
             character = ""
             if account.character_entity_id is not None:
@@ -453,10 +454,23 @@ class SessionServer(QObject):
         changes = message.get("changes")
         if not isinstance(entity_id, int) or not isinstance(changes, dict):
             return
+        expected = message.get("version")
         try:
-            apply_player_edit(self.repos, session.viewer, entity_id, changes)
+            apply_player_edit(
+                self.repos,
+                session.viewer,
+                entity_id,
+                changes,
+                expected_version=expected if isinstance(expected, int) else None,
+            )
         except EditRefused as exc:
             self._send(socket, MessageType.ERROR, code="refused", message=str(exc))
+            return
+        except StaleWrite as exc:
+            # Someone else moved it underneath them. Refuse, and resend so their
+            # screen catches up rather than showing a change that did not happen.
+            self._send(socket, MessageType.ERROR, code="stale", message=str(exc))
+            self.publish_entity(entity_id)
             return
         self.publish_entity(entity_id)
 

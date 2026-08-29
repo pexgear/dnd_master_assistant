@@ -17,7 +17,7 @@ Two rules hold the whole design up:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from canon_keeper.repo.entities import (
     KIND_LOCATION,
@@ -25,6 +25,7 @@ from canon_keeper.repo.entities import (
     KIND_PC,
     Entity,
 )
+from canon_keeper.rules.sheet import STATE_FIELDS, is_sheet
 
 #: Keys inside ``entity.data`` a player may see on a shared entity.
 _SHARED_DATA_FIELDS: dict[str, tuple[str, ...]] = {
@@ -37,7 +38,42 @@ _DEFAULT_SHARED_DATA_FIELDS = ("shared_notes",)
 #: Extra keys the owner of a PC sees on their own sheet. DM-authored fields --
 #: motive, secrets, voice -- are deliberately absent even here: the DM's notes
 #: about a character are the DM's, whoever plays it.
-_OWN_PC_DATA_FIELDS = ("inventory", "player_notes")
+_OWN_PC_DATA_FIELDS = ("inventory", "player_notes", "sheet")
+
+#: What one player may see of *another* character's sheet. A party knows each
+#: other's hit points and what class they are; they do not read each other's
+#: notes or inventory.
+_SHARED_SHEET_FIELDS = (
+    "schema",
+    "species",
+    "subspecies",
+    "class_index",
+    "subclass",
+    "level",
+    "background",
+    "abilities",
+    "ability_improvements",
+    "hp_current",
+    "temp_hp",
+    "conditions",
+    "inspiration",
+    "death_saves",
+)
+
+
+def _public_sheet(entity: Entity) -> dict | None:
+    """The part of a character sheet other people may see.
+
+    Returned only for player characters. An NPC's sheet is a statblock, and
+    sharing that an NPC *exists* must not also reveal how hard it is to kill --
+    that is a separate decision the DM has not made.
+    """
+    if entity.kind != KIND_PC:
+        return None
+    sheet = entity.data.get("sheet")
+    if not is_sheet(sheet):
+        return None
+    return {key: sheet[key] for key in _SHARED_SHEET_FIELDS if key in sheet}
 
 #: What a player may change on their own PC, and nothing else. Anything not
 #: listed is ignored rather than rejected, so an older or modified client cannot
@@ -54,11 +90,16 @@ class Viewer:
 
     account_id: int | None
     is_dm: bool
-    own_entity_id: int | None = None
+    #: Every character this login owns. A player may have several, and sees the
+    #: whole sheet of each.
+    owned_entity_ids: set[int] = field(default_factory=set)
 
     @classmethod
     def dungeon_master(cls) -> "Viewer":
         return cls(account_id=None, is_dm=True)
+
+    def owns(self, entity_id: int | None) -> bool:
+        return entity_id is not None and entity_id in self.owned_entity_ids
 
 
 def project_entity(
@@ -68,12 +109,18 @@ def project_entity(
     if viewer.is_dm:
         return _full(entity)
 
-    is_own = viewer.own_entity_id is not None and entity.id == viewer.own_entity_id
+    is_own = viewer.owns(entity.id)
     allowed = _SHARED_DATA_FIELDS.get(entity.kind, _DEFAULT_SHARED_DATA_FIELDS)
     if is_own:
+        # Your own character is yours entirely: the whole sheet, no filtering.
         allowed = tuple(allowed) + _OWN_PC_DATA_FIELDS
 
     data = {key: entity.data[key] for key in allowed if key in entity.data}
+
+    if not is_own:
+        public = _public_sheet(entity)
+        if public is not None:
+            data["sheet"] = public
 
     projected = {
         "id": entity.id,
@@ -82,6 +129,7 @@ def project_entity(
         "summary": entity.summary,
         "data": data,
         "own": is_own,
+        "version": entity.version,
     }
 
     # A parent is only mentioned if the player can see it too. Otherwise
@@ -106,6 +154,8 @@ def _full(entity: Entity) -> dict:
         "parent_id": entity.parent_id,
         "aliases": list(entity.aliases),
         "own": False,
+        "version": entity.version,
+        "owner_account_id": entity.owner_account_id,
     }
 
 
@@ -117,9 +167,8 @@ def visible_entity_ids(repos, campaign_id: int, viewer: Viewer) -> set[int]:
         return set()
 
     ids = repos.shares.visible_entity_ids(campaign_id, viewer.account_id)
-    # Players always see their own character, whether or not anyone shared it.
-    if viewer.own_entity_id is not None:
-        ids.add(viewer.own_entity_id)
+    # Players always see their own characters, shared or not.
+    ids |= viewer.owned_entity_ids
     return ids
 
 
@@ -138,15 +187,25 @@ class EditRefused(PermissionError):
     """A player tried to change something that is not theirs."""
 
 
-def apply_player_edit(repos, viewer: Viewer, entity_id: int, changes: dict) -> Entity:
-    """Apply a player's edit to their own character, or refuse.
+def apply_player_edit(
+    repos,
+    viewer: Viewer,
+    entity_id: int,
+    changes: dict,
+    expected_version: int | None = None,
+) -> Entity:
+    """Apply a player's edit to one of their own characters, or refuse.
 
     Silently drops unknown keys rather than failing, so a client sending fields
     we do not recognise cannot use the error to probe what exists.
+
+    ``expected_version`` makes the write conditional: an edit made against a
+    sheet that has since moved on is refused rather than quietly overwriting
+    whatever happened in between.
     """
     if viewer.is_dm:
         raise EditRefused("this path is for player edits only")
-    if viewer.own_entity_id is None or entity_id != viewer.own_entity_id:
+    if not viewer.owns(entity_id):
         raise EditRefused("you can only edit your own character")
 
     entity = repos.entities.get(entity_id)
@@ -159,10 +218,28 @@ def apply_player_edit(repos, viewer: Viewer, entity_id: int, changes: dict) -> E
             if key in PLAYER_EDITABLE_DATA_FIELDS:
                 entity.data[key] = value
 
+        # A sheet is merged field by field, and only the state half: hit points
+        # and conditions apply at once, while level and ability scores are a
+        # change to what the character *is* and wait for the DM. Replacing the
+        # whole sheet wholesale would let a player smuggle a build change
+        # through as state.
+        incoming_sheet = incoming_data.get("sheet")
+        if isinstance(incoming_sheet, dict):
+            existing = entity.data.get("sheet")
+            if is_sheet(existing):
+                for key, value in incoming_sheet.items():
+                    if key in STATE_FIELDS:
+                        existing[key] = value
+                entity.data["sheet"] = existing
+            elif is_sheet(incoming_sheet):
+                # No sheet yet: accept the first one, since there is nothing to
+                # smuggle a change past.
+                entity.data["sheet"] = incoming_sheet
+
     for column in PLAYER_EDITABLE_COLUMNS:
         if column in changes and isinstance(changes[column], str):
             setattr(entity, column, changes[column].strip())
 
     # Name, kind, parent and every DM field are untouched by construction: they
     # are simply never read from `changes`.
-    return repos.entities.update(entity)
+    return repos.entities.update(entity, expected_version=expected_version)
