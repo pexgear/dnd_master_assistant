@@ -22,13 +22,17 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from canon_keeper.panels.characters.sheet_tab import SheetWidget
 from canon_keeper.panels.sharing import ShareBar
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.entities import KIND_LOCATION, KIND_NPC, KIND_PC, Entity
+from canon_keeper.rules import derive
+from canon_keeper.rules.sheet import sheet_of
 
 CHARACTER_KINDS = (KIND_NPC, KIND_PC)
 STATUSES = ("alive", "dead", "unknown", "captured", "missing")
@@ -145,13 +149,23 @@ class CharactersWidget(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(self._form_container)
 
+        # Story and Sheet are the same character seen two ways: who they are,
+        # and what they can do. Tabs rather than one long form, because a full
+        # sheet would bury the narrative fields the panel exists for.
+        self._tabs = QTabWidget()
+        self._tabs.addTab(scroll, "Story")
+
+        self._sheet_tab = SheetWidget(self._ctx)
+        self._sheet_tab.saved.connect(lambda _id: self.reload(keep_selection=True))
+        self._tabs.addTab(self._sheet_tab, "Sheet")
+
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         self._empty_hint = QLabel("Select a character, or press New.")
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         right_layout.addWidget(self._empty_hint)
-        right_layout.addWidget(scroll, 1)
+        right_layout.addWidget(self._tabs, 1)
 
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
@@ -167,6 +181,7 @@ class CharactersWidget(QWidget):
 
     def _set_form_enabled(self, enabled: bool) -> None:
         self._form_container.setEnabled(enabled)
+        self._tabs.setVisible(enabled)
         self._empty_hint.setVisible(not enabled)
 
     def _mark_dirty(self, *_args) -> None:
@@ -193,7 +208,10 @@ class CharactersWidget(QWidget):
         self._list.clear()
         for entity in entities:
             label = entity.name
-            if entity.kind == KIND_PC:
+            described = self._describe_sheet(entity)
+            if described:
+                label += f"   {described}"
+            elif entity.kind == KIND_PC:
                 label += "  (PC)"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, entity.id)
@@ -207,7 +225,15 @@ class CharactersWidget(QWidget):
         if self._list.currentItem() is None:
             self._current_id = None
             self._share.set_entity(None)
+            self._sheet_tab.set_entity(None)
             self._set_form_enabled(False)
+
+    def _describe_sheet(self, entity) -> str:
+        """'Level 5 Elf Wizard', for characters that have a sheet."""
+        sheet = sheet_of(entity.data)
+        if sheet is None:
+            return ""
+        return derive.describe(sheet, self._sheet_tab._content)
 
     def _reload_locations(self) -> None:
         current = self._location.currentData()
@@ -240,6 +266,7 @@ class CharactersWidget(QWidget):
             edit.setPlainText(entity.data.get(key, ""))
 
         self._share.set_entity(entity.id)
+        self._sheet_tab.set_entity(entity)
 
         self._loading = False
         self._save_button.setEnabled(False)

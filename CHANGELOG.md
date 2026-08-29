@@ -5,6 +5,16 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+- **Character sheets.** A **Sheet** tab beside Story in the Characters panel:
+  species, class, level, ability scores and skills, with hit points, armour
+  class, saving throws, skill bonuses and spell slots worked out as you type.
+  Built on the SRD 5.1, bundled, so nothing needs the internet.
+- Players can own **more than one character**, and see the whole sheet of each.
+  Anyone else's shows only what a party would know: class, level, hit points,
+  conditions. An NPC's statblock is never sent.
+- Every character now carries a **version**, so two people editing at once no
+  longer means one edit silently disappearing.
+
 - **Panels can be renamed.** Three layers: what you call it, what the party
   calls it, and the default — the more specific one wins. The DM's names travel
   with the session and update live; yours stay on your machine.
