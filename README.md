@@ -126,9 +126,36 @@ The DM then joins it like everyone else, with a `--add-dm` login.
 **Windows will ask** to allow the app on private networks the first time you
 host. Say yes, or nobody can connect.
 
-**Over the internet**, someone has to be reachable: port-forward the host, or put
-everyone on a tunnel like Tailscale. Nothing in a chat protocol can avoid that --
-it is why the dedicated-server option exists.
+### Playing over the internet
+
+Press **Share on the internet** while hosting. That publishes the session
+through [Tailscale Funnel](https://tailscale.com/kb/1223/funnel) and gives you an
+address like `wss://your-machine.tailXXXX.ts.net` to send your players.
+
+It solves three things at once:
+
+- **NAT** — the tunnel dials outward, so no port forwarding, and it works behind
+  carrier-grade NAT where forwarding is not even possible.
+- **Encryption** — Tailscale provisions a real certificate to your machine, so
+  the connection is `wss://` rather than plain text. Nothing to configure or
+  renew.
+- **The address** — a stable hostname, instead of a home IP that changes.
+
+**Only you install Tailscale.** Your players need nothing: they paste the
+address into the chooser and log in as usual. Sign in once at
+[tailscale.com/download](https://tailscale.com/download), and enable Funnel for
+your tailnet the first time — if it is not enabled, the app shows you
+Tailscale's own message, which links straight to the setting.
+
+Sharing stops when you press the button again, when you leave the session, or
+when you close the app, so the tunnel never outlives the game.
+
+**Copy invite** gives you the right address to send either way: the public one
+when you are sharing, your LAN address otherwise.
+
+If you would rather not use a tunnel, the alternatives are unchanged: forward a
+port on your router (but then the traffic is unencrypted), or run
+`canonkeeper-server` on a machine that already has a public address.
 
 ## Light and dark
 

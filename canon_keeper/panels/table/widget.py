@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -25,12 +26,38 @@ from PySide6.QtWidgets import (
 )
 
 from canon_keeper import campaigns, credentials
-from canon_keeper.net import discovery
+from canon_keeper.net import discovery, funnel
 from canon_keeper.net.client import SessionClient
 from canon_keeper.net.protocol import Member, Role
 from canon_keeper.net.server import DEFAULT_PORT, SessionServer
 from canon_keeper.panels.table.dialogs import AccountsDialog, HostDialog, JoinDialog
 from canon_keeper.plugin import AppContext
+
+class _FunnelSignals(QObject):
+    done = Signal(object)  # funnel.Result
+
+
+class _FunnelTask(QRunnable):
+    """Runs one tailscale command off the GUI thread.
+
+    The CLI usually answers in under a second, but the first run of Funnel on a
+    tailnet can sit there while certificates are provisioned -- long enough to
+    look like a hang if it were done inline.
+    """
+
+    def __init__(self, action, *args) -> None:
+        super().__init__()
+        self.signals = _FunnelSignals()
+        self._action = action
+        self._args = args
+
+    def run(self) -> None:  # noqa: D102 - QRunnable entry point
+        try:
+            result = self._action(*self._args)
+        except Exception as exc:  # noqa: BLE001 - report, never take the app down
+            result = funnel.Result(False, message=str(exc))
+        self.signals.done.emit(result)
+
 
 QUICK_DICE = ("d20", "d12", "d10", "d8", "d6", "d4")
 
@@ -43,6 +70,9 @@ class TableWidget(QWidget):
         #: Credentials to save once the host actually accepts them. Saving
         #: before that would store a password we have no reason to believe.
         self._pending_credentials: tuple[str, str, str] | None = None
+        self._funnel_url = ""
+        self._funnel_pool = QThreadPool(self)
+        self._funnel_pool.setMaxThreadCount(1)
         self._client = SessionClient(self, state=ctx.shared)
 
         self._client.connected.connect(self._on_connected)
@@ -93,11 +123,25 @@ class TableWidget(QWidget):
         self._leave_button.clicked.connect(self._leave)
         bar.addWidget(self._leave_button)
 
+        self._funnel_button = QPushButton("Share on the internet")
+        self._funnel_button.setCheckable(True)
+        self._funnel_button.setToolTip(
+            "Publish this session through Tailscale Funnel, so players outside "
+            "your network can join. They do not need Tailscale."
+        )
+        self._funnel_button.clicked.connect(self._toggle_funnel)
+        bar.addWidget(self._funnel_button)
+
         self._players_button = QPushButton("Players...")
         self._players_button.setToolTip("Who may log in, and which character they play")
         self._players_button.clicked.connect(self._manage_accounts)
         self._players_button.setVisible(self._ctx.role == Role.DM.value)
         bar.addWidget(self._players_button)
+
+        self._invite_button = QPushButton("Copy invite")
+        self._invite_button.setToolTip("Copy the address players should connect to")
+        self._invite_button.clicked.connect(self._copy_invite)
+        bar.addWidget(self._invite_button)
         bar.addStretch(1)
         outer.addLayout(bar)
 
@@ -160,6 +204,76 @@ class TableWidget(QWidget):
     def _on_share_changed(self, entity_id: int) -> None:
         if self._server is not None and self._server.is_running:
             self._server.publish_entity(entity_id)
+
+    def _toggle_funnel(self) -> None:
+        if self._funnel_button.isChecked():
+            self._start_funnel()
+        else:
+            self._stop_funnel()
+
+    def _start_funnel(self) -> None:
+        if self._server is None or not self._server.is_running:
+            self._append("error", "Go online first, then share it on the internet.")
+            self._funnel_button.setChecked(False)
+            return
+
+        self._funnel_button.setEnabled(False)
+        self._funnel_button.setText("Starting...")
+        self._append_system("Asking Tailscale to publish this session...")
+        self._run_funnel(funnel.start, self._server.port, self._on_funnel_started)
+
+    def _stop_funnel(self) -> None:
+        self._funnel_button.setEnabled(False)
+        self._funnel_url = ""
+        self._run_funnel(funnel.stop, None, self._on_funnel_stopped)
+
+    def _run_funnel(self, action, argument, on_done) -> None:
+        task = (
+            _FunnelTask(action, argument) if argument is not None else _FunnelTask(action)
+        )
+        task.signals.done.connect(on_done)
+        self._funnel_pool.start(task)
+
+    def _on_funnel_started(self, result) -> None:
+        self._funnel_button.setEnabled(True)
+        if not result.ok:
+            self._funnel_button.setChecked(False)
+            self._funnel_button.setText("Share on the internet")
+            # Tailscale's own wording names the setting to change, so show it.
+            QMessageBox.warning(self, "Share on the internet", result.message)
+            self._append("error", "Could not publish the session.")
+            self._update_state()
+            return
+
+        self._funnel_url = result.websocket_url
+        self._funnel_button.setText("Stop sharing")
+        self._append_system(f"Published. Players outside your network: {self._funnel_url}")
+        self._append_system("Use Copy invite to send that to them.")
+        self._update_state()
+
+    def _on_funnel_stopped(self, result) -> None:
+        self._funnel_button.setEnabled(True)
+        self._funnel_button.setText("Share on the internet")
+        if result.ok:
+            self._append_system("No longer shared on the internet.")
+        else:
+            self._append("error", result.message or "Could not stop sharing.")
+        self._update_state()
+
+    def _copy_invite(self) -> None:
+        """Whatever address a player should actually be given."""
+        if self._funnel_url:
+            invite = self._funnel_url
+        elif self._server is not None and self._server.is_running:
+            addresses = discovery.local_addresses()
+            host = next(
+                (a for a in sorted(addresses) if not a.startswith("127.")), "127.0.0.1"
+            )
+            invite = f"ws://{host}:{self._server.port}"
+        else:
+            return
+        QApplication.clipboard().setText(invite)
+        self._ctx.bus.status_message.emit(f"Copied {invite}")
 
     def _manage_accounts(self) -> None:
         AccountsDialog(self._ctx, self).exec()
@@ -227,6 +341,11 @@ class TableWidget(QWidget):
 
     def _leave(self) -> None:
         self._client.leave()
+        if self._funnel_button.isChecked():
+            # Closing the session must also take it off the public internet,
+            # or the tunnel outlives the thing it was pointing at.
+            self._funnel_button.setChecked(False)
+            self._stop_funnel()
         if self._server is not None:
             self._server.stop()
             self._server.deleteLater()
@@ -326,15 +445,25 @@ class TableWidget(QWidget):
         is_dm = self._ctx.role == Role.DM.value
         self._host_button.setEnabled(is_dm and not connected and not hosting)
         self._host_button.setVisible(is_dm)
+        self._funnel_button.setVisible(is_dm)
+        self._funnel_button.setEnabled(hosting)
+        self._invite_button.setVisible(is_dm)
+        self._invite_button.setEnabled(hosting)
         self._join_button.setEnabled(not connected and not hosting)
         self._leave_button.setEnabled(connected or hosting)
         self._entry.setEnabled(connected)
 
         if hosting and self._server is not None:
-            self._status.setText(
-                f"Hosting on port {self._server.port}. Players on this network will "
-                "see it listed and log in with the accounts you gave them."
-            )
+            if self._funnel_url:
+                self._status.setText(
+                    f"Hosting on port {self._server.port}, and published at "
+                    f"{self._funnel_url} for players anywhere."
+                )
+            else:
+                self._status.setText(
+                    f"Hosting on port {self._server.port}. Players on this network "
+                    "will see it listed and log in with the accounts you gave them."
+                )
         elif connected:
             me = self._client.me
             self._status.setText(f"Connected as {me.name}." if me else "Connected.")
@@ -342,8 +471,11 @@ class TableWidget(QWidget):
             self._status.setText("Not connected.")
 
     def shutdown(self) -> None:
-        """Close the socket and stop hosting. Called when the app exits."""
+        """Close the socket, stop hosting, and unpublish. Called when the app exits."""
         self._client.leave()
+        if self._funnel_url:
+            funnel.stop()
+            self._funnel_url = ""
         if self._server is not None:
             self._server.stop()
 
