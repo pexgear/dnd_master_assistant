@@ -183,7 +183,12 @@ class SessionClient(QObject):
         return self._send(MessageType.ROLL, notation=notation)
 
     def send_edit(self, entity_id: int, changes: dict) -> bool:
-        """Ask the host to apply a change to your own character."""
+        """Ask the host to change one of your characters.
+
+        No version travels with this. The host knows what it last sent us and
+        checks against that, so a client cannot choose which version it claims
+        to be editing, nor omit one and be written unconditionally.
+        """
         return self._send(MessageType.EDIT, id=entity_id, changes=changes)
 
     def send_decision(self, proposal_id: int, approve: bool) -> bool:

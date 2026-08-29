@@ -72,6 +72,22 @@ This gives the projection rule its shape:
 | Shared with them | Name, one-liner, class, level, HP, AC, conditions |
 | Not shared | Nothing at all; it does not exist for them |
 
+### The version is the host's, never the client's
+
+An edit carries no version. The host records what it last sent each connection
+and checks against that, because a client able to name its own version could
+choose a convenient one -- or omit it entirely and be written unconditionally,
+which is worse.
+
+A change made against a copy the DM has since altered is refused outright rather
+than merged, and the current copy is sent back so the player's screen shows what
+is true rather than what they attempted.
+
+The same rule reaches the queue: when the DM changes a sheet, any proposal made
+against the older version is refused automatically. Approving it would apply a
+decision made about a character that no longer exists, and asking the DM to work
+out whether it still makes sense is worse than asking the player to ask again.
+
 ### The player proposes, the DM confirms -- but only for the build
 
 Two kinds of change, and conflating them would make the app miserable to use:

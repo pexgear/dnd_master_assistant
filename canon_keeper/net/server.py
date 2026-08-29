@@ -81,6 +81,19 @@ class _Session:
     account_id: int | None
     viewer: Viewer
     visible: set[int] = field(default_factory=set)
+    #: What version of each entity we last sent this connection. The base for
+    #: any edit they send back, because a client must not be able to choose
+    #: which version it claims to be editing -- nor to omit it and get an
+    #: unconditional write.
+    sent: dict[int, int] = field(default_factory=dict)
+
+    def remember_sent(self, projected: list[dict] | dict) -> None:
+        entries = projected if isinstance(projected, list) else [projected]
+        for entity in entries:
+            if isinstance(entity.get("id"), int) and isinstance(
+                entity.get("version"), int
+            ):
+                self.sent[entity["id"]] = entity["version"]
 
 
 class SessionServer(QObject):
@@ -409,6 +422,11 @@ class SessionServer(QObject):
             entities, gone = snapshot_since(
                 self.repos, self.campaign_id, session.viewer, known
             )
+            session.remember_sent(entities)
+            # A delta means they still hold everything else at the version they
+            # told us about, and we just agreed with them.
+            for entity_id, version in known.items():
+                session.sent.setdefault(entity_id, version)
             log.info(
                 "%s reconnected holding %d entities; sending %d changed, %d gone",
                 session.member.label,
@@ -425,11 +443,10 @@ class SessionServer(QObject):
             )
             return
 
+        everything = snapshot(self.repos, self.campaign_id, session.viewer)
+        session.remember_sent(everything)
         self._send(
-            socket,
-            MessageType.SNAPSHOT,
-            entities=snapshot(self.repos, self.campaign_id, session.viewer),
-            partial=False,
+            socket, MessageType.SNAPSHOT, entities=everything, partial=False
         )
 
     @property
@@ -453,6 +470,36 @@ class SessionServer(QObject):
         """Push the DM's names to everyone connected."""
         self._broadcast(MessageType.PANEL_NAMES, names=self.panel_names)
 
+    def refuse_conflicting(self, entity_id: int) -> int:
+        """Refuse proposals made against an older version of this character.
+
+        The DM has since changed the sheet, so the proposal was written against
+        something that no longer exists. Approving it would apply a decision
+        made about a different character; asking the DM to work out whether it
+        still makes sense is worse. Refuse, and let the player ask again.
+        """
+        entity = self.repos.entities.get(entity_id)
+        if entity is None:
+            return 0
+
+        refused = 0
+        for proposal in self.repos.proposals.open_for_entity(entity_id):
+            if proposal.base_version == entity.version:
+                continue
+            self.repos.proposals.decide(
+                proposal.id, "rejected", "the DM changed the sheet in the meantime"
+            )
+            refused += 1
+
+        if refused:
+            self._broadcast_system(
+                f"{entity.name} changed, so "
+                f"{refused} pending request{'s' if refused > 1 else ''} "
+                "no longer applies. Ask again if you still want it."
+            )
+            self.publish_proposals()
+        return refused
+
     def publish_entity(self, entity_id: int) -> None:
         """Push an entity to everyone allowed to see it, after a DM change.
 
@@ -467,15 +514,14 @@ class SessionServer(QObject):
             session.visible = allowed
 
             if entity is None or entity_id not in allowed:
+                session.sent.pop(entity_id, None)
                 if was_visible:
                     self._send(socket, MessageType.ENTITY_GONE, id=entity_id)
                 continue
 
-            self._send(
-                socket,
-                MessageType.ENTITY,
-                entity=project_entity(entity, session.viewer, allowed),
-            )
+            projected = project_entity(entity, session.viewer, allowed)
+            session.remember_sent(projected)
+            self._send(socket, MessageType.ENTITY, entity=projected)
 
     def publish_all(self) -> None:
         """Resend everything to everyone. Used after a bulk change of shares."""
@@ -524,23 +570,40 @@ class SessionServer(QObject):
             state, build = split_sheet_change(existing, proposed)
             changes = {**changes, "data": {**(changes.get("data") or {}), "sheet": state}}
             if build:
-                self._propose(session, entity_id, build, entity.version if entity else 0)
-        expected = message.get("version")
+                self._propose(
+                    session, entity_id, build, session.sent.get(entity_id, 0)
+                )
+        # The version they are editing against is the one we last sent them.
+        # Taking it from the message would let a client pick a version that
+        # suits it, or omit it and be written unconditionally.
+        expected = session.sent.get(entity_id)
         try:
             apply_player_edit(
                 self.repos,
                 session.viewer,
                 entity_id,
                 changes,
-                expected_version=expected if isinstance(expected, int) else None,
+                expected_version=expected,
             )
         except EditRefused as exc:
             self._send(socket, MessageType.ERROR, code="refused", message=str(exc))
             return
-        except StaleWrite as exc:
-            # Someone else moved it underneath them. Refuse, and resend so their
-            # screen catches up rather than showing a change that did not happen.
-            self._send(socket, MessageType.ERROR, code="stale", message=str(exc))
+        except StaleWrite:
+            # The DM changed it while they were looking at an older copy. Refuse
+            # outright rather than merging blind, and resend so their screen
+            # catches up instead of showing a change that did not happen.
+            log.info(
+                "refused a stale edit of %s from %s", entity_id, session.member.label
+            )
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="stale",
+                message=(
+                    "Your DM changed this character while you were editing it, "
+                    "so your change was not applied. Here it is as it stands now."
+                ),
+            )
             self.publish_entity(entity_id)
             return
         self.publish_entity(entity_id)

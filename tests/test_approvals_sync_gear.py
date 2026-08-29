@@ -325,3 +325,63 @@ def test_two_campaigns_get_different_keys(repos, campaign, tmp_path):
         SessionServer(repos, campaign.id).campaign_key
         != SessionServer(other, other_campaign.id).campaign_key
     )
+
+
+# -------------------------------------------------- conflicts refuse themselves
+
+
+def test_a_dm_change_refuses_what_was_proposed_against_the_old_sheet(
+    repos, campaign, elara, marco
+):
+    """Approving it would apply a decision made about a different character."""
+    from canon_keeper.net.server import SessionServer
+
+    server = SessionServer(repos, campaign.id)
+    version = repos.entities.get(elara.id).version
+    repos.proposals.propose(campaign.id, elara.id, marco.id, {"level": 6}, version)
+
+    changed = repos.entities.get(elara.id)
+    changed.data["sheet"]["species"] = "elf"
+    repos.entities.update(changed)
+
+    refused = server.refuse_conflicting(elara.id)
+
+    assert refused == 1
+    assert repos.proposals.open_count(campaign.id) == 0
+    assert repos.entities.get(elara.id).data["sheet"]["level"] == 5
+
+
+def test_an_unaffected_proposal_survives_a_dm_change_elsewhere(
+    repos, campaign, elara, marco
+):
+    from canon_keeper.net.server import SessionServer
+
+    server = SessionServer(repos, campaign.id)
+    other = repos.entities.create(
+        Entity(id=None, campaign_id=campaign.id, kind=KIND_PC, name="Brakk")
+    )
+    repos.entities.set_owner(other.id, marco.id)
+    repos.proposals.propose(
+        campaign.id, elara.id, marco.id, {"level": 6},
+        repos.entities.get(elara.id).version,
+    )
+
+    touched = repos.entities.get(other.id)
+    touched.summary = "changed"
+    repos.entities.update(touched)
+    server.refuse_conflicting(other.id)
+
+    assert repos.proposals.open_count(campaign.id) == 1, "a different character"
+
+
+def test_a_proposal_still_matching_the_sheet_is_left_alone(repos, campaign, elara, marco):
+    from canon_keeper.net.server import SessionServer
+
+    server = SessionServer(repos, campaign.id)
+    repos.proposals.propose(
+        campaign.id, elara.id, marco.id, {"level": 6},
+        repos.entities.get(elara.id).version,
+    )
+
+    assert server.refuse_conflicting(elara.id) == 0
+    assert repos.proposals.open_count(campaign.id) == 1

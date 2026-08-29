@@ -241,10 +241,12 @@ class PlayerCharactersWidget(QWidget):
     # --------------------------------------------------------------- actions
 
     def _commit_sheet(self, entity_id: int, sheet: dict) -> None:
-        """Ask the host to store a sheet change. It decides, then echoes back."""
-        received = self._ctx.shared.get(entity_id) or {}
+        """Ask the host to store a sheet change. It decides, then echoes back.
+
+        No version is sent: the host checks against the copy it gave us.
+        """
         self._ctx.bus.player_edit_requested.emit(
-            entity_id, {"data": {"sheet": sheet}, "version": received.get("version")}
+            entity_id, {"data": {"sheet": sheet}}
         )
 
     def _save_own(self) -> None:

@@ -5,6 +5,11 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+- **You are the authority on your campaign.** A player's change is checked
+  against the copy they were actually sent, not against anything their app
+  claims. If you changed the character in the meantime their change is refused
+  and their screen corrects itself, and anything they had proposed against the
+  old sheet is refused automatically.
 - **Players propose, you confirm.** A player changing their level or class sends
   it to you instead of applying it — chat says so, and a **Waiting for you**
   button appears with the queue. Hit points, conditions, gear and prepared

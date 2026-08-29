@@ -417,6 +417,9 @@ def test_every_change_signal_reaches_the_host(table):
         def publish_entity(self, entity_id):
             published.append(entity_id)
 
+        def refuse_conflicting(self, entity_id):
+            return 0
+
         def stop(self):
             pass
 

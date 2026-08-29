@@ -622,3 +622,85 @@ def test_an_edit_by_the_dm_reaches_the_player(qtbot, server, repos, campaign):
         assert client.state.get(npc.id)["summary"] == "A weary man"
     finally:
         client.leave()
+
+
+# ------------------------------------------------------------ who owns a version
+
+
+def test_a_client_cannot_choose_the_version_it_edits_against(qtbot, server, repos, accounts):
+    """The base version is what the host last sent, never what the client says.
+
+    A client that could pick its own version -- or omit one -- would get an
+    unconditional write and quietly overwrite whatever the DM had just done.
+    """
+    elara = accounts["elara_entity"]
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        # The DM changes it after the player's copy was sent.
+        meanwhile = repos.entities.get(elara.id)
+        meanwhile.summary = "the DM edited this"
+        repos.entities.update(meanwhile)
+
+        # The client claims the version it likes; the host ignores that.
+        with qtbot.waitSignal(client.failed, timeout=5000) as blocker:
+            client._send(
+                MessageType.EDIT,
+                id=elara.id,
+                changes={"summary": "mine now"},
+                version=999,
+            )
+
+        assert "changed this character" in blocker.args[0]
+        assert repos.entities.get(elara.id).summary == "the DM edited this"
+    finally:
+        client.leave()
+
+
+def test_omitting_the_version_does_not_buy_an_unconditional_write(
+    qtbot, server, repos, accounts
+):
+    elara = accounts["elara_entity"]
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        meanwhile = repos.entities.get(elara.id)
+        meanwhile.summary = "the DM edited this"
+        repos.entities.update(meanwhile)
+
+        with qtbot.waitSignal(client.failed, timeout=5000):
+            client.send_edit(elara.id, {"summary": "mine now"})
+
+        assert repos.entities.get(elara.id).summary == "the DM edited this"
+    finally:
+        client.leave()
+
+
+def test_an_edit_against_the_copy_they_were_sent_still_works(
+    qtbot, server, repos, accounts
+):
+    """The check must not simply refuse everything."""
+    elara = accounts["elara_entity"]
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        with qtbot.waitSignal(client.state.changed, timeout=5000):
+            client.send_edit(elara.id, {"summary": "a tired cleric"})
+
+        assert repos.entities.get(elara.id).summary == "a tired cleric"
+    finally:
+        client.leave()
+
+
+def test_a_refused_edit_resends_the_truth(qtbot, server, repos, accounts):
+    """Their screen must not keep showing a change that did not happen."""
+    elara = accounts["elara_entity"]
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        meanwhile = repos.entities.get(elara.id)
+        meanwhile.summary = "the DM edited this"
+        repos.entities.update(meanwhile)
+
+        with qtbot.waitSignal(client.state.changed, timeout=5000):
+            client.send_edit(elara.id, {"summary": "mine now"})
+
+        assert client.state.get(elara.id)["summary"] == "the DM edited this"
+    finally:
+        client.leave()

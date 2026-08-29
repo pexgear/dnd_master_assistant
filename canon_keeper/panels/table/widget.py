@@ -254,6 +254,9 @@ class TableWidget(QWidget):
 
     def _on_share_changed(self, entity_id: int) -> None:
         if self._server is not None and self._server.is_running:
+            # A change of yours refuses anything a player proposed against the
+            # older sheet, before the new version goes out.
+            self._server.refuse_conflicting(entity_id)
             self._server.publish_entity(entity_id)
 
     def _toggle_funnel(self) -> None:

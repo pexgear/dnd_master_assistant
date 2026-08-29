@@ -272,7 +272,10 @@ def test_saving_asks_the_host_rather_than_writing_locally(
     entity_id, changes = blocker.args
     assert entity_id == 1
     assert changes["data"]["sheet"]["hp_current"] == 4
-    assert changes["version"] == 3, "the edit names the version it was made against"
+    # No version travels with an edit. The host checks against the copy it sent,
+    # so a client can neither choose the version it claims nor omit one and be
+    # written unconditionally.
+    assert "version" not in changes
 
 
 def test_nothing_is_written_to_the_players_own_database(
