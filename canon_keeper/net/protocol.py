@@ -47,6 +47,7 @@ class MessageType(StrEnum):
     CHALLENGE = "challenge"  # {salt, nonce}
     WELCOME = "welcome"
     SNAPSHOT = "snapshot"    # everything this account may see
+    PANEL_NAMES = "panels"   # what the DM calls each panel
     ENTITY = "entity"        # one entity added or changed
     ENTITY_GONE = "gone"     # {id} -- deleted, or no longer shared with you
     ERROR = "error"

@@ -190,6 +190,26 @@ If you would rather not use a tunnel, the alternatives are unchanged: forward a
 port on your router (but then the traffic is unencrypted), or run
 `canonkeeper-server` on a machine that already has a public address.
 
+## Naming the panels
+
+**Panels ▸ Rename Panels…** lets you call things whatever you call them at your
+table. There are three layers, and the more specific one wins:
+
+| | Who sets it | Who sees it |
+|---|---|---|
+| **Your name** | you | you |
+| **The party calls it** | whoever runs the campaign | everyone in the session |
+| **Default** | the panel | the fallback |
+
+So the DM can rename *Cities & Places* to **The Sword Coast** for the whole
+table, and a player who prefers *Places* can still call it that on their own
+machine. Clearing your own name falls back to the party's; clearing that falls
+back to the default. Hover a panel's title bar to see which is which.
+
+Party names travel with the session and update live, so renaming something
+mid-game reaches everyone immediately. What you call a panel yourself is never
+sent anywhere.
+
 ## Light and dark
 
 **View ▸ Theme** offers *Follow System*, *Light* and *Dark*. The default follows

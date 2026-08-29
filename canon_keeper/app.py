@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from canon_keeper import __version__, campaigns, config, credentials
 from canon_keeper.bus import Bus
 from canon_keeper.db import connect, migrate
+from canon_keeper.naming import PanelNames
 from canon_keeper.net.state import SharedState
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo import Repos
@@ -66,7 +67,9 @@ def build_context(
         campaign_id=campaign.id,
         role=role,
         shared=shared if shared is not None else SharedState(),
+        names=PanelNames(repos.settings, is_dm=role == "dm"),
     )
+    ctx.names.changed.connect(ctx.bus.panel_names_changed)
     return ctx, conn
 
 

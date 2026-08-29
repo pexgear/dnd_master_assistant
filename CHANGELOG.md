@@ -5,6 +5,10 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+- **Panels can be renamed.** Three layers: what you call it, what the party
+  calls it, and the default — the more specific one wins. The DM's names travel
+  with the session and update live; yours stay on your machine.
+
 ## 0.2.0
 
 Everything below the shell: campaigns, players, and playing together.

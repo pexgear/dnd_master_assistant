@@ -27,6 +27,7 @@ from canon_keeper import __version__, campaigns, config
 from canon_keeper.plugin import API_VERSION, AppContext
 from canon_keeper.repo.layouts import AUTOSAVE_NAME
 from canon_keeper.shell.loader import LoadedPanel, LoadError
+from canon_keeper.shell.rename_panels import RenamePanelsDialog
 from canon_keeper.shell.theme import Theme, ThemeController
 
 #: Bumped if the set of docks changes in a way that makes old saved states
@@ -75,9 +76,11 @@ class MainWindow(QMainWindow):
         self._build_menus()
 
         self._ctx.bus.status_message.connect(self._on_status_message)
+        self._ctx.bus.panel_names_changed.connect(self._retitle_docks)
         self._ctx.bus.campaign_changed.connect(lambda _id: self._update_title())
 
         self._update_title()
+        self._retitle_docks()
         self._restore_initial_layout()
 
         if self._errors:
@@ -101,7 +104,9 @@ class MainWindow(QMainWindow):
                 )
                 continue
 
-            dock = QDockWidget(plugin.title, self)
+            if self._ctx.names is not None:
+                self._ctx.names.register(plugin.id, plugin.title)
+            dock = QDockWidget(self._panel_title(plugin.id, plugin.title), self)
             # Non-negotiable: without this, restoreState() drops the dock.
             dock.setObjectName(plugin.id)
             dock.setWidget(widget)
@@ -159,6 +164,10 @@ class MainWindow(QMainWindow):
             action.setObjectName(f"toggle_{panel_id}")
             panels_menu.addAction(action)
         panels_menu.addSeparator()
+        act_rename = QAction("&Rename Panels...", self)
+        act_rename.triggered.connect(self._rename_panels)
+        panels_menu.addAction(act_rename)
+
         act_show_all = QAction("Show &All Panels", self)
         act_show_all.triggered.connect(self._show_all_panels)
         panels_menu.addAction(act_show_all)
@@ -199,6 +208,33 @@ class MainWindow(QMainWindow):
             return
         self._theme.set_theme(theme)
         self.statusBar().showMessage(f"Theme: {theme.label}", 4000)
+
+    def _panel_title(self, panel_id: str, default: str) -> str:
+        if self._ctx.names is None:
+            return default
+        return self._ctx.names.resolve(panel_id)
+
+    def _retitle_docks(self) -> None:
+        """Re-label every dock after a rename, keeping objectName untouched.
+
+        The name on the title bar is cosmetic; the objectName is what saved
+        layouts are keyed on, so renaming must never touch it.
+        """
+        for panel_id, dock in self._docks.items():
+            entry = self._panels.get(panel_id)
+            default = entry.plugin.title if entry is not None else panel_id
+            dock.setWindowTitle(self._panel_title(panel_id, default))
+            if self._ctx.names is not None:
+                dock.toggleViewAction().setText(dock.windowTitle())
+                dock.setToolTip(self._ctx.names.describe(panel_id))
+
+    def _rename_panels(self) -> None:
+        if self._ctx.names is None:
+            return
+        dialog = RenamePanelsDialog(self._ctx, self)
+        if dialog.exec():
+            dialog.apply()
+            self._retitle_docks()
 
     def _switch_campaign_file(self) -> None:
         """Close this workspace and go back to the chooser."""

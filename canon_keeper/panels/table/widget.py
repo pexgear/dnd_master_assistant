@@ -82,11 +82,15 @@ class TableWidget(QWidget):
         self._client.said.connect(self._on_said)
         self._client.rolled.connect(self._on_rolled)
         self._client.system.connect(lambda text: self._append_system(text))
+        # The DM's panel names arrive with the campaign; hand them to the
+        # shell, which re-titles the docks.
+        self._client.panel_names_received.connect(self._on_panel_names)
 
         self._build_ui()
         # A share changed while hosting: push it to whoever may now see it.
         ctx.bus.share_changed.connect(self._on_share_changed)
         ctx.bus.player_edit_requested.connect(self._on_player_edit)
+        ctx.bus.panel_names_changed.connect(self._on_panel_names_changed)
         ctx.bus.entity_changed.connect(self._on_share_changed)
         ctx.bus.theme_changed.connect(lambda _dark: self._refresh_colours())
         self._refresh_colours()
@@ -200,6 +204,15 @@ class TableWidget(QWidget):
     def _on_player_edit(self, entity_id: int, changes: dict) -> None:
         if not self._client.send_edit(entity_id, changes):
             self._append("error", "Not connected, so that change was not saved.")
+
+    def _on_panel_names(self, names: dict) -> None:
+        if self._ctx.names is not None:
+            self._ctx.names.apply_party_names(names)
+
+    def _on_panel_names_changed(self) -> None:
+        # The DM renamed something while hosting: tell the table.
+        if self._server is not None and self._server.is_running:
+            self._server.publish_panel_names()
 
     def _on_share_changed(self, entity_id: int) -> None:
         if self._server is not None and self._server.is_running:

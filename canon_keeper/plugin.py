@@ -44,6 +44,7 @@ class AppContext:
         api_version: int = API_VERSION,
         role: str = "dm",
         shared=None,
+        names=None,
     ) -> None:
         self.repos = repos
         self.bus = bus
@@ -60,6 +61,9 @@ class AppContext:
         #: Set when the app was launched by joining a session: the Table panel
         #: connects with it instead of making the player log in twice.
         self.pending_join: tuple[str, str, str] | None = None
+        #: Resolves what each panel is called. A panel's `title` is only
+        #: its default: the user or the DM may have renamed it.
+        self.names = names
         #: Mutated by the shell when the DM opens a different campaign; the
         #: change is announced on ``bus.campaign_changed``.
         self.campaign_id = campaign_id

@@ -15,6 +15,7 @@ Logging in is a challenge/response: the password never crosses the wire. See
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 from dataclasses import dataclass, field
@@ -356,6 +357,7 @@ class SessionServer(QObject):
             members=[m.to_dict() for m in self.members],
         )
         self._send_snapshot(socket, session)
+        self._send(socket, MessageType.PANEL_NAMES, names=self.panel_names)
         self._broadcast_system(f"{member.label} joined", exclude=socket)
         self._send_roster()
         self.roster_changed.emit(self.members)
@@ -368,6 +370,27 @@ class SessionServer(QObject):
             MessageType.SNAPSHOT,
             entities=snapshot(self.repos, self.campaign_id, session.viewer),
         )
+
+    @property
+    def panel_names(self) -> dict:
+        """What the DM calls each panel, for the rest of the table."""
+        prefix = "panel_name.party."
+        rows = self.repos.conn.execute(
+            "SELECT key, value_json FROM setting WHERE key LIKE ?", (prefix + "%",)
+        ).fetchall()
+        names = {}
+        for row in rows:
+            try:
+                value = json.loads(row["value_json"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(value, str) and value.strip():
+                names[row["key"][len(prefix) :]] = value
+        return names
+
+    def publish_panel_names(self) -> None:
+        """Push the DM's names to everyone connected."""
+        self._broadcast(MessageType.PANEL_NAMES, names=self.panel_names)
 
     def publish_entity(self, entity_id: int) -> None:
         """Push an entity to everyone allowed to see it, after a DM change.

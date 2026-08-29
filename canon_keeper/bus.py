@@ -30,6 +30,9 @@ class Bus(QObject):
     # the change only becomes real when it is echoed back.
     player_edit_requested = Signal(int, dict)
 
+    # A panel was renamed, by you or by the DM. The shell re-titles the docks.
+    panel_names_changed = Signal()
+
     # Canon.
     fact_committed = Signal(int)
     utterance_added = Signal(int)

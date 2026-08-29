@@ -47,6 +47,8 @@ class SessionClient(QObject):
     system = Signal(str)
     #: Emitted once the host's filtered view of the campaign has arrived.
     state_replaced = Signal()
+    #: What the DM calls each panel, as a {panel_id: name} mapping.
+    panel_names_received = Signal(dict)
 
     def __init__(self, parent: QObject | None = None, state: SharedState | None = None) -> None:
         super().__init__(parent)
@@ -221,6 +223,10 @@ class SessionClient(QObject):
             entities = message.get("entities")
             self.state.replace_all(entities if isinstance(entities, list) else [])
             self.state_replaced.emit()
+
+        elif message.type == MessageType.PANEL_NAMES:
+            names = message.get("names")
+            self.panel_names_received.emit(names if isinstance(names, dict) else {})
 
         elif message.type == MessageType.ENTITY:
             self.state.upsert(message.get("entity") or {})

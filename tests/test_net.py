@@ -502,3 +502,38 @@ def test_an_unreachable_host_fails_fast_with_a_useful_message(qtbot, monkeypatch
         assert "8765" in message
     finally:
         client.leave()
+
+
+# ------------------------------------------------------------------ panel names
+
+
+def test_the_dms_panel_names_reach_a_player(qtbot, server, repos):
+    """The DM renames a panel for the party; everyone's dock follows."""
+    repos.settings.set("panel_name.party.table", "The Tavern")
+
+    client = SessionClient()
+    try:
+        with qtbot.waitSignal(client.panel_names_received, timeout=10000) as blocker:
+            client.join(f"ws://127.0.0.1:{server.port}", "marco", "goblin-teeth")
+        assert blocker.args[0] == {"table": "The Tavern"}
+    finally:
+        client.leave()
+
+
+def test_renaming_mid_session_is_pushed(qtbot, server, repos):
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        repos.settings.set("panel_name.party.cities", "The Sword Coast")
+        with qtbot.waitSignal(client.panel_names_received, timeout=5000) as blocker:
+            server.publish_panel_names()
+        assert blocker.args[0]["cities"] == "The Sword Coast"
+    finally:
+        client.leave()
+
+
+def test_a_private_rename_is_not_published(qtbot, server, repos):
+    """Only the party names travel; what you call it yourself stays yours."""
+    repos.settings.set("panel_name.local.table", "Chat")
+    repos.settings.set("panel_name.party.table", "The Tavern")
+
+    assert server.panel_names == {"table": "The Tavern"}
