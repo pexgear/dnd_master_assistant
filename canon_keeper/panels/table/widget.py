@@ -243,9 +243,9 @@ class TableWidget(QWidget):
         dialog.exec()
         self._approvals_dialog = None
 
-    def _decide_proposal(self, proposal_id: int, approve: bool) -> None:
+    def _decide_proposal(self, proposal_id: int, approve: bool, note: str = "") -> None:
         # Through the client, so the host applies it -- even when the host is us.
-        self._client.send_decision(proposal_id, approve)
+        self._client.send_decision(proposal_id, approve, note)
 
     def _on_panel_names(self, names: dict) -> None:
         if self._ctx.names is not None:

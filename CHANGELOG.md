@@ -3,7 +3,9 @@
 What changed, from the point of view of someone running a game. See
 [RELEASING.md](RELEASING.md) for how versions are cut.
 
-## Unreleased
+## 0.3.0
+
+Character sheets, and a table where the DM decides.
 
 - **The chat is kept.** Rejoin a campaign and the last hundred messages are
   already there, so a session picks up where the last one stopped. Everything is
@@ -13,10 +15,11 @@ What changed, from the point of view of someone running a game. See
   claims. If you changed the character in the meantime their change is refused
   and their screen corrects itself, and anything they had proposed against the
   old sheet is refused automatically.
-- **Players propose, you confirm.** A player changing their level or class sends
-  it to you instead of applying it — chat says so, and a **Waiting for you**
-  button appears with the queue. Hit points, conditions, gear and prepared
-  spells still apply at once.
+- **Players ask, you decide — for everything.** Nothing a player changes is
+  written on their say-so, hit points included. Their sheet's button reads *Ask
+  my DM*, a **Waiting for you** button appears with the queue, and refusing
+  prompts you for a reason which is sent privately to them. Requests go to you
+  alone, not the whole table.
 - **Hand a character to a player** with *Played by* in the Characters panel, or
   by assigning it in **Table ▸ Players…**. They then see its whole sheet.
 - **Reconnecting is cheap.** Your copy is cached, so the app shows your

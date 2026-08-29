@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from canon_keeper.net.cache import forget, load, save, versions
-from canon_keeper.net.projection import Viewer, snapshot_since, split_sheet_change
+from canon_keeper.net.projection import Viewer, changed_sheet_fields, snapshot_since
 from canon_keeper.net.server import describe_changes
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC, Entity
 from canon_keeper.rules.sheet import new_sheet
@@ -49,30 +49,29 @@ def viewer(repos, marco):
 
 
 def test_only_changed_fields_are_reported():
-    """A client sends the whole sheet back; unchanged fields are not a request."""
+    """A client sends the whole sheet back; unchanged fields are not a request.
+
+    Without comparing, every save would ask the DM to approve forty fields
+    being set to what they already are.
+    """
     existing = {"level": 5, "hp_current": 20, "class_index": "wizard"}
     proposed = {"level": 5, "hp_current": 12, "class_index": "wizard"}
 
-    state, build = split_sheet_change(existing, proposed)
-
-    assert state == {"hp_current": 12}
-    assert build == {}
+    assert changed_sheet_fields(existing, proposed) == {"hp_current": 12}
 
 
-def test_state_and_build_are_separated():
+def test_hit_points_are_a_request_like_anything_else():
     existing = {"level": 5, "hp_current": 20}
     proposed = {"level": 6, "hp_current": 12}
 
-    state, build = split_sheet_change(existing, proposed)
-
-    assert state == {"hp_current": 12}
-    assert build == {"level": 6}
+    assert changed_sheet_fields(existing, proposed) == {"level": 6, "hp_current": 12}
 
 
-def test_unknown_fields_are_dropped_by_the_split():
-    state, build = split_sheet_change({}, {"mystery": 1, "hp_current": 3})
-    assert state == {"hp_current": 3}
-    assert "mystery" not in build
+def test_unknown_fields_are_dropped():
+    """An older or modified client cannot smuggle in a key we do not know."""
+    assert changed_sheet_fields({}, {"mystery": 1, "hp_current": 3}) == {
+        "hp_current": 3
+    }
 
 
 def test_changes_are_described_readably():

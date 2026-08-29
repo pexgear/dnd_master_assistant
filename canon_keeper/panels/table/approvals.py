@@ -13,6 +13,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
+    QInputDialog,
     QDialogButtonBox,
     QLabel,
     QListWidget,
@@ -27,7 +28,7 @@ _ID_ROLE = 256
 class ApprovalsDialog(QDialog):
     """Approve or refuse what players have asked for."""
 
-    decided = Signal(int, bool)  # proposal id, approved
+    decided = Signal(int, bool, str)  # proposal id, approved, reason
 
     def __init__(self, proposals: list[dict], parent=None) -> None:
         super().__init__(parent)
@@ -86,7 +87,20 @@ class ApprovalsDialog(QDialog):
         proposal_id = item.data(_ID_ROLE)
         if proposal_id is None:
             return
-        self.decided.emit(int(proposal_id), approve)
+
+        reason = ""
+        if not approve:
+            # A refusal without a reason reads as the app losing the request.
+            reason, ok = QInputDialog.getText(
+                self,
+                "Say no",
+                "Why? (optional -- they will see this)",
+            )
+            if not ok:
+                return
+            reason = reason.strip()
+
+        self.decided.emit(int(proposal_id), approve, reason)
         row = self._list.row(item)
         self._list.takeItem(row)
         if self._list.count() == 0:

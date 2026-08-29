@@ -24,14 +24,16 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QHostAddress
 from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 
+from canon_keeper.content import Content
 from canon_keeper.net import auth, discovery
 from canon_keeper.repo.chat import DEFAULT_LIMIT, ROLLED, SAID, SYSTEM
 from canon_keeper.net.dice import DiceError, roll
 from canon_keeper.repo.entities import StaleWrite
+from canon_keeper.rules.validation import validate
 from canon_keeper.net.projection import (
     EditRefused,
+    changed_sheet_fields,
     snapshot_since,
-    split_sheet_change,
     Viewer,
     apply_player_edit,
     project_entity,
@@ -132,6 +134,10 @@ class SessionServer(QObject):
         #: The evening this is. Chat is filed against it, so each session is
         #: its own log rather than one endless scroll.
         self.session_id = self._open_session()
+        #: For checking what a player proposes. A sheet is validated here,
+        #: on the host, because the client that sent it is the one thing we
+        #: cannot take at its word.
+        self.content = Content(repos.settings)
 
         self._server: QWebSocketServer | None = None
         self._sessions: dict[QWebSocket, _Session] = {}
@@ -604,44 +610,44 @@ class SessionServer(QObject):
         )
 
     def _handle_edit(self, socket: QWebSocket, session: _Session, message) -> None:
+        """A player asking for a change. Nothing here is applied.
+
+        Everything a player sends is a request the DM answers, hit points
+        included. The host writes nothing on a player's say-so.
+        """
         entity_id = message.get("id")
         changes = message.get("changes")
         if not isinstance(entity_id, int) or not isinstance(changes, dict):
             return
 
-        # Split the sheet before applying anything: hit points go through now,
-        # a change of level goes to the DM.
-        proposed = (changes.get("data") or {}).get("sheet")
-        if isinstance(proposed, dict) and session.viewer.owns(entity_id):
-            entity = self.repos.entities.get(entity_id)
-            existing = (entity.data.get("sheet") or {}) if entity else {}
-            state, build = split_sheet_change(existing, proposed)
-            changes = {**changes, "data": {**(changes.get("data") or {}), "sheet": state}}
-            if build:
-                self._propose(
-                    session, entity_id, build, session.sent.get(entity_id, 0)
-                )
-        # The version they are editing against is the one we last sent them.
-        # Taking it from the message would let a client pick a version that
-        # suits it, or omit it and be written unconditionally.
-        expected = session.sent.get(entity_id)
-        try:
-            apply_player_edit(
-                self.repos,
-                session.viewer,
-                entity_id,
-                changes,
-                expected_version=expected,
+        if not session.viewer.owns(entity_id):
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="You can only ask about your own characters.",
             )
-        except EditRefused as exc:
-            self._send(socket, MessageType.ERROR, code="refused", message=str(exc))
             return
-        except StaleWrite:
-            # The DM changed it while they were looking at an older copy. Refuse
-            # outright rather than merging blind, and resend so their screen
-            # catches up instead of showing a change that did not happen.
+
+        entity = self.repos.entities.get(entity_id)
+        if entity is None:
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="That character no longer exists.",
+            )
+            return
+
+        # The version they are working against is the one we last sent them.
+        # Taking it from the message would let a client pick a convenient one,
+        # or omit it and slip past the check entirely.
+        base = session.sent.get(entity_id, entity.version)
+        if base != entity.version:
             log.info(
-                "refused a stale edit of %s from %s", entity_id, session.member.label
+                "refused a stale request for %s from %s",
+                entity_id,
+                session.member.label,
             )
             self._send(
                 socket,
@@ -649,15 +655,58 @@ class SessionServer(QObject):
                 code="stale",
                 message=(
                     "Your DM changed this character while you were editing it, "
-                    "so your change was not applied. Here it is as it stands now."
+                    "so your request was not sent. Here it is as it stands now."
                 ),
             )
             self.publish_entity(entity_id)
             return
 
-        self.publish_entity(entity_id)
-        # The DM's own panels read the database directly, so they need telling.
-        self.entity_applied.emit(entity_id)
+        wanted = self._collect_request(entity, changes)
+        if not wanted:
+            return  # nothing actually differs; not worth asking about
+
+        problem = self._why_not(entity, wanted)
+        if problem:
+            # Refused outright rather than queued: the DM should not be asked
+            # to approve something that is not a legal sheet.
+            self._send(socket, MessageType.ERROR, code="illegal", message=problem)
+            return
+
+        self._propose(session, entity_id, wanted, base)
+        self._send(
+            socket,
+            MessageType.SYSTEM,
+            text=f"Sent to your DM: {describe_changes(wanted)}",
+        )
+
+    def _collect_request(self, entity, changes: dict) -> dict:
+        """What they are actually asking to change, and nothing else."""
+        proposed = (changes.get("data") or {}).get("sheet")
+        wanted: dict = {}
+        if isinstance(proposed, dict):
+            wanted.update(
+                changed_sheet_fields(entity.data.get("sheet") or {}, proposed)
+            )
+
+        summary = changes.get("summary")
+        if isinstance(summary, str) and summary.strip() != entity.summary:
+            wanted["summary"] = summary.strip()
+        return wanted
+
+    def _why_not(self, entity, wanted: dict) -> str:
+        """A reason the request cannot stand, or empty if it is fine.
+
+        Checked here because the client that sent it is the one thing we cannot
+        take at its word, and because the DM should not be handed nonsense to
+        approve.
+        """
+        sheet = dict(entity.data.get("sheet") or {})
+        if not sheet:
+            return ""
+        sheet.update({k: v for k, v in wanted.items() if k != "summary"})
+        report = validate(sheet, self.content)
+        return "" if report.ok else f"That is not a legal sheet: {report.summary()}"
+
 
     # ---------------------------------------------------------------- proposals
 
@@ -670,7 +719,10 @@ class SessionServer(QObject):
         described = describe_changes(build)
         log.info("%s proposed %s for %s", session.member.label, described, entity_id)
 
-        self._broadcast_system(
+        # Told to the DM, not the table. A player asking for something is
+        # between the two of them, and announcing every hit point change to
+        # everyone would drown the chat.
+        self._tell_dms(
             f"{session.member.label} asks to change "
             f"{entity.name if entity else 'a character'}: {described}"
         )
@@ -708,14 +760,41 @@ class SessionServer(QObject):
             if session.viewer.is_dm:
                 socket.sendTextMessage(frame)
 
-    def decide(self, proposal_id: int, approve: bool) -> bool:
-        """Apply or discard a proposal. Called by the DM's app."""
+    def _tell_dms(self, text: str) -> None:
+        """Say something to whoever is running the game."""
+        self._record(SYSTEM, text)
+        frame = encode(MessageType.SYSTEM, text=text)
+        for socket, session in self._sessions.items():
+            if session.viewer.is_dm:
+                socket.sendTextMessage(frame)
+
+    def _tell(self, account_id: int | None, text: str) -> None:
+        """Say something to one person rather than the whole table."""
+        if account_id is None:
+            return
+        frame = encode(MessageType.SYSTEM, text=text)
+        for socket, session in self._sessions.items():
+            if session.account_id == account_id:
+                socket.sendTextMessage(frame)
+
+    def decide(self, proposal_id: int, approve: bool, note: str = "") -> bool:
+        """Apply or refuse a request. Called by the DM's app."""
         proposal = self.repos.proposals.get(proposal_id)
         if proposal is None or not proposal.is_open:
             return False
 
         if not approve:
-            self.repos.proposals.decide(proposal_id, "rejected")
+            self.repos.proposals.decide(proposal_id, "rejected", note)
+            entity = self.repos.entities.get(proposal.entity_id)
+            described = describe_changes(proposal.changes)
+            said = f"Your DM said no to {described}"
+            if entity is not None:
+                said += f" for {entity.name}"
+            if note:
+                said += f" -- {note}"
+            # Told privately: a refusal is between the two of them, and the
+            # table does not need to watch.
+            self._tell(proposal.account_id, said)
             self.publish_proposals()
             return True
 
@@ -725,9 +804,13 @@ class SessionServer(QObject):
             self.publish_proposals()
             return False
 
-        sheet = dict(entity.data.get("sheet") or {})
-        sheet.update(proposal.changes)
-        entity.data["sheet"] = sheet
+        changes = dict(proposal.changes)
+        if "summary" in changes:
+            entity.summary = str(changes.pop("summary"))
+        if changes:
+            sheet = dict(entity.data.get("sheet") or {})
+            sheet.update(changes)
+            entity.data["sheet"] = sheet
         self.repos.entities.update(entity)
 
         self.repos.proposals.decide(proposal_id, "approved")
@@ -736,6 +819,7 @@ class SessionServer(QObject):
         )
         self.publish_entity(proposal.entity_id)
         self.publish_proposals()
+        self.entity_applied.emit(proposal.entity_id)
         return True
 
     def _handle_decision(self, socket: QWebSocket, session: _Session, message) -> None:
@@ -747,7 +831,11 @@ class SessionServer(QObject):
             return
         proposal_id = message.get("proposal")
         if isinstance(proposal_id, int):
-            self.decide(proposal_id, bool(message.get("approve")))
+            self.decide(
+                proposal_id,
+                bool(message.get("approve")),
+                str(message.get("note", ""))[:200],
+            )
 
     # --------------------------------------------------------------------- output
 

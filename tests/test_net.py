@@ -20,6 +20,7 @@ from canon_keeper.net.protocol import (
 )
 from canon_keeper.net.server import SessionServer
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC, Entity
+from canon_keeper.rules.sheet import new_sheet
 
 # --------------------------------------------------------------------- protocol
 
@@ -152,7 +153,9 @@ def accounts(repos, campaign):
     repos.entities.set_owner(elara.id, marco.id)
 
     return {
-        "elara_entity": elara,
+        # Re-read: the object above predates set_owner, and saving a stale copy
+        # would write owner_account_id back as None.
+        "elara_entity": repos.entities.get(elara.id),
         "dm": repos.accounts.create(
             campaign.id, "gm", "run-the-game", role="dm", display_name="The DM"
         ),
@@ -403,13 +406,76 @@ def test_a_player_sees_their_own_character(qtbot, server):
         client.leave()
 
 
-def test_a_player_can_edit_their_own_character_over_the_wire(qtbot, server, repos, accounts):
+def test_a_players_change_is_a_request_not_a_write(qtbot, server, repos, accounts):
+    """Nothing a player sends is applied. The DM answers it."""
+    elara = accounts["elara_entity"]
+    elara.data["sheet"] = new_sheet(class_index="wizard", level=5, hp_current=20)
+    repos.entities.update(elara)
+
     client = _login(qtbot, server, "marco", "goblin-teeth")
     try:
-        with qtbot.waitSignal(client.state.changed, timeout=5000):
-            client.send_edit(accounts["elara_entity"].id, {"data": {"hp": 7}})
+        sheet = dict(client.state.get(elara.id)["data"]["sheet"])
+        sheet["hp_current"] = 7
+        with qtbot.waitSignal(client.system, timeout=5000) as blocker:
+            client.send_edit(elara.id, {"data": {"sheet": sheet}})
 
-        assert repos.entities.get(accounts["elara_entity"].id).data["hp"] == 7
+        assert "Sent to your DM" in blocker.args[0]
+        assert repos.entities.get(elara.id).data["sheet"]["hp_current"] == 20
+        assert repos.proposals.open_count(server.campaign_id) == 1
+    finally:
+        client.leave()
+
+
+def test_an_approved_request_is_what_finally_applies(qtbot, server, repos, accounts):
+    elara = accounts["elara_entity"]
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        with qtbot.waitSignal(client.system, timeout=5000):
+            client.send_edit(elara.id, {"summary": "a tired cleric"})
+
+        [proposal] = server.proposals
+        with qtbot.waitSignal(client.state.changed, timeout=5000):
+            server.decide(proposal["id"], approve=True)
+
+        assert repos.entities.get(elara.id).summary == "a tired cleric"
+    finally:
+        client.leave()
+
+
+def test_a_refusal_reaches_the_player_with_the_reason(qtbot, server, repos, accounts):
+    elara = accounts["elara_entity"]
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        with qtbot.waitSignal(client.system, timeout=5000):
+            client.send_edit(elara.id, {"summary": "the strongest in the land"})
+
+        [proposal] = server.proposals
+        with qtbot.waitSignal(client.system, timeout=5000) as blocker:
+            server.decide(proposal["id"], approve=False, note="not after that fight")
+
+        said = blocker.args[0]
+        assert "said no" in said
+        assert "not after that fight" in said
+        assert repos.entities.get(elara.id).summary != "the strongest in the land"
+    finally:
+        client.leave()
+
+
+def test_an_illegal_request_is_refused_rather_than_queued(qtbot, server, repos, accounts):
+    """The DM should not be asked to approve something that is not a sheet."""
+    elara = accounts["elara_entity"]
+    elara.data["sheet"] = new_sheet(class_index="wizard", level=5)
+    repos.entities.update(elara)
+
+    client = _login(qtbot, server, "marco", "goblin-teeth")
+    try:
+        sheet = dict(client.state.get(elara.id)["data"]["sheet"])
+        sheet["level"] = 99
+        with qtbot.waitSignal(client.failed, timeout=5000) as blocker:
+            client.send_edit(elara.id, {"data": {"sheet": sheet}})
+
+        assert "not a legal sheet" in blocker.args[0]
+        assert repos.proposals.open_count(server.campaign_id) == 0
     finally:
         client.leave()
 
@@ -674,17 +740,19 @@ def test_omitting_the_version_does_not_buy_an_unconditional_write(
         client.leave()
 
 
-def test_an_edit_against_the_copy_they_were_sent_still_works(
+def test_a_request_against_the_copy_they_were_sent_is_accepted(
     qtbot, server, repos, accounts
 ):
-    """The check must not simply refuse everything."""
+    """The staleness check must not simply refuse everything."""
     elara = accounts["elara_entity"]
     client = _login(qtbot, server, "marco", "goblin-teeth")
     try:
-        with qtbot.waitSignal(client.state.changed, timeout=5000):
+        with qtbot.waitSignal(client.system, timeout=5000) as blocker:
             client.send_edit(elara.id, {"summary": "a tired cleric"})
 
-        assert repos.entities.get(elara.id).summary == "a tired cleric"
+        assert "Sent to your DM" in blocker.args[0]
+        assert repos.proposals.open_count(server.campaign_id) == 1
+        assert repos.entities.get(elara.id).summary != "a tired cleric", "not yet"
     finally:
         client.leave()
 

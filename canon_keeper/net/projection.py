@@ -210,24 +210,22 @@ class EditRefused(PermissionError):
     """A player tried to change something that is not theirs."""
 
 
-def split_sheet_change(existing: dict, proposed: dict) -> tuple[dict, dict]:
-    """Separate what a player may apply from what the DM must confirm.
+def changed_sheet_fields(existing: dict, proposed: dict) -> dict:
+    """The sheet fields a player is actually asking to change.
 
-    Returns ``(state, build)``, each holding only the fields that actually
-    differ. Comparing rather than copying matters: a client sends the whole
-    sheet back, so without this every save would look like a proposal to change
-    everything to what it already is.
+    Comparing rather than copying matters: a client sends the whole sheet back,
+    so without this every save would read as a request to change all forty
+    fields to what they already are, and the DM would be asked to approve it.
+
+    Anything outside the known sheet fields is dropped, so an older or modified
+    client cannot smuggle in a key we do not recognise.
     """
-    state: dict = {}
-    build: dict = {}
-    for key, value in proposed.items():
-        if existing.get(key) == value:
-            continue
-        if key in STATE_FIELDS:
-            state[key] = value
-        elif key in BUILD_FIELDS:
-            build[key] = value
-    return state, build
+    known = STATE_FIELDS | BUILD_FIELDS
+    return {
+        key: value
+        for key, value in proposed.items()
+        if key in known and existing.get(key) != value
+    }
 
 
 def apply_player_edit(

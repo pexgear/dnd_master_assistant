@@ -88,18 +88,22 @@ against the older version is refused automatically. Approving it would apply a
 decision made about a character that no longer exists, and asking the DM to work
 out whether it still makes sense is worse than asking the player to ask again.
 
-### The player proposes, the DM confirms -- but only for the build
+### The player proposes; the DM decides everything
 
-Two kinds of change, and conflating them would make the app miserable to use:
+Nothing a player sends is applied. Not their level, and not their hit points
+either: the host writes to the campaign only when the DM says so.
 
-- **State** -- hit points, conditions, prepared spells, inventory, notes. Applied
-  immediately. Pausing these for approval mid-combat would be unusable.
-- **Build** -- level, class, subclass, species, ability scores. Queued as a
-  pending change for the DM to approve, and announced in chat.
+The earlier design let state -- hit points, conditions -- through immediately on
+the grounds that pausing combat to approve six damage would be unusable. That
+was overruled, and the reasoning is sound: it is the DM's campaign, and a rule
+with an exception in it is a rule people have to remember.
 
-Validation is separate from approval and runs first: a level of 25 or a strength
-of 30 is refused outright, not queued, because approving nonsense should not be
-possible.
+Refusing carries a reason, sent privately to the player. A refusal with no
+explanation is indistinguishable from the app having lost the request.
+
+Validation still runs first and separately: a level of 25 or a strength of 30 is
+refused outright rather than queued, because the DM should not be asked to
+approve something that is not a legal sheet.
 
 ## What crosses the wire
 

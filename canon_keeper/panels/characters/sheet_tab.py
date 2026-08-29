@@ -388,10 +388,12 @@ class SheetWidget(QWidget):
             *self._ability_inputs.values(),
             *self._skill_checks.values(),
         )
+        # A player may fill in anything; none of it applies until the DM says
+        # so, which is what the button and the note below explain.
         for widget in build_widgets:
-            widget.setEnabled(self._editable and self._build_editable)
+            widget.setEnabled(self._editable)
             if self._editable and not self._build_editable:
-                widget.setToolTip("Your DM sets this.")
+                widget.setToolTip("Your DM has to agree to this.")
 
         # Equipment and prepared spells are state, not build: a player picks
         # up a torch and prepares different spells without asking anyone.
@@ -400,9 +402,9 @@ class SheetWidget(QWidget):
 
         self._save_button.setVisible(self._editable)
         if self._editable and not self._build_editable:
+            self._save_button.setText("Ask my DM")
             self._problems.setText(
-                "Hit points and conditions are yours. Level, class and ability "
-                "scores are set by your DM."
+                "Changes to your character are sent to your DM, who decides."
             )
         elif not self._editable:
             self._problems.setText("Someone else's character.")

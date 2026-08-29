@@ -235,16 +235,18 @@ def test_your_own_sheet_shows_its_numbers(player_ctx, player_panel):
     assert "save DC" in tab._spell_summary.text()
 
 
-def test_a_player_may_change_hit_points_but_not_level(player_ctx, player_panel):
-    """State is theirs; build is the DM's."""
+def test_a_player_may_fill_anything_in_but_nothing_applies_by_itself(
+    player_ctx, player_panel
+):
+    """Everything they change is a request, hit points included."""
     player_ctx.shared.replace_all([_received(own=True)])
     _select(player_panel, 1)
     tab = player_panel._sheet_tab
 
     assert tab._hp_current.isEnabled() is True
-    assert tab._level.isEnabled() is False
-    assert tab._class.isEnabled() is False
-    assert "set by your DM" in tab._problems.text()
+    assert tab._level.isEnabled() is True, "they may ask for a level up"
+    assert tab._save_button.text() == "Ask my DM"
+    assert "your DM, who decides" in tab._problems.text()
 
 
 def test_someone_elses_sheet_is_read_only(player_ctx, player_panel):

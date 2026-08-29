@@ -193,9 +193,11 @@ class SessionClient(QObject):
         """
         return self._send(MessageType.EDIT, id=entity_id, changes=changes)
 
-    def send_decision(self, proposal_id: int, approve: bool) -> bool:
-        """The DM answering a proposal."""
-        return self._send(MessageType.DECIDE, proposal=proposal_id, approve=approve)
+    def send_decision(self, proposal_id: int, approve: bool, note: str = "") -> bool:
+        """The DM answering a request, with an optional reason for refusing."""
+        return self._send(
+            MessageType.DECIDE, proposal=proposal_id, approve=approve, note=note
+        )
 
     def _send(self, message_type, **payload) -> bool:
         if not self.is_connected:
