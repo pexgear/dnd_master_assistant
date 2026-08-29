@@ -13,11 +13,19 @@ solves three problems in one command:
 And the players install nothing: they need Tailscale no more than they need it
 to visit a website.
 
-We drive the ``tailscale`` command rather than reimplementing any of it. That
-means the version on the machine decides the exact flags, so everything here is
-written defensively: parse what we can, and when we cannot, hand Tailscale's own
-message to the user unchanged -- it is usually the actionable one ("Funnel is
-not enabled on your tailnet", with a link to enable it).
+We drive the ``tailscale`` command rather than reimplementing any of it, which
+makes two behaviours important to know about:
+
+1. **It blocks when Funnel is not enabled on the tailnet.** It prints the URL to
+   enable it and then sits there polling until you do. So we check the node's
+   capabilities first and never run the blocking command in that state.
+2. **It can wait on stdin.** Every invocation gets ``stdin`` closed, so a prompt
+   we did not anticipate fails fast instead of hanging forever.
+
+Beyond that the installed version decides the exact flags, so parsing is
+defensive: take the URL if it is there, fall back to ``status --json``, and when
+something goes wrong hand Tailscale's own wording to the user -- it names the
+setting to change and links to it, which ours would not.
 """
 
 from __future__ import annotations
@@ -46,7 +54,16 @@ _KNOWN_PATHS = (
 
 _URL = re.compile(r"https://[A-Za-z0-9._-]+\.ts\.net\b")
 
-COMMAND_TIMEOUT = 25
+#: Node capability granted when a tailnet has Funnel switched on.
+FUNNEL_CAPABILITY = "cap/funnel"
+
+ENABLE_URL = "https://login.tailscale.com/f/funnel?node={node_id}"
+
+#: Short: status queries answer immediately or something is wrong.
+QUERY_TIMEOUT = 10
+#: Long: the first Funnel on a tailnet provisions a TLS certificate, which is
+#: slow enough that a short timeout would report failure on a working setup.
+START_TIMEOUT = 90
 
 
 @dataclass(slots=True)
@@ -54,11 +71,23 @@ class Result:
     ok: bool
     url: str = ""
     message: str = ""
+    #: Set when the tailnet needs Funnel switched on; the UI offers the link.
+    enable_url: str = ""
 
     @property
     def websocket_url(self) -> str:
         """The address a player types: Funnel serves HTTPS, we speak WebSocket."""
         return to_websocket_url(self.url)
+
+
+@dataclass(slots=True)
+class NodeInfo:
+    dns_name: str = ""
+    node_id: str = ""
+    funnel_enabled: bool = False
+    #: False when the CLI told us nothing useful, in which case we must not
+    #: conclude Funnel is unavailable -- older versions report no capabilities.
+    capabilities_known: bool = False
 
 
 def to_websocket_url(url: str) -> str:
@@ -82,11 +111,13 @@ def is_installed() -> bool:
     return executable() is not None
 
 
-def _run(args: list[str], timeout: int = COMMAND_TIMEOUT) -> tuple[int, str]:
-    """Run the CLI and return ``(returncode, combined output)``.
+def _flags() -> int:
+    # Stops a console window flashing up on Windows.
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
-    Everything funnels through here so the tests can stand in for Tailscale.
-    """
+
+def _run(args: list[str], timeout: int = QUERY_TIMEOUT) -> tuple[int, str]:
+    """Run a short command and return ``(returncode, combined output)``."""
     binary = executable()
     if binary is None:
         return 127, "The tailscale command was not found."
@@ -98,10 +129,8 @@ def _run(args: list[str], timeout: int = COMMAND_TIMEOUT) -> tuple[int, str]:
             text=True,
             timeout=timeout,
             check=False,
-            # Stops a console window flashing up on Windows.
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            if os.name == "nt"
-            else 0,
+            stdin=subprocess.DEVNULL,
+            creationflags=_flags(),
         )
     except subprocess.TimeoutExpired:
         return 124, f"tailscale {' '.join(args)} did not finish in {timeout}s."
@@ -111,17 +140,73 @@ def _run(args: list[str], timeout: int = COMMAND_TIMEOUT) -> tuple[int, str]:
     return completed.returncode, f"{completed.stdout}\n{completed.stderr}".strip()
 
 
-def machine_url() -> str:
-    """This machine's public Funnel hostname, from ``tailscale status``."""
-    code, output = _run(["status", "--json"], timeout=10)
-    if code != 0:
-        return ""
+def _run_capturing(args: list[str], timeout: int) -> tuple[int | None, str]:
+    """Run a command that may never exit, keeping whatever it printed.
+
+    Returns ``(returncode, output)`` with a returncode of None if we had to kill
+    it. The partial output is the point: ``tailscale funnel`` says what is wrong
+    within a second and only *then* blocks.
+    """
+    binary = executable()
+    if binary is None:
+        return 127, "The tailscale command was not found."
+
     try:
-        name = json.loads(output).get("Self", {}).get("DNSName", "")
+        process = subprocess.Popen(  # noqa: S603 - a fixed binary and our own args
+            [binary, *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            creationflags=_flags(),
+        )
+    except OSError as exc:
+        return 126, f"Could not run tailscale: {exc}"
+
+    try:
+        output, _ = process.communicate(timeout=timeout)
+        return process.returncode, (output or "").strip()
+    except subprocess.TimeoutExpired:
+        process.kill()
+        output, _ = process.communicate()
+        return None, (output or "").strip()
+
+
+def node_info() -> NodeInfo:
+    """What Tailscale knows about this machine."""
+    code, output = _run(["status", "--json"])
+    if code != 0:
+        return NodeInfo()
+    try:
+        this = json.loads(output).get("Self") or {}
     except (json.JSONDecodeError, AttributeError):
-        return ""
-    name = name.strip().rstrip(".")
+        return NodeInfo()
+
+    capabilities = this.get("CapMap") or {}
+    return NodeInfo(
+        dns_name=str(this.get("DNSName", "")).strip().rstrip("."),
+        node_id=str(this.get("ID", "")),
+        funnel_enabled=any(FUNNEL_CAPABILITY in key for key in capabilities),
+        capabilities_known=bool(capabilities),
+    )
+
+
+def machine_url() -> str:
+    """This machine's public Funnel hostname."""
+    name = node_info().dns_name
     return f"https://{name}" if name else ""
+
+
+def _not_enabled_result(info: NodeInfo) -> Result:
+    enable_url = ENABLE_URL.format(node_id=info.node_id) if info.node_id else ""
+    message = (
+        "Funnel is not switched on for your tailnet yet.\n\n"
+        "Open the link below, turn Funnel on for this machine, then try again. "
+        "It is a one-off; your players still need nothing."
+    )
+    if enable_url:
+        message += f"\n\n{enable_url}"
+    return Result(False, message=message, enable_url=enable_url)
 
 
 def start(port: int) -> Result:
@@ -136,26 +221,49 @@ def start(port: int) -> Result:
             ),
         )
 
-    code, output = _run(["funnel", "--bg", str(port)])
-    if code != 0:
-        # Tailscale's own wording is nearly always the useful one here: it names
-        # the tailnet setting to change, with a link.
-        log.warning("tailscale funnel failed (%s): %s", code, output)
-        return Result(False, message=output or "Tailscale refused to start Funnel.")
+    info = node_info()
+    # The blocking case, headed off before we run anything: without the
+    # capability the CLI prints instructions and then waits, forever, for the
+    # tailnet setting to change.
+    if info.capabilities_known and not info.funnel_enabled:
+        log.info("funnel is not enabled for node %s", info.node_id)
+        return _not_enabled_result(info)
+
+    code, output = _run_capturing(["funnel", "--bg", str(port)], START_TIMEOUT)
 
     match = _URL.search(output)
-    url = match.group(0) if match else machine_url()
-    if not url:
+    if match:
+        url = match.group(0)
+        log.info("funnel serving port %s at %s", port, url)
+        return Result(True, url=url, message=output)
+
+    # No address: work out whether it is the not-enabled case after all (an
+    # older CLI that reports no capabilities would land here) before giving up.
+    if "not enabled" in output.lower():
+        return _not_enabled_result(info)
+
+    if code is None:
         return Result(
             False,
             message=(
-                "Funnel started, but Tailscale did not report a public address.\n\n"
-                + output
+                f"Tailscale did not answer within {START_TIMEOUT}s.\n\n"
+                "It usually does this when it is waiting for something. What it "
+                "printed:\n\n" + (output or "(nothing)")
             ),
         )
 
-    log.info("funnel serving port %s at %s", port, url)
-    return Result(True, url=url, message=output)
+    if code != 0:
+        log.warning("tailscale funnel failed (%s): %s", code, output)
+        return Result(False, message=output or "Tailscale refused to start Funnel.")
+
+    fallback = machine_url()
+    if fallback:
+        return Result(True, url=fallback, message=output)
+    return Result(
+        False,
+        message="Funnel started, but Tailscale did not report a public address.\n\n"
+        + output,
+    )
 
 
 def stop(port: int | None = None) -> Result:
@@ -176,7 +284,7 @@ def stop(port: int | None = None) -> Result:
 
 
 def is_running() -> bool:
-    code, output = _run(["funnel", "status"], timeout=10)
+    code, output = _run(["funnel", "status"])
     if code != 0:
         return False
     lowered = output.lower()

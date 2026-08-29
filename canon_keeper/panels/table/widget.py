@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -239,9 +239,7 @@ class TableWidget(QWidget):
         if not result.ok:
             self._funnel_button.setChecked(False)
             self._funnel_button.setText("Share on the internet")
-            # Tailscale's own wording names the setting to change, so show it.
-            QMessageBox.warning(self, "Share on the internet", result.message)
-            self._append("error", "Could not publish the session.")
+            self._report_funnel_problem(result)
             self._update_state()
             return
 
@@ -250,6 +248,36 @@ class TableWidget(QWidget):
         self._append_system(f"Published. Players outside your network: {self._funnel_url}")
         self._append_system("Use Copy invite to send that to them.")
         self._update_state()
+
+    def _report_funnel_problem(self, result) -> None:
+        """Say what went wrong, and where it can be fixed if there is a link.
+
+        Tailscale's own wording names the setting to change, so it is shown
+        unaltered rather than paraphrased.
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle("Share on the internet")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(result.message)
+
+        if result.enable_url:
+            open_button = box.addButton(
+                "Open Tailscale settings", QMessageBox.ButtonRole.AcceptRole
+            )
+            box.addButton(QMessageBox.StandardButton.Close)
+            box.exec()
+            if box.clickedButton() is open_button:
+                QDesktopServices.openUrl(QUrl(result.enable_url))
+                self._append_system(
+                    "Turn Funnel on in the page that just opened, then press "
+                    "Share on the internet again."
+                )
+                return
+        else:
+            box.setStandardButtons(QMessageBox.StandardButton.Close)
+            box.exec()
+
+        self._append("error", "Could not publish the session.")
 
     def _on_funnel_stopped(self, result) -> None:
         self._funnel_button.setEnabled(True)

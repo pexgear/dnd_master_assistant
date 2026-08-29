@@ -143,9 +143,14 @@ It solves three things at once:
 
 **Only you install Tailscale.** Your players need nothing: they paste the
 address into the chooser and log in as usual. Sign in once at
-[tailscale.com/download](https://tailscale.com/download), and enable Funnel for
-your tailnet the first time — if it is not enabled, the app shows you
-Tailscale's own message, which links straight to the setting.
+[tailscale.com/download](https://tailscale.com/download).
+
+Funnel has to be switched on for your tailnet the first time, and it is off by
+default. The app checks before doing anything and, if it is off, offers an
+**Open Tailscale settings** button that takes you straight to the right page —
+because the `tailscale` command itself does something unhelpful here: it prints
+the instructions and then sits there waiting for you to act, looking like a
+hang.
 
 Sharing stops when you press the button again, when you leave the session, or
 when you close the app, so the tunnel never outlives the game.

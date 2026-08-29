@@ -22,27 +22,64 @@ Funnel started and running in the background.
 Press Ctrl+C to exit.
 """
 
-NOT_ENABLED_OUTPUT = (
-    "Funnel is not enabled on your tailnet.\n"
-    "To enable, visit https://login.tailscale.com/admin/settings/keys and add "
-    "the funnel attribute."
-)
+# Verbatim from tailscale 1.102.3. It prints this in under a second and then
+# blocks, polling, until the tailnet setting changes -- which is the hang this
+# module exists to avoid.
+NOT_ENABLED_OUTPUT = """
+Funnel is not enabled on your tailnet.
+To enable, visit:
+
+         https://login.tailscale.com/f/funnel?node=nmwNkFutkA11CNTRL
+"""
+
+STATUS_WITH_FUNNEL = {
+    "Self": {
+        "DNSName": "desk.tail1a2b3.ts.net.",
+        "ID": "nmwNkFutkA11CNTRL",
+        "CapMap": {"https://tailscale.com/cap/funnel": None, "ssh": None},
+    }
+}
+
+STATUS_WITHOUT_FUNNEL = {
+    "Self": {
+        "DNSName": "alienshere.tail6fa344.ts.net.",
+        "ID": "nmwNkFutkA11CNTRL",
+        "CapMap": {"ssh": None, "default-auto-update": None},
+    }
+}
 
 
 @pytest.fixture
 def cli(monkeypatch):
-    """Stand in for the tailscale command; records calls, returns queued replies."""
+    """Stand in for the tailscale command; records calls, returns queued replies.
+
+    `replies` feeds short commands, `long_replies` feeds the one that may block.
+    """
     calls: list[list[str]] = []
     replies: list[tuple[int, str]] = []
+    long_replies: list[tuple[int | None, str]] = []
 
-    def fake_run(args, timeout=funnel.COMMAND_TIMEOUT):
+    def fake_run(args, timeout=funnel.QUERY_TIMEOUT):
         calls.append(list(args))
         return replies.pop(0) if replies else (0, "")
 
+    def fake_capture(args, timeout):
+        calls.append(list(args))
+        return long_replies.pop(0) if long_replies else (0, "")
+
     monkeypatch.setattr(funnel, "_run", fake_run)
+    monkeypatch.setattr(funnel, "_run_capturing", fake_capture)
     monkeypatch.setattr(funnel, "is_installed", lambda: True)
     monkeypatch.setattr(funnel, "executable", lambda: "/usr/bin/tailscale")
-    return type("Cli", (), {"calls": calls, "replies": replies})()
+    return type(
+        "Cli",
+        (),
+        {"calls": calls, "replies": replies, "long_replies": long_replies},
+    )()
+
+
+def _status(payload) -> tuple[int, str]:
+    return 0, json.dumps(payload)
 
 
 # ------------------------------------------------------------------------ urls
@@ -64,25 +101,65 @@ def test_an_empty_url_stays_empty():
 
 
 def test_starting_publishes_the_port_and_reports_the_address(cli):
-    cli.replies.append((0, SUCCESS_OUTPUT))
+    cli.replies.append(_status(STATUS_WITH_FUNNEL))
+    cli.long_replies.append((0, SUCCESS_OUTPUT))
 
     result = funnel.start(8765)
 
     assert result.ok
     assert result.url == "https://desk.tail1a2b3.ts.net"
     assert result.websocket_url == "wss://desk.tail1a2b3.ts.net"
-    assert cli.calls == [["funnel", "--bg", "8765"]]
+    assert ["funnel", "--bg", "8765"] in cli.calls
 
 
-def test_the_tailnet_refusing_is_reported_in_tailscales_own_words(cli):
-    """Its message names the setting to change and links to it; ours would not."""
-    cli.replies.append((1, NOT_ENABLED_OUTPUT))
+def test_a_tailnet_without_funnel_is_caught_before_the_command_blocks(cli):
+    """The bug this module was rewritten for.
+
+    `tailscale funnel` prints its complaint and then waits indefinitely for the
+    setting to change, so we must never reach it in this state.
+    """
+    cli.replies.append(_status(STATUS_WITHOUT_FUNNEL))
 
     result = funnel.start(8765)
 
     assert result.ok is False
-    assert "not enabled on your tailnet" in result.message
-    assert "login.tailscale.com" in result.message
+    assert ["funnel", "--bg", "8765"] not in cli.calls, "ran the command that hangs"
+    assert "not switched on" in result.message
+    assert result.enable_url == (
+        "https://login.tailscale.com/f/funnel?node=nmwNkFutkA11CNTRL"
+    )
+
+
+def test_the_enable_link_is_offered_even_from_an_older_cli(cli):
+    """Older versions report no capabilities, so we only learn from the output."""
+    cli.replies.append((0, json.dumps({"Self": {"ID": "nmwNkFutkA11CNTRL"}})))
+    cli.long_replies.append((None, NOT_ENABLED_OUTPUT))
+    cli.replies.append((0, json.dumps({"Self": {"ID": "nmwNkFutkA11CNTRL"}})))
+
+    result = funnel.start(8765)
+
+    assert result.ok is False
+    assert "nmwNkFutkA11CNTRL" in result.enable_url
+
+
+def test_unknown_capabilities_do_not_block_a_working_setup(cli):
+    """Absent capability data must mean "ask Tailscale", not "refuse"."""
+    cli.replies.append((0, json.dumps({"Self": {"DNSName": "desk.tail1a2b3.ts.net."}})))
+    cli.long_replies.append((0, SUCCESS_OUTPUT))
+
+    result = funnel.start(8765)
+
+    assert result.ok is True
+
+
+def test_the_tailnet_refusing_is_reported_in_tailscales_own_words(cli):
+    cli.replies.append(_status(STATUS_WITH_FUNNEL))
+    cli.long_replies.append((1, "something went wrong in tailscaled"))
+
+    result = funnel.start(8765)
+
+    assert result.ok is False
+    assert "tailscaled" in result.message
 
 
 def test_without_tailscale_the_user_is_told_what_to_install(monkeypatch):
@@ -97,8 +174,9 @@ def test_without_tailscale_the_user_is_told_what_to_install(monkeypatch):
 
 def test_the_address_is_recovered_when_the_output_does_not_carry_one(cli):
     """Output wording differs between releases, so fall back to status."""
-    cli.replies.append((0, "Funnel started."))
-    cli.replies.append((0, json.dumps({"Self": {"DNSName": "desk.tail1a2b3.ts.net."}})))
+    cli.replies.append(_status(STATUS_WITH_FUNNEL))
+    cli.long_replies.append((0, "Funnel started."))
+    cli.replies.append(_status(STATUS_WITH_FUNNEL))
 
     result = funnel.start(8765)
 
@@ -106,30 +184,65 @@ def test_the_address_is_recovered_when_the_output_does_not_carry_one(cli):
     assert result.websocket_url == "wss://desk.tail1a2b3.ts.net"
 
 
-def test_success_with_no_address_anywhere_is_a_failure(cli):
-    """Reporting success without an address would leave nothing to hand out."""
-    cli.replies.append((0, "Funnel started."))
-    cli.replies.append((1, "not running"))
+def test_a_command_that_never_returns_is_killed_and_reported(cli):
+    cli.replies.append(_status(STATUS_WITH_FUNNEL))
+    cli.long_replies.append((None, "waiting for something"))
+    cli.replies.append((1, "no"))
 
     result = funnel.start(8765)
 
     assert result.ok is False
-    assert "did not report a public address" in result.message
+    assert "did not answer" in result.message
+    assert "waiting for something" in result.message, "keep what it managed to say"
 
 
-def test_a_hung_command_does_not_hang_us(monkeypatch):
+def test_a_hung_command_is_killed_and_its_output_kept(monkeypatch):
+    """Partial output is the whole point: the useful line comes out first."""
     import subprocess
 
-    def explode(*_args, **_kwargs):
-        raise subprocess.TimeoutExpired(cmd="tailscale", timeout=25)
+    class _Hanging:
+        returncode = None
+        killed = False
+
+        def communicate(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(cmd="tailscale", timeout=timeout)
+            return ("Funnel is not enabled on your tailnet.", "")
+
+        def kill(self):
+            _Hanging.killed = True
 
     monkeypatch.setattr(funnel, "executable", lambda: "/usr/bin/tailscale")
-    monkeypatch.setattr(subprocess, "run", explode)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _Hanging())
 
-    code, output = funnel._run(["funnel", "status"])
+    code, output = funnel._run_capturing(["funnel", "--bg", "8765"], timeout=1)
 
-    assert code == 124
-    assert "did not finish" in output
+    assert code is None
+    assert _Hanging.killed is True
+    assert "not enabled" in output
+
+
+def test_commands_never_wait_on_input(monkeypatch):
+    """A prompt we did not anticipate must fail, not hang forever."""
+    import subprocess
+
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen.update(kwargs)
+
+        class _Done:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Done()
+
+    monkeypatch.setattr(funnel, "executable", lambda: "/usr/bin/tailscale")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    funnel._run(["funnel", "status"])
+    assert seen["stdin"] == subprocess.DEVNULL
 
 
 # ------------------------------------------------------------------------ stop
@@ -180,8 +293,23 @@ def test_no_serve_config_means_not_running(cli):
 
 
 def test_machine_url_comes_from_status_json(cli):
-    cli.replies.append((0, json.dumps({"Self": {"DNSName": "desk.tail1a2b3.ts.net."}})))
+    cli.replies.append(_status(STATUS_WITH_FUNNEL))
     assert funnel.machine_url() == "https://desk.tail1a2b3.ts.net"
+
+
+def test_node_info_reads_the_funnel_capability(cli):
+    cli.replies.append(_status(STATUS_WITH_FUNNEL))
+    info = funnel.node_info()
+    assert info.funnel_enabled is True
+    assert info.capabilities_known is True
+    assert info.node_id == "nmwNkFutkA11CNTRL"
+
+
+def test_node_info_notices_the_capability_is_absent(cli):
+    cli.replies.append(_status(STATUS_WITHOUT_FUNNEL))
+    info = funnel.node_info()
+    assert info.funnel_enabled is False
+    assert info.capabilities_known is True
 
 
 def test_unreadable_status_json_is_survivable(cli):
@@ -226,17 +354,40 @@ def test_a_published_address_is_shown_and_copyable(table, qtbot):
 def test_a_refusal_leaves_the_button_off(table, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
-    shown = []
-    monkeypatch.setattr(
-        QMessageBox, "warning", lambda *args, **kwargs: shown.append(args[-1])
-    )
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
     table._funnel_button.setChecked(True)
 
-    table._on_funnel_started(funnel.Result(False, message=NOT_ENABLED_OUTPUT))
+    table._on_funnel_started(funnel.Result(False, message="something broke"))
 
     assert table._funnel_button.isChecked() is False
     assert table._funnel_url == ""
-    assert shown and "not enabled on your tailnet" in shown[0]
+    assert "Could not publish" in table._log.toPlainText()
+
+
+def test_the_enable_link_is_offered_as_a_button(table, monkeypatch):
+    """A URL in a message box is a URL nobody clicks."""
+    from PySide6.QtWidgets import QMessageBox
+
+    labels = []
+    original_add = QMessageBox.addButton
+
+    def spy_add(self, *args):
+        if args and isinstance(args[0], str):
+            labels.append(args[0])
+        return original_add(self, *args)
+
+    monkeypatch.setattr(QMessageBox, "addButton", spy_add)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+
+    table._on_funnel_started(
+        funnel.Result(
+            False,
+            message="Funnel is not switched on",
+            enable_url="https://login.tailscale.com/f/funnel?node=abc",
+        )
+    )
+
+    assert any("Tailscale settings" in label for label in labels)
 
 
 def test_stopping_clears_the_published_address(table):
