@@ -4,7 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "canon-keeper"
-version = "0.1.0"
+# One source of truth: canon_keeper/__init__.py. The release workflow refuses
+# to build if the git tag disagrees with it.
+dynamic = ["version"]
 description = "A dockable desktop assistant for running D&D 5e: characters, cities, and NPC conversation."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,7 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 llm = ["anthropic>=0.40"]
 whisper = ["faster-whisper>=1.0"]
-dev = ["pytest>=8.0", "pytest-qt>=4.4"]
+dev = ["pytest>=8.0", "pytest-qt>=4.4", "build>=1.0", "twine>=5.0"]
 
 [project.urls]
 Homepage = "https://github.com/pexgear/dnd_master_assistant"
@@ -51,6 +53,9 @@ characters = "canon_keeper.panels.characters:CharactersPanel"
 cities = "canon_keeper.panels.cities:CitiesPanel"
 transcript = "canon_keeper.panels.transcript:TranscriptPanel"
 table = "canon_keeper.panels.table:TablePanel"
+
+[tool.hatch.version]
+path = "canon_keeper/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["canon_keeper"]

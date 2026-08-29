@@ -282,6 +282,17 @@ building its widget is disabled and reported under **Help ▸ Installed Panels**
 it never stops the app from opening. Set `CANONKEEPER_DISABLE_PLUGINS=id1,id2`
 to turn one off from outside the app.
 
+## Contributing and releases
+
+Tests run on Windows, macOS and Linux on every push. To run them yourself:
+
+```bash
+pytest
+```
+
+Releases are cut by pushing a `v*` tag; see [RELEASING.md](RELEASING.md).
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
