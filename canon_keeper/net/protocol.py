@@ -27,7 +27,15 @@ CODE_LENGTH = 6
 MAX_NAME_LENGTH = 32
 MAX_CHAT_LENGTH = 2000
 MAX_NOTATION_LENGTH = 64
+#: Cap on a frame *we accept from a client*. Clients are untrusted, so this
+#: stops one making the host parse megabytes.
 MAX_FRAME_BYTES = 16 * 1024
+
+#: Cap on a frame accepted *from the host we logged into*. Much larger, because
+#: a snapshot of a whole campaign legitimately runs to hundreds of kilobytes and
+#: the client chose this host and authenticated to it. Still bounded, so a
+#: compromised or broken host cannot exhaust memory.
+MAX_HOST_FRAME_BYTES = 8 * 1024 * 1024
 
 
 class Role(StrEnum):
@@ -123,8 +131,15 @@ def encode(message_type: str | MessageType, **payload: Any) -> str:
     )
 
 
-def decode(raw: str) -> Message:
-    if len(raw.encode("utf-8", "ignore")) > MAX_FRAME_BYTES:
+def decode(raw: str, max_bytes: int = MAX_FRAME_BYTES) -> Message:
+    """Parse a frame.
+
+    ``max_bytes`` differs by direction: small for what a host accepts from a
+    client, large for what a client accepts from its host. One limit for both
+    would either let a client flood the host or stop a legitimate snapshot of a
+    large campaign from arriving.
+    """
+    if len(raw.encode("utf-8", "ignore")) > max_bytes:
         raise ProtocolError("message too large")
     try:
         parsed = json.loads(raw)

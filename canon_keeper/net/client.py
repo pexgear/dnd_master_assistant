@@ -16,6 +16,7 @@ from PySide6.QtWebSockets import QWebSocket
 
 from canon_keeper.net import auth
 from canon_keeper.net.protocol import (
+    MAX_HOST_FRAME_BYTES,
     Member,
     MessageType,
     ProtocolError,
@@ -211,7 +212,9 @@ class SessionClient(QObject):
 
     def _on_text(self, raw: str) -> None:
         try:
-            message = decode(raw)
+            # A campaign snapshot is legitimately large, and this host is one we
+            # chose and logged into.
+            message = decode(raw, max_bytes=MAX_HOST_FRAME_BYTES)
         except ProtocolError as exc:
             log.warning("unreadable frame from server: %s", exc)
             return

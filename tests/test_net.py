@@ -537,3 +537,38 @@ def test_a_private_rename_is_not_published(qtbot, server, repos):
     repos.settings.set("panel_name.party.table", "The Tavern")
 
     assert server.panel_names == {"table": "The Tavern"}
+
+
+# ---------------------------------------------------------------- frame sizes
+
+
+def test_a_client_cannot_flood_the_host():
+    """The host's limit is the strict one: clients are untrusted."""
+    from canon_keeper.net.protocol import MAX_FRAME_BYTES
+
+    with pytest.raises(ProtocolError, match="too large"):
+        decode(encode(MessageType.CHAT, text="x" * (MAX_FRAME_BYTES + 100)))
+
+
+def test_a_client_accepts_a_large_snapshot_from_its_host():
+    """A campaign of any size must actually arrive.
+
+    One limit for both directions meant a snapshot of ~15 entities was silently
+    refused by the client, which is well within what a real campaign shares.
+    """
+    from canon_keeper.net.protocol import MAX_HOST_FRAME_BYTES
+
+    entity = {"id": 1, "kind": "npc", "name": "Sildar", "data": {"notes": "x" * 800}}
+    frame = encode(MessageType.SNAPSHOT, entities=[dict(entity, id=i) for i in range(100)])
+
+    assert len(frame.encode("utf-8")) > MAX_FRAME_BYTES, "not actually a big frame"
+    message = decode(frame, max_bytes=MAX_HOST_FRAME_BYTES)
+    assert len(message.get("entities")) == 100
+
+
+def test_even_the_host_limit_is_bounded():
+    """A broken or hostile host still must not be able to exhaust memory."""
+    from canon_keeper.net.protocol import MAX_HOST_FRAME_BYTES
+
+    with pytest.raises(ProtocolError, match="too large"):
+        decode("x" * (MAX_HOST_FRAME_BYTES + 10), max_bytes=MAX_HOST_FRAME_BYTES)
