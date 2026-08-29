@@ -17,3 +17,7 @@ dist/
 !.vscode/launch.json
 !.vscode/settings.json
 !.vscode/extensions.json
+
+# Launchers written by the install scripts
+canonkeeper.bat
+/canonkeeper

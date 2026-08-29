@@ -22,20 +22,48 @@ conversation holder is the next phase.
 
 Requires Python 3.11 or newer.
 
+### From a source checkout
+
+Run the installer for your system. It finds a suitable Python, builds a
+virtualenv, installs everything, and writes a launcher:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+```bash
+./install.sh
+```
+
+Then start it from that folder:
+
+```bash
+.\canonkeeper
+```
+
+```bash
+./canonkeeper
+```
+
+Add `-Shortcut` (Windows) to also put Canon Keeper on your desktop.
+
+> **`canonkeeper` on its own will not be found**, and that is expected: the
+> command lives inside the project's virtualenv, which is only on your `PATH`
+> while the virtualenv is activated. The `.\canonkeeper` launcher exists so you
+> do not have to think about that. If you would rather activate it,
+> `.\.venv\Scripts\Activate.ps1` (or `source .venv/bin/activate`) makes the bare
+> name work for the rest of the session.
+
+### With pip
+
 ```bash
 pip install canon-keeper
 canonkeeper
 ```
 
-### From a source checkout
-
-```bash
-python -m venv .venv
-.venv/Scripts/python -m pip install -e ".[dev]"
-.venv/Scripts/canonkeeper
-```
-
-On macOS and Linux the venv paths are `.venv/bin/` instead of `.venv/Scripts/`.
+Installing into your own environment does put `canonkeeper` on `PATH` — provided
+that environment's scripts directory is on it, which is not always true of the
+Microsoft Store build of Python.
 
 ## Starting a campaign
 
