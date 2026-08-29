@@ -25,6 +25,7 @@ from PySide6.QtNetwork import QHostAddress
 from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 
 from canon_keeper.net import auth, discovery
+from canon_keeper.repo.chat import DEFAULT_LIMIT, ROLLED, SAID, SYSTEM
 from canon_keeper.net.dice import DiceError, roll
 from canon_keeper.repo.entities import StaleWrite
 from canon_keeper.net.projection import (
@@ -101,6 +102,9 @@ class SessionServer(QObject):
     stopped = Signal()
     failed = Signal(str)
     roster_changed = Signal(list)  # list[Member]
+    #: A player's edit was applied. The DM's own panels read the database
+    #: directly, so without this their screen shows yesterday's hit points.
+    entity_applied = Signal(int)
 
     def __init__(
         self,
@@ -125,11 +129,44 @@ class SessionServer(QObject):
         #: without this a client's cache from a different campaign looks
         #: perfectly up to date and is served back to them unchanged.
         self.campaign_key = self._campaign_key()
+        #: The evening this is. Chat is filed against it, so each session is
+        #: its own log rather than one endless scroll.
+        self.session_id = self._open_session()
 
         self._server: QWebSocketServer | None = None
         self._sessions: dict[QWebSocket, _Session] = {}
         self._pending: dict[QWebSocket, _Pending] = {}
         self._beacon = discovery.Beacon(self)
+
+    def _open_session(self) -> int | None:
+        try:
+            return self.repos.sessions.ensure_open(self.campaign_id).id
+        except Exception:  # noqa: BLE001 - a log is not worth failing to host
+            log.exception("could not open a session for the chat log")
+            return None
+
+    def _record(self, kind: str, text: str, speaker: str = "", role: str = "",
+                payload: dict | None = None) -> None:
+        """Keep what was said. Never let the log stop the game."""
+        try:
+            self.repos.chat.add(
+                self.campaign_id,
+                kind,
+                text,
+                session_id=self.session_id,
+                speaker=speaker,
+                role=role,
+                payload=payload,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("could not write to the chat log")
+
+    def history(self, limit: int = DEFAULT_LIMIT) -> list[dict]:
+        try:
+            return [m.to_dict() for m in self.repos.chat.recent(self.campaign_id, limit)]
+        except Exception:  # noqa: BLE001
+            log.exception("could not read the chat log")
+            return []
 
     def _campaign_key(self) -> str:
         key = self.repos.settings.get("campaign_key", "")
@@ -404,6 +441,9 @@ class SessionServer(QObject):
             campaign_key=self.campaign_key,
             members=[m.to_dict() for m in self.members],
         )
+        # What was said before they arrived, so a session picks up where the
+        # last one stopped rather than from an empty panel.
+        self._send(socket, MessageType.HISTORY, messages=self.history())
         self._send_snapshot(socket, session, known=pending.known)
         self._send(socket, MessageType.PANEL_NAMES, names=self.panel_names)
         if session.viewer.is_dm:
@@ -535,6 +575,7 @@ class SessionServer(QObject):
         text = str(message.get("text", "")).strip()[:MAX_CHAT_LENGTH]
         if not text:
             return
+        self._record(SAID, text, speaker=session.member.label, role=session.member.role)
         self._broadcast(MessageType.SAID, member=session.member.to_dict(), text=text)
 
     def _handle_roll(self, socket: QWebSocket, session: _Session, message) -> None:
@@ -544,6 +585,13 @@ class SessionServer(QObject):
         except DiceError as exc:
             self._send(socket, MessageType.ERROR, code="bad_dice", message=str(exc))
             return
+        self._record(
+            ROLLED,
+            result.describe(),
+            speaker=session.member.label,
+            role=session.member.role,
+            payload={"total": result.total, "rolls": result.rolls},
+        )
         self._broadcast(
             MessageType.ROLLED,
             member=session.member.to_dict(),
@@ -606,7 +654,10 @@ class SessionServer(QObject):
             )
             self.publish_entity(entity_id)
             return
+
         self.publish_entity(entity_id)
+        # The DM's own panels read the database directly, so they need telling.
+        self.entity_applied.emit(entity_id)
 
     # ---------------------------------------------------------------- proposals
 
@@ -711,6 +762,7 @@ class SessionServer(QObject):
                 socket.sendTextMessage(frame)
 
     def _broadcast_system(self, text: str, exclude: QWebSocket | None = None) -> None:
+        self._record(SYSTEM, text)
         self._broadcast(MessageType.SYSTEM, exclude=exclude, text=text)
 
     def _send_roster(self) -> None:

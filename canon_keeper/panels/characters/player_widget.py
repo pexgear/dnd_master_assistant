@@ -190,6 +190,20 @@ class PlayerCharactersWidget(QWidget):
             )
         elif self._list.currentItem() is None:
             self._list.setCurrentRow(0)
+        else:
+            # Rebuilding the list leaves the same row selected, so Qt emits no
+            # selection change and the detail pane keeps showing the old copy.
+            # An update that arrives for the character already on screen is
+            # exactly the case that matters, so re-read it explicitly.
+            self._refresh_shown()
+
+    def _refresh_shown(self) -> None:
+        """Re-read the character on screen, unless it is being edited."""
+        if self._current_id is None or self._save.isEnabled():
+            return
+        entity = self._ctx.shared.get(self._current_id)
+        if entity is not None:
+            self._load(entity)
 
     def _on_selection_changed(self, current, _previous) -> None:
         if self._loading or current is None:

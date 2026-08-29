@@ -5,6 +5,9 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+- **The chat is kept.** Rejoin a campaign and the last hundred messages are
+  already there, so a session picks up where the last one stopped. Everything is
+  kept and filed by evening; only the recent tail is loaded.
 - **You are the authority on your campaign.** A player's change is checked
   against the copy they were actually sent, not against anything their app
   claims. If you changed the character in the meantime their change is refused

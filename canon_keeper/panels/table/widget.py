@@ -72,6 +72,9 @@ class TableWidget(QWidget):
         #: before that would store a password we have no reason to believe.
         self._pending_credentials: tuple[str, str, str] | None = None
         self._funnel_url = ""
+        #: Set while relaying a player's edit to the DM's own panels, so the
+        #: refresh does not look like a change *by* the DM.
+        self._relaying_player_edit = False
         self._proposals: list[dict] = []
         self._approvals_dialog = None
         self._funnel_pool = QThreadPool(self)
@@ -89,6 +92,7 @@ class TableWidget(QWidget):
         # shell, which re-titles the docks.
         self._client.panel_names_received.connect(self._on_panel_names)
         self._client.proposals_received.connect(self._on_proposals)
+        self._client.history_received.connect(self._on_history)
 
         self._build_ui()
         # A share changed while hosting: push it to whoever may now see it.
@@ -253,11 +257,22 @@ class TableWidget(QWidget):
             self._server.publish_panel_names()
 
     def _on_share_changed(self, entity_id: int) -> None:
-        if self._server is not None and self._server.is_running:
-            # A change of yours refuses anything a player proposed against the
-            # older sheet, before the new version goes out.
+        if self._server is None or not self._server.is_running:
+            return
+        if not self._relaying_player_edit:
+            # A change of *yours* refuses anything a player proposed against the
+            # older sheet. A player's own edit must not: it would cancel the
+            # level-up they asked for the moment they took damage.
             self._server.refuse_conflicting(entity_id)
-            self._server.publish_entity(entity_id)
+        self._server.publish_entity(entity_id)
+
+    def _on_player_edit_applied(self, entity_id: int) -> None:
+        """Tell the DM's own panels to re-read what a player just changed."""
+        self._relaying_player_edit = True
+        try:
+            self._ctx.bus.entity_changed.emit(entity_id)
+        finally:
+            self._relaying_player_edit = False
 
     def _toggle_funnel(self) -> None:
         if self._funnel_button.isChecked():
@@ -386,6 +401,7 @@ class TableWidget(QWidget):
             self._ctx.repos, self._ctx.campaign_id, session_name, parent=self
         )
         server.failed.connect(self._on_failed)
+        server.entity_applied.connect(self._on_player_edit_applied)
         if not server.start(port):
             server.deleteLater()
             return
@@ -502,7 +518,32 @@ class TableWidget(QWidget):
 
     # ------------------------------------------------------------------ output
 
-    def _append(self, kind: str, text: str) -> None:
+    def _on_history(self, messages: list) -> None:
+        """Replay what was said before we arrived.
+
+        The log is cleared first: this is the authoritative account, and our own
+        "Connecting..." lines are not part of it.
+        """
+        self._log.clear()
+        for entry in messages:
+            if not isinstance(entry, dict):
+                continue
+            kind = entry.get("kind", "system")
+            speaker = entry.get("speaker", "")
+            text = str(entry.get("text", ""))
+            if kind == "said" and speaker:
+                text = f"{speaker}: {text}"
+            elif kind == "rolled" and speaker:
+                text = f"{speaker} rolled {text}"
+            self._append(
+                entry.get("role") or kind,
+                text,
+                when=entry.get("at"),
+            )
+        if messages:
+            self._append("system", "--- you are here ---")
+
+    def _append(self, kind: str, text: str, when: float | None = None) -> None:
         cursor = self._log.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
 
@@ -515,7 +556,8 @@ class TableWidget(QWidget):
 
         if not self._log.document().isEmpty():
             cursor.insertBlock()
-        cursor.insertText(f"{datetime.now():%H:%M}  ", stamp)
+        moment = datetime.fromtimestamp(when) if when else datetime.now()
+        cursor.insertText(f"{moment:%H:%M}  ", stamp)
         cursor.insertText(text, body)
         self._log.verticalScrollBar().setValue(self._log.verticalScrollBar().maximum())
 

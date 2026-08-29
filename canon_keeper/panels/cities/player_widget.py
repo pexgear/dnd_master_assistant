@@ -129,6 +129,11 @@ class PlayerCitiesWidget(QWidget):
             )
         elif selected is not None:
             self._tree.setCurrentItem(selected)
+            # Same row, so no selection change fires; re-read it by hand or the
+            # pane keeps showing what the host sent last time.
+            place = self._ctx.shared.get(self._current_id)
+            if place is not None:
+                self._load(place)
         elif self._tree.currentItem() is None:
             self._tree.setCurrentItem(self._tree.topLevelItem(0))
 

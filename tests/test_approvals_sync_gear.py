@@ -385,3 +385,112 @@ def test_a_proposal_still_matching_the_sheet_is_left_alone(repos, campaign, elar
 
     assert server.refuse_conflicting(elara.id) == 0
     assert repos.proposals.open_count(campaign.id) == 1
+
+
+# ------------------------------------------------------------------ the chat log
+
+
+def test_what_is_said_is_kept(repos, campaign):
+    from canon_keeper.repo.chat import SAID
+
+    repos.chat.add(campaign.id, SAID, "I check the door", speaker="Elara", role="player")
+
+    [kept] = repos.chat.recent(campaign.id)
+    assert kept.text == "I check the door"
+    assert kept.speaker == "Elara"
+
+
+def test_the_log_reads_in_order(repos, campaign):
+    from canon_keeper.repo.chat import SAID
+
+    for line in ("first", "second", "third"):
+        repos.chat.add(campaign.id, SAID, line)
+
+    assert [m.text for m in repos.chat.recent(campaign.id)] == [
+        "first",
+        "second",
+        "third",
+    ]
+
+
+def test_only_the_tail_is_handed_out(repos, campaign):
+    """Everything is kept; nobody rejoining wants to scroll through last month."""
+    from canon_keeper.repo.chat import SAID
+
+    for n in range(250):
+        repos.chat.add(campaign.id, SAID, f"line {n}")
+
+    recent = repos.chat.recent(campaign.id, limit=100)
+
+    assert len(recent) == 100
+    assert recent[0].text == "line 150", "the tail, not the beginning"
+    assert recent[-1].text == "line 249"
+    assert repos.chat.count(campaign.id) == 250, "nothing was discarded"
+
+
+def test_each_evening_is_its_own_log(repos, campaign):
+    from canon_keeper.repo.chat import SAID
+
+    first = repos.sessions.start(campaign.id, "Session one")
+    repos.chat.add(campaign.id, SAID, "last week", session_id=first.id)
+    repos.sessions.end(first.id)
+
+    second = repos.sessions.start(campaign.id, "Session two")
+    repos.chat.add(campaign.id, SAID, "tonight", session_id=second.id)
+
+    assert [m.text for m in repos.chat.for_session(first.id)] == ["last week"]
+    assert [m.text for m in repos.chat.for_session(second.id)] == ["tonight"]
+    assert len(repos.chat.recent(campaign.id)) == 2, "the tail spans sessions"
+
+
+def test_the_speaker_is_a_copy_not_a_reference(repos, campaign, elara, marco):
+    """A log should still read correctly after a character is renamed."""
+    from canon_keeper.repo.chat import SAID
+
+    repos.chat.add(campaign.id, SAID, "hello", speaker="Elara")
+
+    renamed = repos.entities.get(elara.id)
+    renamed.name = "Someone Else"
+    repos.entities.update(renamed)
+
+    assert repos.chat.recent(campaign.id)[0].speaker == "Elara"
+
+
+def test_a_roll_keeps_its_detail(repos, campaign):
+    from canon_keeper.repo.chat import ROLLED
+
+    repos.chat.add(
+        campaign.id, ROLLED, "2d6+3 = [4, 6] +3 = 13",
+        speaker="Marco", payload={"total": 13, "rolls": [4, 6]},
+    )
+
+    assert repos.chat.recent(campaign.id)[0].payload["total"] == 13
+
+
+def test_the_server_records_and_serves_history(repos, campaign, marco):
+    from canon_keeper.net.server import SessionServer
+
+    server = SessionServer(repos, campaign.id)
+    server._record("said", "I check the door", speaker="Elara", role="player")
+
+    history = server.history()
+
+    assert history[-1]["text"] == "I check the door"
+    assert history[-1]["speaker"] == "Elara"
+    assert history[-1]["at"] > 0
+
+
+def test_a_broken_log_never_stops_the_game(repos, campaign, monkeypatch):
+    """Hosting must not fail because a log write did."""
+    from canon_keeper.net.server import SessionServer
+
+    server = SessionServer(repos, campaign.id)
+
+    def explode(*_a, **_k):
+        raise RuntimeError("the disk is full")
+
+    monkeypatch.setattr(repos.chat, "add", explode)
+    monkeypatch.setattr(repos.chat, "recent", explode)
+
+    server._record("said", "still fine")  # must not raise
+    assert server.history() == []

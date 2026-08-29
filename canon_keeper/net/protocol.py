@@ -58,6 +58,7 @@ class MessageType(StrEnum):
     SNAPSHOT = "snapshot"    # everything this account may see
     PANEL_NAMES = "panels"   # what the DM calls each panel
     PROPOSALS = "proposals"  # build changes waiting on the DM
+    HISTORY = "history"      # what was said before you arrived
     ENTITY = "entity"        # one entity added or changed
     ENTITY_GONE = "gone"     # {id} -- deleted, or no longer shared with you
     ERROR = "error"

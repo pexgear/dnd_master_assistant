@@ -333,11 +333,18 @@ class CharactersWidget(QWidget):
         self.reload(keep_selection=False)
 
     def _on_entity_changed_elsewhere(self, entity_id: int) -> None:
-        # Another panel touched an entity. Refresh the list, but never clobber a
-        # form the DM is currently typing into.
+        # Another panel, or a player, touched an entity. Refresh the list, but
+        # never clobber a form the DM is currently typing into.
         if self._dirty and entity_id == self._current_id:
             return
         self.reload(keep_selection=True)
+
+        # The list rebuild leaves the same row selected, so nothing re-reads the
+        # detail. Without this a player's hit point change never appears.
+        if entity_id == self._current_id and not self._dirty:
+            entity = self._ctx.repos.entities.get(entity_id)
+            if entity is not None:
+                self._load_entity(entity)
 
     # ---------------------------------------------------------------- actions
 

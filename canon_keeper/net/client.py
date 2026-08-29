@@ -52,6 +52,8 @@ class SessionClient(QObject):
     panel_names_received = Signal(dict)
     #: Build changes waiting on the DM. Only the DM's client sees these.
     proposals_received = Signal(list)
+    #: What was said before we arrived, oldest first.
+    history_received = Signal(list)
 
     def __init__(self, parent: QObject | None = None, state: SharedState | None = None) -> None:
         super().__init__(parent)
@@ -282,6 +284,10 @@ class SessionClient(QObject):
         elif message.type == MessageType.PANEL_NAMES:
             names = message.get("names")
             self.panel_names_received.emit(names if isinstance(names, dict) else {})
+
+        elif message.type == MessageType.HISTORY:
+            messages = message.get("messages")
+            self.history_received.emit(messages if isinstance(messages, list) else [])
 
         elif message.type == MessageType.PROPOSALS:
             proposals = message.get("proposals")

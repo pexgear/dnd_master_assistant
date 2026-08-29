@@ -270,11 +270,17 @@ class CitiesWidget(QWidget):
         self._set_form_enabled(False)
         self.reload(keep_selection=False)
 
-    def _on_entity_changed_elsewhere(self, _entity_id: int) -> None:
+    def _on_entity_changed_elsewhere(self, entity_id: int) -> None:
         # A character may have moved into or out of the selected place.
         self._refresh_occupants(self._current_id)
-        if not self._dirty:
-            self.reload(keep_selection=True)
+        if self._dirty:
+            return
+        self.reload(keep_selection=True)
+
+        if entity_id == self._current_id:
+            place = self._ctx.repos.entities.get(entity_id)
+            if place is not None:
+                self._load_place(place)
 
     def _focus_occupant(self, item: QListWidgetItem) -> None:
         """Double-clicking someone in the room hands them to the Characters panel."""
