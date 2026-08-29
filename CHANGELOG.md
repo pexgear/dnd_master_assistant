@@ -5,6 +5,12 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+- **Guided character creation.** **Build...** in the Characters panel walks
+  through species, class, abilities, skills and spells, with the standard array
+  and point buy, and adds the class's starting equipment at the end.
+- **Players get their sheet too.** Their own characters show the whole sheet and
+  they keep their own hit points and conditions; level, class and ability scores
+  stay the DM's to set. Other people's sheets are read-only.
 - **Character sheets.** A **Sheet** tab beside Story in the Characters panel:
   species, class, level, ability scores and skills, with hit points, armour
   class, saving throws, skill bonuses and spell slots worked out as you type.

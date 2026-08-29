@@ -49,8 +49,16 @@ class SheetWidget(QWidget):
         self._ctx = ctx
         self._content = Content(ctx.repos.settings)
         self._entity = None
+        self._entity_id: int | None = None
         self._sheet: dict | None = None
         self._loading = False
+        #: False for a character that is not yours: you may look, not touch.
+        self._editable = True
+        #: False for a player. Level, class and ability scores describe what the
+        #: character *is*, and changing that is the DM's to confirm.
+        self._build_editable = True
+        #: How to save. The DM writes to the campaign; a player asks the host.
+        self._commit = None
         #: The maximum as of the last refresh, so a character sitting at full
         #: health follows the maximum up when constitution or level changes
         #: instead of being stranded on the old number.
@@ -244,11 +252,36 @@ class SheetWidget(QWidget):
     # ------------------------------------------------------------------ state
 
     def set_entity(self, entity) -> None:
-        """Show one character, or nothing."""
+        """Show one character from the campaign. The DM's path."""
         self._entity = entity
-        self._sheet = sheet_of(entity.data) if entity is not None else None
+        self._entity_id = entity.id if entity is not None else None
+        self._commit = None
+        self._editable = True
+        self._build_editable = True
+        self._show(sheet_of(entity.data) if entity is not None else None,
+                   present=entity is not None)
 
-        has_entity = entity is not None
+    def set_received(self, received: dict | None, on_commit=None) -> None:
+        """Show a character that arrived over the wire. A player's path.
+
+        ``received`` is the projected dict, not an Entity: a player never holds
+        the campaign, only what the host chose to send them.
+        """
+        self._entity = None
+        self._entity_id = received.get("id") if received else None
+        self._commit = on_commit
+        owned = bool(received and received.get("own"))
+        self._editable = owned
+        # Even on your own character, the build half waits for the DM.
+        self._build_editable = False
+        sheet = (received or {}).get("data", {}).get("sheet")
+        self._show(sheet if isinstance(sheet, dict) and "abilities" in sheet else None,
+                   present=received is not None)
+
+    def _show(self, sheet: dict | None, present: bool) -> None:
+        self._sheet = sheet
+
+        has_entity = present
         has_sheet = self._sheet is not None
 
         self._empty.setVisible(has_entity and not has_sheet)
@@ -265,9 +298,48 @@ class SheetWidget(QWidget):
                 "character one, or leave it as a purely narrative entry."
             )
 
+        # Only the DM can conjure a sheet from nothing; a player's arrives.
+        self._create_button.setVisible(
+            has_entity and not has_sheet and self._entity is not None
+        )
+        if not has_entity:
+            self._empty.setText("Select a character.")
+        elif not has_sheet and self._entity is None:
+            self._empty.setText("This character has no sheet yet.")
+
         if has_sheet:
             self._populate_choices()
             self._load()
+            self._apply_permissions()
+
+    def _apply_permissions(self) -> None:
+        """Grey out what this person may not change, and say why."""
+        build_widgets = (
+            self._species,
+            self._subspecies,
+            self._class,
+            self._subclass,
+            self._level,
+            self._background,
+            *self._ability_inputs.values(),
+            *self._skill_checks.values(),
+        )
+        for widget in build_widgets:
+            widget.setEnabled(self._editable and self._build_editable)
+            if self._editable and not self._build_editable:
+                widget.setToolTip("Your DM sets this.")
+
+        for widget in (self._hp_current,):
+            widget.setEnabled(self._editable)
+
+        self._save_button.setVisible(self._editable)
+        if self._editable and not self._build_editable:
+            self._problems.setText(
+                "Hit points and conditions are yours. Level, class and ability "
+                "scores are set by your DM."
+            )
+        elif not self._editable:
+            self._problems.setText("Someone else's character.")
 
     def _create_sheet(self) -> None:
         if self._entity is None:
@@ -455,7 +527,7 @@ class SheetWidget(QWidget):
     # ------------------------------------------------------------------- saving
 
     def save(self) -> bool:
-        if self._entity is None or self._sheet is None:
+        if self._sheet is None or not self._editable:
             return False
 
         sheet = self._gather()
@@ -466,6 +538,15 @@ class SheetWidget(QWidget):
             return False
 
         self._problems.setText("")
+
+        if self._commit is not None:
+            # A player: the host decides, and the change comes back to us.
+            self._commit(self._entity_id, sheet)
+            self._save_button.setEnabled(False)
+            return True
+
+        if self._entity is None:
+            return False
         entity = self._ctx.repos.entities.get(self._entity.id)
         if entity is None:
             return False

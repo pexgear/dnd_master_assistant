@@ -13,6 +13,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFormLayout,
+    QTabWidget,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from canon_keeper.panels.characters.sheet_tab import SheetWidget
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC
 
@@ -124,6 +126,14 @@ class PlayerCharactersWidget(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(self._form_container)
 
+        self._tabs = QTabWidget()
+        self._tabs.addTab(scroll, "Story")
+
+        # The same sheet widget the DM uses, fed from what the host sent rather
+        # than from a campaign this machine does not have.
+        self._sheet_tab = SheetWidget(self._ctx)
+        self._tabs.addTab(self._sheet_tab, "Sheet")
+
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -131,7 +141,7 @@ class PlayerCharactersWidget(QWidget):
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hint.setWordWrap(True)
         right_layout.addWidget(self._hint)
-        right_layout.addWidget(scroll, 1)
+        right_layout.addWidget(self._tabs, 1)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
@@ -143,6 +153,7 @@ class PlayerCharactersWidget(QWidget):
 
     def _show_form(self, visible: bool) -> None:
         self._form_container.setVisible(visible)
+        self._tabs.setVisible(visible)
         self._hint.setVisible(not visible)
 
     def _mark_dirty(self, *_args) -> None:
@@ -222,10 +233,19 @@ class PlayerCharactersWidget(QWidget):
         self._save.setVisible(own)
         self._save.setEnabled(False)
 
+        self._sheet_tab.set_received(entity, on_commit=self._commit_sheet)
+
         self._loading = False
         self._show_form(True)
 
     # --------------------------------------------------------------- actions
+
+    def _commit_sheet(self, entity_id: int, sheet: dict) -> None:
+        """Ask the host to store a sheet change. It decides, then echoes back."""
+        received = self._ctx.shared.get(entity_id) or {}
+        self._ctx.bus.player_edit_requested.emit(
+            entity_id, {"data": {"sheet": sheet}, "version": received.get("version")}
+        )
 
     def _save_own(self) -> None:
         entity = self._ctx.shared.get(self._current_id) if self._current_id else None

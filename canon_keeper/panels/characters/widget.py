@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from canon_keeper.panels.characters.sheet_tab import SheetWidget
+from canon_keeper.panels.characters.wizard import CharacterWizard
 from canon_keeper.panels.sharing import ShareBar
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.entities import KIND_LOCATION, KIND_NPC, KIND_PC, Entity
@@ -89,8 +90,14 @@ class CharactersWidget(QWidget):
 
         buttons = QHBoxLayout()
         btn_new = QPushButton("New")
+        btn_new.setToolTip("A blank entry to write notes against")
         btn_new.clicked.connect(self._new_character)
         buttons.addWidget(btn_new)
+
+        btn_build = QPushButton("Build...")
+        btn_build.setToolTip("Create a character step by step, with a full sheet")
+        btn_build.clicked.connect(self._build_character)
+        buttons.addWidget(btn_build)
         btn_delete = QPushButton("Delete")
         btn_delete.clicked.connect(self._delete_character)
         buttons.addWidget(btn_delete)
@@ -326,6 +333,31 @@ class CharactersWidget(QWidget):
         self._name.selectAll()
         self._name.setFocus()
         self._ctx.bus.entity_changed.emit(entity.id)
+
+    def _build_character(self) -> None:
+        """Guided creation. The wizard fills in the same sheet the tab edits."""
+        if self._dirty:
+            self.save_current(announce=False)
+
+        wizard = CharacterWizard(self._ctx, self)
+        if not wizard.exec():
+            return
+
+        name, sheet = wizard.finished_sheet()
+        entity = self._ctx.repos.entities.create(
+            Entity(
+                id=None,
+                campaign_id=self._ctx.campaign_id,
+                kind=KIND_PC,
+                name=name,
+                data={"status": "alive", "sheet": sheet},
+            )
+        )
+        self.reload(keep_selection=False)
+        self._select_entity(entity.id)
+        self._tabs.setCurrentIndex(1)
+        self._ctx.bus.entity_changed.emit(entity.id)
+        self._ctx.bus.status_message.emit(f"Created {name}")
 
     def _delete_character(self) -> None:
         if self._current_id is None:
