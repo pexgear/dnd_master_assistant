@@ -3,6 +3,13 @@
 What changed, from the point of view of someone running a game. See
 [RELEASING.md](RELEASING.md) for how versions are cut.
 
+## Unreleased
+
+- **Speak into the chat.** A **Speak** button beside the chat box transcribes
+  what you said into the box for you to correct before sending — useful for
+  anyone who would rather talk than type mid-scene. Local, and primed with your
+  campaign's names.
+
 ## 0.3.0
 
 Character sheets, and a table where the DM decides.

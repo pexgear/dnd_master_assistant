@@ -8,7 +8,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QColor, QDesktopServices, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from canon_keeper import campaigns, credentials
+from canon_keeper.audio.dictation import Dictation
 from canon_keeper.net import discovery, funnel
 from canon_keeper.net.client import SessionClient
 from canon_keeper.net.protocol import Member, Role
@@ -75,6 +84,16 @@ class TableWidget(QWidget):
         #: Set while relaying a player's edit to the DM's own panels, so the
         #: refresh does not look like a change *by* the DM.
         self._relaying_player_edit = False
+
+        # Speaking instead of typing. The text lands in the box rather than
+        # being sent, because a transcription is a first draft.
+        self._dictation = Dictation(self)
+        self._dictation.text_ready.connect(self._on_dictated)
+        self._dictation.status.connect(self._on_dictation_status)
+        self._dictation.failed.connect(lambda message: self._append("error", message))
+        self._dictation_timer = QTimer(self)
+        self._dictation_timer.setInterval(200)
+        self._dictation_timer.timeout.connect(self._update_dictation_button)
         self._proposals: list[dict] = []
         self._approvals_dialog = None
         self._funnel_pool = QThreadPool(self)
@@ -201,6 +220,21 @@ class TableWidget(QWidget):
         self._entry.setPlaceholderText("Say something, or /roll 2d6+3")
         self._entry.returnPressed.connect(self._send)
         entry.addWidget(self._entry, 1)
+
+        self._say_button = QPushButton("Speak")
+        self._say_button.setCheckable(True)
+        self._say_button.setMaximumWidth(96)
+        self._say_button.clicked.connect(self._toggle_dictation)
+        if Dictation.is_available():
+            self._say_button.setToolTip(
+                "Talk instead of typing. What you said appears here for you to "
+                "correct before you send it."
+            )
+        else:
+            self._say_button.setEnabled(False)
+            self._say_button.setToolTip(Dictation.unavailable_hint())
+        entry.addWidget(self._say_button)
+
         send = QPushButton("Send")
         send.clicked.connect(self._send)
         entry.addWidget(send)
@@ -215,6 +249,62 @@ class TableWidget(QWidget):
             "player": QColor("#7fd1a0" if dark else "#1c7048"),
             "error": QColor("#ff6b6b" if dark else "#b00020"),
         }
+
+    # -------------------------------------------------------------- dictation
+
+    def _toggle_dictation(self) -> None:
+        if self._say_button.isChecked():
+            if not self._dictation.start():
+                self._say_button.setChecked(False)
+                return
+            self._dictation_timer.start()
+            self._update_dictation_button()
+        else:
+            self._dictation_timer.stop()
+            self._say_button.setText("Speak")
+            self._dictation.stop(self._glossary())
+
+    def _update_dictation_button(self) -> None:
+        seconds = int(self._dictation.elapsed)
+        self._say_button.setText(f"Stop {seconds // 60}:{seconds % 60:02d}")
+
+    def _on_dictated(self, text: str) -> None:
+        """Put the words in the box. Sending stays a deliberate act.
+
+        Appended rather than replacing, so a second sentence adds to the first
+        instead of throwing it away.
+        """
+        existing = self._entry.text().strip()
+        self._entry.setText(f"{existing} {text}".strip() if existing else text)
+        self._entry.setFocus()
+        self._entry.end(False)
+
+    def _on_dictation_status(self, text: str) -> None:
+        if text:
+            self._ctx.bus.status_message.emit(text)
+
+    def _glossary(self) -> str:
+        """Proper nouns to prime the transcriber with.
+
+        The DM has the campaign to draw on. A player has only what the host
+        chose to send them, which is exactly the set of names they are likely
+        to say out loud.
+        """
+        if self._ctx.role == Role.DM.value:
+            from canon_keeper.audio.transcribe import build_glossary
+
+            return build_glossary(self._ctx.repos, self._ctx.campaign_id)
+
+        if self._ctx.shared is None:
+            return ""
+        names = [
+            entity.get("name", "")
+            for entity in self._ctx.shared.all()
+            if entity.get("name")
+        ]
+        if not names:
+            return ""
+        return "The following names may be mentioned: " + ", ".join(names) + "."
 
     # ---------------------------------------------------------------- actions
 
@@ -598,6 +688,8 @@ class TableWidget(QWidget):
 
     def shutdown(self) -> None:
         """Close the socket, stop hosting, and unpublish. Called when the app exits."""
+        self._dictation_timer.stop()
+        self._dictation.cancel()
         self._client.leave()
         if self._funnel_url:
             funnel.stop()

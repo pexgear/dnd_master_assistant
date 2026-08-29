@@ -10,6 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 
 from canon_keeper.bus import Bus
+from canon_keeper.naming import PanelNames
+from canon_keeper.net.state import SharedState
 from canon_keeper.db import connect, migrate
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo import Repos
@@ -32,9 +34,13 @@ def repos(conn) -> Repos:
 @pytest.fixture
 def ctx(repos) -> AppContext:
     campaign = repos.campaigns.ensure_default("Test Campaign")
+    # Assembled the way app.build_context does, so a test is not exercising a
+    # context shape the application never produces.
     return AppContext(
         repos=repos,
         bus=Bus(),
         log=logging.getLogger("canonkeeper.test"),
         campaign_id=campaign.id,
+        shared=SharedState(),
+        names=PanelNames(repos.settings, is_dm=True),
     )

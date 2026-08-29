@@ -102,6 +102,13 @@ Before anyone can join you need to give them a login -- **Table ▸ Players...**
 a username, a password, and the character they play. Chat then shows the
 character's name, because at the table people are their characters.
 
+**Speak** beside the chat box records you and puts the words in the box — it does
+not send them. Correct whatever came out wrong, then press Enter. It runs
+locally like the Transcript panel, and is primed with the names in your campaign
+(or, for a player, the names shared with them), which is what makes it get
+*Cragmaw Castle* right. The button is disabled with an explanation if
+`faster-whisper` is not installed.
+
 Dice are rolled **on the host**, never on the client that asked. `/roll 2d6+3`,
 `/roll 4d6kh3` (keep highest three), `/roll 2d20kl1` (disadvantage), or the quick
 buttons. `/r` works too.
