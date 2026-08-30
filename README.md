@@ -15,8 +15,8 @@ Early, but usable at a table. The plugin shell with Characters, Cities and
 Transcript panels; local speech-to-text; and LAN sessions with logins, shared
 chat and dice, and role-filtered sharing.
 
-No AI yet — nothing here needs an API key or an internet connection. The NPC
-conversation holder is the next phase.
+No AI yet — nothing here needs an API key or an internet connection. Where that
+goes next is [further down](#where-this-is-going).
 
 ## Install
 
@@ -299,6 +299,43 @@ Cities panels and primes Whisper with it. Same audio, same `tiny` model:
 So the more you write down, the better the transcription gets. If a name still
 comes out wrong, fix the row — and add the name to an entity so it is right next
 time.
+
+## Where this is going
+
+None of this is built yet. It is written down because it explains a decision the
+app has already made.
+
+Everything a player does is a **request the host approves** — hit points
+included. That was built for people, but it does not care whether a request came
+from a person or a model. An agent handed a player's login inherits exactly a
+player's authority: it can ask, and nothing else. It cannot set its own hit
+points, invent a level, or read a character nobody shared with it.
+
+So the part that usually makes people nervous about putting a model in a game is
+already handled, and was handled for another reason.
+
+**An NPC who answers.** Ask one a question and get a line back in their voice,
+built from what they know and — this is where the sharing layer earns its keep —
+what the party has actually worked out. It arrives as a draft you edit before
+anyone sees it, the same way a dictated line lands in the box rather than in the
+chat.
+
+**Simulated players.** A character run by the app: filling an empty chair when
+someone cannot make it, or giving a party of two enough bodies for a fight built
+for four. It joins as a player, asks as a player, and you approve as you would
+for anyone. There is no separate mode for it, because there does not need to be
+one.
+
+**A simulated master.** The mirror of that — run a session on your own, or prep
+by playing your own scenario against something that argues back. Further off,
+and the harder of the two.
+
+**Saying what you mean.** An MCP server, so "I drink the potion and check the
+door for traps" becomes real changes to real sheets instead of you typing them
+in. Its tools go down the same approval path as everything else.
+
+All of it will want an API key you supply, and all of it stays optional. The app
+works with no key and no internet, and that is not going to change.
 
 ## Writing a plugin
 
