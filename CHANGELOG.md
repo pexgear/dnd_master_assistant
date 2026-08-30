@@ -47,6 +47,10 @@ What changed, from the point of view of someone running a game. See
   outright until it names its workspace. **Agent...** has a field for it, and
   it is sent as `anthropic-workspace-id`. Nothing can detect this in advance;
   the API says so, and now you see what it said.
+- **Fixed: Haiku refused every request.** The agent asked for a fast answer
+  using a parameter Haiku 4.5 does not accept, and the model rejected the whole
+  turn over it. It is now sent only to models known to take it -- and if that
+  list is ever wrong, the turn is retried without it rather than failed.
 - **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
   MCP client, so a player can talk instead of typing. It holds one login and has
   exactly that login's authority: dice are rolled on the host, and a change to a

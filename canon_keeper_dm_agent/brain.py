@@ -43,6 +43,22 @@ MAX_TOKENS = 400
 #: than a quick one.
 EFFORT = "low"
 
+#: Models known to accept ``effort``. Not every model does -- Haiku 4.5 refuses
+#: the whole request over it -- and the list of which is not something a D&D app
+#: can keep current. So: send it where it is known to work, leave it off
+#: otherwise, and let :meth:`Brain.answer` correct either mistake at runtime.
+SUPPORTS_EFFORT = frozenset(
+    {
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+    }
+)
+
 
 @dataclass
 class Usage:
@@ -103,6 +119,9 @@ class Brain:
         #: happens; this is where the answer goes.
         self._workspace = workspace or os.environ.get("ANTHROPIC_WORKSPACE_ID", "")
         self._client = None
+        #: Whether to ask for a fast answer. Corrected at runtime if the model
+        #: turns out to refuse it.
+        self._effort = self._model in SUPPORTS_EFFORT
         #: Everything this agent has spent since it started.
         self.total = Usage()
         self.turns = 0
@@ -127,17 +146,39 @@ class Brain:
         prompt = build_turn_prompt(table, spoken)
         log.debug("prompt is %d characters", len(prompt))
 
-        response = client.messages.create(
-            model=self._model,
-            max_tokens=MAX_TOKENS,
-            system=self._system,
-            output_config={"effort": EFFORT},
-            messages=[{"role": "user", "content": prompt}],
-        )
+        response = self._ask(client, prompt)
         self._record(response)
         return "".join(
             block.text for block in response.content if getattr(block, "type", "") == "text"
         ).strip()
+
+    def _ask(self, client, prompt: str):
+        """One request, retried once without ``effort`` if that is the objection.
+
+        The hard-coded list above will go out of date -- it is a list of other
+        people's models in a program about elves. When it is wrong the API says
+        so precisely, so the fix is to believe it and carry on, rather than to
+        fail a turn over a parameter that only makes answers faster.
+        """
+        message = {
+            "model": self._model,
+            "max_tokens": MAX_TOKENS,
+            "system": self._system,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if self._effort:
+            message["output_config"] = {"effort": EFFORT}
+
+        try:
+            return client.messages.create(**message)
+        except Exception as exc:  # noqa: BLE001 - narrowed by the check below
+            if not self._effort or not _objects_to_effort(exc):
+                raise
+            log.info("%s does not take an effort setting; dropping it", self._model)
+            # Remembered, so the next turn does not pay for the same round trip.
+            self._effort = False
+            message.pop("output_config", None)
+            return client.messages.create(**message)
 
     def _record(self, response) -> None:
         """Add one turn to the running total."""
@@ -164,3 +205,9 @@ class Brain:
             turn.dollars,
             self.total.dollars,
         )
+
+
+def _objects_to_effort(exc: BaseException) -> bool:
+    """Whether this failure is specifically about the effort parameter."""
+    text = str(exc).lower()
+    return "effort" in text and ("not support" in text or "unsupported" in text)
