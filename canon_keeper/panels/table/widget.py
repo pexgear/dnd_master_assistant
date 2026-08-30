@@ -21,6 +21,7 @@ from PySide6.QtGui import QColor, QDesktopServices, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from canon_keeper import campaigns, credentials
+from canon_keeper import agent_runner, campaigns, credentials
 from canon_keeper.audio.dictation import Dictation
 from canon_keeper.net import discovery, funnel
 from canon_keeper.net.client import SessionClient
@@ -84,6 +85,9 @@ class TableWidget(QWidget):
         #: Set while relaying a player's edit to the DM's own panels, so the
         #: refresh does not look like a change *by* the DM.
         self._relaying_player_edit = False
+        #: The agent we started, if we started one. An agent someone else
+        #: is running is not ours to stop.
+        self._agent_process = None
 
         # Speaking instead of typing. The text lands in the box rather than
         # being sent, because a transcription is a first draft.
@@ -374,22 +378,95 @@ class TableWidget(QWidget):
             self._autopilot_button.setChecked(False)
             return
 
-        wanted = self._autopilot_button.isChecked()
-        if wanted and not self._server.has_agent:
-            self._autopilot_button.setChecked(False)
-            QMessageBox.information(
-                self,
-                "No agent yet",
-                "This campaign has no agent login, so there is nothing to hand "
-                "the table to.\n\nCreate one with:\n\n"
-                "    canonkeeper-server --db <campaign> --add-agent autopilot"
-                "\n\nthen point the agent at this session with that login.",
-            )
+        if not self._autopilot_button.isChecked():
+            self._server.set_autopilot(False, by=self._my_name())
+            # The agent is stopped after the switch, not before: turning it off
+            # is what silences it, and that has already happened by here.
+            self._stop_agent()
+            self._update_state()
             return
 
-        me = self._client.me
-        self._server.set_autopilot(wanted, by=me.name if me else "the DM")
+        if not self._ensure_agent_running():
+            self._autopilot_button.setChecked(False)
+            self._update_state()
+            return
+
+        self._server.set_autopilot(True, by=self._my_name())
         self._update_state()
+
+    def _my_name(self) -> str:
+        me = self._client.me
+        return me.name if me else "the DM"
+
+    def _ensure_agent_running(self) -> bool:
+        """Make sure something is there to answer. Returns False if not.
+
+        An agent someone started themselves -- on this machine or a spare box --
+        is left alone. Only when nothing is connected does the app start one,
+        because pressing a button should not require a terminal.
+        """
+        if self._server is None:
+            return False
+        if any(m.role == Role.AGENT.value for m in self._server.members):
+            return True
+        if self._agent_process is not None and self._agent_process.poll() is None:
+            return True  # started, still connecting
+
+        if agent_runner.find_executable() is None:
+            QMessageBox.information(
+                self, "No agent installed", agent_runner.explain_missing()
+            )
+            return False
+
+        key = agent_runner.api_key()
+        if not key:
+            key = self._ask_for_api_key()
+            if not key:
+                return False
+
+        try:
+            username, password = agent_runner.ensure_account(
+                self._ctx.repos, self._ctx.campaign_id
+            )
+            self._agent_process = agent_runner.start(
+                f"ws://127.0.0.1:{self._server.port}", username, password, key
+            )
+        except agent_runner.AgentUnavailable as exc:
+            QMessageBox.warning(self, "Cannot start the agent", str(exc))
+            return False
+        except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
+            self._ctx.log.exception("could not start the agent")
+            QMessageBox.warning(self, "Cannot start the agent", str(exc))
+            return False
+
+        self._append("system", "Starting the agent...")
+        return True
+
+    def _ask_for_api_key(self) -> str:
+        key, ok = QInputDialog.getText(
+            self,
+            "An API key is needed",
+            "The agent answers using Anthropic's models, with a key you supply.\n"
+            "It is kept in your credential store, not in the campaign file.\n\n"
+            "Key:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok or not key.strip():
+            return ""
+        key = key.strip()
+        if not agent_runner.remember_api_key(key):
+            self._append(
+                "system",
+                "The key could not be saved, so it will be asked for again next time.",
+            )
+        return key
+
+    def _stop_agent(self) -> None:
+        if self._agent_process is None:
+            return
+        # Only ours. An agent someone else started is not the app's to kill.
+        agent_runner.stop(self._agent_process)
+        self._agent_process = None
 
     def _on_autopilot_changed(self, on: bool, by: str) -> None:
         """Someone flipped the switch -- reflect it without echoing it back."""
@@ -738,6 +815,9 @@ class TableWidget(QWidget):
 
     def shutdown(self) -> None:
         """Close the socket, stop hosting, and unpublish. Called when the app exits."""
+        # Before the socket goes: an agent left running against a dead session
+        # is a process nobody knows to kill.
+        self._stop_agent()
         self._dictation_timer.stop()
         self._dictation.cancel()
         self._client.leave()

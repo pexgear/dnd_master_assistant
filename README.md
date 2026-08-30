@@ -309,16 +309,22 @@ switch you hold: while it is on, an agent answers in your place — for a break,
 second voice, or a shopkeeper haggled with while you read ahead. Press it again
 and you have the table back, mid-sentence if that is when you pressed it.
 
-Give the campaign an agent login, once:
-
-```bash
-canonkeeper-server --db our-campaign.sqlite3 --add-agent autopilot
-```
-
-Then point the agent at your session and press **Autopilot** in the Table panel:
+Install the agent once:
 
 ```bash
 pip install "canon-keeper[agent]"
+```
+
+Then press **Autopilot** in the Table panel while hosting. The first press asks
+for an API key and does the rest itself: it creates the agent's login, keeps its
+password in your credential store, and starts the agent against your own
+session. There is nothing to configure and no command to run.
+
+If you would rather run the agent yourself — on a spare box, or to watch what it
+does — start it before pressing the button and the app will leave it alone:
+
+```bash
+canonkeeper-server --db our-campaign.sqlite3 --add-agent autopilot
 canonkeeper-agent --url ws://192.168.1.20:8766 --user autopilot
 ```
 
@@ -334,7 +340,8 @@ The design is worth stating plainly, because it is what makes handing over safe:
   answered by a machine, so turning autopilot on and off is announced in the
   chat and kept in the log.
 - **It has no path to your campaign.** It holds a socket and a login, exactly
-  like a player's app. Everything it knows arrived over the wire.
+  like a player's app, even when the app started it for you. Convenience changed
+  who types the command, not what the agent can reach.
 - **It never rolls.** Dice are the host's, so it asks for a roll like anyone else.
 - **Autopilot is never remembered.** Opening a campaign to find a machine already
   running your table is not a state to arrive in by accident.

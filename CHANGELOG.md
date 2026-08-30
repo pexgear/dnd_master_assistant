@@ -11,7 +11,10 @@ What changed, from the point of view of someone running a game. See
   chat, and it is never remembered between sessions. While it is off the host
   refuses the agent's messages outright, so "off" is enforced at the table
   rather than trusted to the agent. Give a campaign an agent login with
-  `canonkeeper-server --add-agent`, then run `canonkeeper-agent`.
+  Pressing it while hosting does everything: it makes the agent's login, keeps
+  the password in your credential store, and starts the agent against your own
+  session. An agent you started yourself, on this machine or a spare box, is
+  left alone.
 - **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
   MCP client, so a player can talk instead of typing. It holds one login and has
   exactly that login's authority: dice are rolled on the host, and a change to a
