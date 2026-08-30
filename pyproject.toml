@@ -32,6 +32,10 @@ dependencies = [
 
 [project.optional-dependencies]
 llm = ["anthropic>=0.40"]
+# The autopilot agent. A separate package that talks over the wire, so
+# installing it does not change what the app itself needs -- and so the app
+# keeps working with no key and no internet.
+agent = ["anthropic>=0.40", "websockets>=12.0"]
 whisper = ["faster-whisper>=1.0"]
 dev = ["pytest>=8.0", "pytest-qt>=4.4", "build>=1.0", "twine>=5.0"]
 
@@ -42,6 +46,7 @@ Issues = "https://github.com/pexgear/dnd_master_assistant/issues"
 [project.scripts]
 canonkeeper = "canon_keeper.__main__:main"
 canonkeeper-server = "canon_keeper.server_main:main"
+canonkeeper-agent = "canon_keeper_dm_agent.__main__:main"
 
 [project.gui-scripts]
 canonkeeper-gui = "canon_keeper.__main__:main"
@@ -61,7 +66,7 @@ path = "canon_keeper/__init__.py"
 # The protocol package ships inside this wheel for now. It is a separate
 # package, and stays stdlib-only, so it can be published on its own the moment
 # something outside this repository needs to speak the wire without Qt.
-packages = ["canon_keeper", "canon_keeper_protocol"]
+packages = ["canon_keeper", "canon_keeper_protocol", "canon_keeper_dm_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
