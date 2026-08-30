@@ -20,8 +20,8 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QDesktopServices, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -40,6 +40,10 @@ from canon_keeper.net import discovery, funnel
 from canon_keeper.net.client import SessionClient
 from canon_keeper_protocol.messages import Member, Role
 from canon_keeper.net.server import DEFAULT_PORT, SessionServer
+from canon_keeper.panels.table.agent_settings import (
+    MODEL_SETTING,
+    AgentSettingsDialog,
+)
 from canon_keeper.panels.table.approvals import ApprovalsDialog
 from canon_keeper.panels.table.dialogs import AccountsDialog, HostDialog, JoinDialog
 from canon_keeper.plugin import AppContext
@@ -183,6 +187,13 @@ class TableWidget(QWidget):
         )
         self._autopilot_button.clicked.connect(self._toggle_autopilot)
         bar.addWidget(self._autopilot_button)
+
+        self._agent_button = QPushButton("Agent...")
+        self._agent_button.setToolTip(
+            "The key and model autopilot answers with, and how to change them."
+        )
+        self._agent_button.clicked.connect(self._show_agent_settings)
+        bar.addWidget(self._agent_button)
 
         self._approvals_button = QPushButton("Waiting for you")
         self._approvals_button.setToolTip(
@@ -429,7 +440,11 @@ class TableWidget(QWidget):
                 self._ctx.repos, self._ctx.campaign_id
             )
             self._agent_process = agent_runner.start(
-                f"ws://127.0.0.1:{self._server.port}", username, password, key
+                f"ws://127.0.0.1:{self._server.port}",
+                username,
+                password,
+                key,
+                self._agent_model(),
             )
         except agent_runner.AgentUnavailable as exc:
             QMessageBox.warning(self, "Cannot start the agent", str(exc))
@@ -443,23 +458,24 @@ class TableWidget(QWidget):
         return True
 
     def _ask_for_api_key(self) -> str:
-        key, ok = QInputDialog.getText(
-            self,
-            "An API key is needed",
-            "The agent answers using Anthropic's models, with a key you supply.\n"
-            "It is kept in your credential store, not in the campaign file.\n\n"
-            "Key:",
-            QLineEdit.EchoMode.Password,
-        )
-        if not ok or not key.strip():
+        """Open the agent settings so a first-time key can be typed.
+
+        Returns the key to use now. On a machine with no credential store the
+        dialog saves nothing, so what it was given is returned directly rather
+        than read back from a store that did not keep it.
+        """
+        dialog = AgentSettingsDialog(self._ctx, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return ""
-        key = key.strip()
-        if not agent_runner.remember_api_key(key):
-            self._append(
-                "system",
-                "The key could not be saved, so it will be asked for again next time.",
-            )
-        return key
+        return dialog.key
+
+    def _show_agent_settings(self) -> None:
+        """Reachable whether or not a key is set -- otherwise a mistyped one is
+        permanent, and the only symptom is an agent that never answers."""
+        AgentSettingsDialog(self._ctx, self).exec()
+
+    def _agent_model(self) -> str:
+        return self._ctx.repos.settings.get(MODEL_SETTING, "")
 
     def _stop_agent(self) -> None:
         if self._agent_process is None:
@@ -790,6 +806,9 @@ class TableWidget(QWidget):
         # Only the host can hand over what it is hosting.
         self._autopilot_button.setVisible(is_dm)
         self._autopilot_button.setEnabled(hosting)
+        # Reachable without hosting: setting the key up front is a reasonable
+        # thing to do before a session rather than during one.
+        self._agent_button.setVisible(is_dm)
         self._invite_button.setVisible(is_dm)
         self._invite_button.setEnabled(hosting)
         self._join_button.setEnabled(not connected and not hosting)

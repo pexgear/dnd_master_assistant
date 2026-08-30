@@ -315,10 +315,16 @@ Install the agent once:
 pip install "canon-keeper[agent]"
 ```
 
-Then press **Autopilot** in the Table panel while hosting. The first press asks
-for an API key and does the rest itself: it creates the agent's login, keeps its
-password in your credential store, and starts the agent against your own
-session. There is nothing to configure and no command to run.
+Then press **Autopilot** in the Table panel while hosting. The first press opens
+**Agent…**, where you paste a key and pick a model; after that it does the rest
+itself — creates the agent's login, keeps its password in your credential store,
+and starts the agent against your own session. There is nothing to configure and
+no command to run.
+
+**Agent…** stays available from the Table panel, so a key can be corrected,
+replaced or forgotten later. The key goes to your credential store, never to the
+campaign file, so copying a campaign to another machine does not carry it along.
+An `ANTHROPIC_API_KEY` in your environment wins over the stored one.
 
 If you would rather run the agent yourself — on a spare box, or to watch what it
 does — start it before pressing the button and the app will leave it alone:
