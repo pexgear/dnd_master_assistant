@@ -29,8 +29,12 @@ class _Member:
 
 
 class _Session:
-    def __init__(self, autopilot: bool = True) -> None:
+    def __init__(self, autopilot: bool = True, players: int = 1) -> None:
         self.table = Table(autopilot=autopilot)
+        # Who else is at the table. It matters: the DM speaking means "I have
+        # answered" when players are present, and "I am the table" when they
+        # are not.
+        self.table.members = [_Member("player", f"Player {i}") for i in range(players)]
 
 
 @pytest.fixture
@@ -154,7 +158,7 @@ async def test_it_does_not_start_a_second_answer_while_thinking(spoken, turns):
 @pytest.mark.asyncio
 async def test_the_dm_speaking_cancels_a_queued_answer(responder, spoken):
     """They answered. Nobody needs it answered twice."""
-    session = _Session()
+    session = _Session(players=1)
     await responder.heard(session, _Member("player"), "Is the innkeeper in?")
     await responder.heard(session, _Member("dm", "Genna"), "He is, and he looks up.")
 
@@ -164,11 +168,36 @@ async def test_the_dm_speaking_cancels_a_queued_answer(responder, spoken):
 
 
 @pytest.mark.asyncio
-async def test_the_dm_is_never_answered(responder, spoken):
-    session = _Session()
+async def test_the_dm_is_not_answered_while_players_are_there(responder, spoken):
+    """They are talking to their table, not to the machine."""
+    session = _Session(players=2)
     await responder.heard(session, _Member("dm", "Genna"), "Roll initiative.")
     await _settle()
     assert spoken == []
+
+
+@pytest.mark.asyncio
+async def test_but_a_lone_dm_is_answered(responder, spoken):
+    """Testing it alone must work.
+
+    Refusing to answer the only person present is exactly how autopilot looks
+    broken -- you switch it on, type something, and nothing ever happens.
+    """
+    session = _Session(players=0)
+    await responder.heard(session, _Member("dm", "Genna"), "Is the innkeeper in?")
+    await _settle()
+    assert len(spoken) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_lone_dm_does_not_cancel_their_own_question(responder, turns):
+    session = _Session(players=0)
+    await responder.heard(session, _Member("dm", "Genna"), "Is the innkeeper in?")
+    await responder.heard(session, _Member("dm", "Genna"), "He looks up.")
+    await _settle()
+
+    assert len(turns) == 1
+    assert len(turns[0]) == 2, "both lines, one answer"
 
 
 @pytest.mark.asyncio
@@ -271,3 +300,74 @@ async def test_heard_returns_immediately(responder):
     elapsed = loop.time() - before
 
     assert elapsed < PAUSE, "heard() must not wait for the answer"
+
+
+# --------------------------------------------------------- saying what went wrong
+#
+# An agent that goes quiet is indistinguishable from an agent that is broken.
+# The failure that actually happens is an expired or mistyped key, and until
+# this existed the only symptom was silence.
+
+
+@pytest.mark.asyncio
+async def test_a_failure_is_reported(spoken):
+    trouble: list[str] = []
+
+    def explode(_table, _lines):
+        raise RuntimeError("Error code: 401 - API key is invalid.")
+
+    async def say(text):
+        spoken.append(text)
+
+    async def on_trouble(message):
+        trouble.append(message)
+
+    responder = Responder(explode, say, quiet_for=PAUSE, on_trouble=on_trouble)
+    await responder.heard(_Session(), _Member("player"), "hello")
+    await _settle()
+
+    assert trouble == ["Error code: 401 - API key is invalid."]
+    assert spoken == []
+
+
+@pytest.mark.asyncio
+async def test_only_the_first_line_of_a_failure_is_reported():
+    """A stack trace belongs in the log, not in the chat."""
+    from canon_keeper_dm_agent.responder import _readable
+
+    reported = _readable(RuntimeError("API key is invalid.\nFile x\nFile y"))
+    assert reported == "API key is invalid."
+
+
+@pytest.mark.asyncio
+async def test_a_very_long_failure_is_cut_short():
+    from canon_keeper_dm_agent.responder import _MAX_TROUBLE, _readable
+
+    reported = _readable(RuntimeError("x" * 500))
+    assert len(reported) <= _MAX_TROUBLE
+
+
+@pytest.mark.asyncio
+async def test_an_exception_with_no_message_still_names_itself():
+    from canon_keeper_dm_agent.responder import _readable
+
+    assert _readable(TimeoutError()) == "TimeoutError"
+
+
+@pytest.mark.asyncio
+async def test_a_failure_to_report_the_failure_is_survivable(spoken):
+    """Reporting trouble must not become its own source of trouble."""
+    async def broken_report(_message):
+        raise OSError("the socket went away")
+
+    async def say(text):
+        spoken.append(text)
+
+    responder = Responder(
+        lambda _t, _l: (_ for _ in ()).throw(RuntimeError("boom")),
+        say,
+        quiet_for=PAUSE,
+        on_trouble=broken_report,
+    )
+    await responder.heard(_Session(), _Member("player"), "hello")
+    await _settle()  # must not raise

@@ -355,6 +355,9 @@ The design is worth stating plainly, because it is what makes handing over safe:
 - **It never rolls.** Dice are the host's, so it asks for a roll like anyone else.
 - **Autopilot is never remembered.** Opening a campaign to find a machine already
   running your table is not a state to arrive in by accident.
+- **It answers players.** While you are at the table, your own lines are yours
+  -- if you answer a player, its queued reply is dropped. With nobody else
+  connected it answers you, so trying it out on your own actually works.
 - **It waits for a pause.** A turn is a lull, not a message -- three players
   talking to each other gets one answer when they stop, not three
   interruptions. If you answer first, its queued reply is dropped. `--pause`

@@ -17,7 +17,7 @@ import os
 import sys
 
 from canon_keeper_dm_agent import __version__
-from canon_keeper_dm_agent.brain import Brain, BrainUnavailable, is_available, unavailable_hint
+from canon_keeper_dm_agent.brain import Brain, is_available, unavailable_hint
 from canon_keeper_client import AgentSession, LoginFailed
 from canon_keeper_dm_agent.responder import QUIET_FOR, Responder
 
@@ -60,12 +60,13 @@ async def _run(args) -> int:
     session: AgentSession | None = None
 
     def answer(table, spoken: list[tuple[str, str]]) -> str:
-        """Runs off the event loop; a model call takes seconds."""
-        try:
-            return brain.answer(table, spoken)
-        except BrainUnavailable as exc:
-            log.error("cannot answer: %s", exc)
-            return ""
+        """Runs off the event loop; a model call takes seconds.
+
+        Nothing is caught here: the responder turns a failure into a line the
+        DM sees. Swallowing it would put the agent back to going quiet for
+        reasons nobody can discover.
+        """
+        return brain.answer(table, spoken)
 
     async def say(reply: str) -> None:
         if args.dry_run:
@@ -90,7 +91,16 @@ async def _run(args) -> int:
                 model=args.model or "",
             )
 
-    responder = Responder(answer, say, quiet_for=args.pause, on_busy=on_busy)
+    async def on_trouble(message: str) -> None:
+        if args.dry_run:
+            print(f"\n[could not answer] {message}\n")
+            return
+        if session is not None:
+            await session.report_trouble(message)
+
+    responder = Responder(
+        answer, say, quiet_for=args.pause, on_busy=on_busy, on_trouble=on_trouble
+    )
 
     async def on_said(current: AgentSession, member, text: str) -> None:
         # Returns immediately: the answer happens on its own task, so the

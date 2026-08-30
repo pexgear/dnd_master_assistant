@@ -141,6 +141,12 @@ class AgentSession:
             return
         await self._socket.send(encode(MessageType.BUSY, on=bool(on)))
 
+    async def report_trouble(self, message: str) -> None:
+        """Say that a turn failed. The host passes it to the DM, privately."""
+        if self._socket is None:
+            return
+        await self._socket.send(encode(MessageType.TROUBLE, message=message))
+
     async def report_spend(self, **spend) -> None:
         """Tell the host what we have cost. It shows the DM, and nobody else."""
         if self._socket is None:

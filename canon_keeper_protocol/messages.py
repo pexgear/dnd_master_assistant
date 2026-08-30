@@ -57,6 +57,7 @@ class MessageType(StrEnum):
     DECIDE = "decide"      # {proposal, approve} -- the DM answering one
     BUSY = "busy"          # {on} -- I am composing something
     SPENT = "spent"        # {tokens_in, tokens_out, dollars, turns} -- agent only
+    TROUBLE = "trouble"    # {message} -- the agent could not answer. To DMs.
 
     # server -> client
     CHALLENGE = "challenge"  # {salt, nonce}

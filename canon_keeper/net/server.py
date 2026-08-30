@@ -334,6 +334,8 @@ class SessionServer(QObject):
             self._handle_edit(socket, session, message)
         elif message.type == MessageType.BUSY:
             self._handle_busy(session, message)
+        elif message.type == MessageType.TROUBLE:
+            self._handle_trouble(socket, session, message)
         elif message.type == MessageType.SPENT:
             self._handle_spent(socket, session, message)
         elif message.type == MessageType.DECIDE:
@@ -647,6 +649,26 @@ class SessionServer(QObject):
         self._broadcast(
             MessageType.BUSY_NOW, member=session.member.to_dict(), on=on
         )
+
+    def _handle_trouble(self, socket: QWebSocket, session: _Session, message) -> None:
+        """The agent could not answer, and the DM should hear why.
+
+        Told privately rather than announced: a table does not need to watch a
+        machine apologise, and the DM is the only one who can do anything about
+        an expired key.
+        """
+        if not session.is_agent:
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="Only an agent reports trouble answering.",
+            )
+            return
+        text = str(message.get("message", "")).strip()[:MAX_CHAT_LENGTH]
+        if text:
+            log.warning("the agent could not answer: %s", text)
+            self._tell_dms(f"Autopilot could not answer: {text}")
 
     def _handle_spent(self, socket: QWebSocket, session: _Session, message) -> None:
         """What the agent has cost so far.

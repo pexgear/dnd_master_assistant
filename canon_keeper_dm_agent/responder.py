@@ -36,7 +36,8 @@ QUIET_FOR = 2.5
 #: not another agent's, which is a loop with a bill attached.
 ANSWERS_TO = ("player",)
 
-#: Roles whose speaking cancels a pending answer.
+#: Roles whose speaking cancels a pending answer -- but only when somebody
+#: else was being answered. See :meth:`Responder.heard`.
 TAKES_OVER = ("dm",)
 
 
@@ -51,6 +52,7 @@ class Responder:
         quiet_for: float = QUIET_FOR,
         answers_to: tuple[str, ...] = ANSWERS_TO,
         on_busy=None,
+        on_trouble=None,
     ) -> None:
         #: ``answer(table, lines) -> str``. Blocking; run off the loop.
         self._answer = answer
@@ -61,6 +63,9 @@ class Responder:
         #: ``on_busy(bool)`` -- called around the model call, so the table can
         #: see that the silence is someone thinking rather than nothing at all.
         self._on_busy = on_busy
+        #: ``on_trouble(str)`` -- a turn failed, and the DM should hear why. An
+        #: agent that goes quiet is indistinguishable from one that is broken.
+        self._on_trouble = on_trouble
 
         self._pending: list[tuple[str, str]] = []
         self._timer: asyncio.Task | None = None
@@ -71,14 +76,20 @@ class Responder:
     async def heard(self, session, member, text: str) -> None:
         """Note a line. Returns at once -- the answer happens on its own task."""
         if member.role in TAKES_OVER:
-            # The DM spoke. Whatever was queued was for them to answer, and
-            # they have.
-            if self._pending or self._timer is not None:
-                log.info("the DM answered; dropping %d queued line(s)", len(self._pending))
-            self._discard()
-            return
-
-        if member.role not in self._answers_to:
+            if _players_present(session):
+                # The DM answered the player. Nobody needs it answered twice.
+                if self._pending or self._timer is not None:
+                    log.info(
+                        "the DM answered; dropping %d queued line(s)",
+                        len(self._pending),
+                    )
+                self._discard()
+                return
+            # Nobody else is here, so the DM *is* the table -- testing the
+            # agent, or running a scene solo. Refusing to answer the only
+            # person present is how autopilot looks broken.
+            log.debug("no players at the table; answering the DM")
+        elif member.role not in self._answers_to:
             return
         if not session.table.autopilot:
             log.debug("staying quiet: autopilot is off")
@@ -124,8 +135,9 @@ class Responder:
         await self._say_busy(True)
         try:
             reply = await asyncio.to_thread(self._answer, session.table, lines)
-        except Exception:  # noqa: BLE001 - one bad turn must not end the session
-            log.exception("the model call failed; staying quiet this turn")
+        except Exception as exc:  # noqa: BLE001 - one bad turn must not end it
+            log.exception("the model call failed")
+            await self._say_trouble(_readable(exc))
             return
         finally:
             self._answering = False
@@ -141,6 +153,14 @@ class Responder:
         # their own pause rather than an immediate second answer.
         if self._pending:
             self._restart_timer(session)
+
+    async def _say_trouble(self, message: str) -> None:
+        if self._on_trouble is None or not message:
+            return
+        try:
+            await self._on_trouble(message)
+        except Exception:  # noqa: BLE001 - reporting a failure must not fail
+            log.debug("could not report the failure", exc_info=True)
 
     async def _say_busy(self, on: bool) -> None:
         if self._on_busy is None:
@@ -160,3 +180,27 @@ class Responder:
 
     async def aclose(self) -> None:
         self._discard()
+
+
+#: Long enough to name the problem, short enough for a chat line.
+_MAX_TROUBLE = 200
+
+
+def _players_present(session) -> bool:
+    return any(
+        getattr(member, "role", "") == "player"
+        for member in getattr(session.table, "members", [])
+    )
+
+
+def _readable(exc: BaseException) -> str:
+    """One line a person can act on, out of whatever the SDK raised.
+
+    A stack trace belongs in the log. What reaches the DM has to fit in a chat
+    message and name the thing they can fix -- most often an expired key.
+    """
+    text = str(exc).strip() or exc.__class__.__name__
+    first = text.split("\n", 1)[0]
+    if len(first) > _MAX_TROUBLE:
+        first = first[: _MAX_TROUBLE - 3].rstrip() + "..."
+    return first

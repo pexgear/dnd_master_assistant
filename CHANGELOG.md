@@ -36,6 +36,13 @@ What changed, from the point of view of someone running a game. See
   and its agent could no longer log in. Keyed by the campaign's own id now, and
   a saved password that the host would refuse is replaced rather than handed
   over to fail at the door.
+- **A lone DM gets answered.** The agent answered players only, so switching
+  autopilot on with nobody else at the table did nothing at all -- which is
+  exactly what a broken agent looks like. With players present the DM speaking
+  still means "I have answered"; with nobody else there, they are the table.
+- **When it cannot answer, you are told why.** A failed model call used to be
+  silent: the indicator flashed and nothing followed. The reason -- usually an
+  expired or mistyped key -- now reaches the DM privately, and only the DM.
 - **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
   MCP client, so a player can talk instead of typing. It holds one login and has
   exactly that login's authority: dice are rolled on the host, and a change to a
