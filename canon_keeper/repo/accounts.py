@@ -27,6 +27,22 @@ class Account:
     def is_dm(self) -> bool:
         return self.role == "dm"
 
+    @property
+    def is_agent(self) -> bool:
+        """An autopilot login.
+
+        It sees what a DM sees, because it answers from the canon. It does not
+        have a DM's authority: the host refuses chat from it while autopilot is
+        off, which is what makes turning autopilot off actually silence it.
+        """
+        return self.role == "agent"
+
+    @property
+    def sees_everything(self) -> bool:
+        """Entitled to the unfiltered campaign -- the DM, and the agent acting
+        in their place."""
+        return self.is_dm or self.is_agent
+
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Account":
         return cls(
@@ -79,7 +95,7 @@ class AccountRepo:
                     campaign_id,
                     username,
                     display_name.strip() or username,
-                    role if role in ("dm", "player") else "player",
+                    role if role in ("dm", "player", "agent") else "player",
                     salt,
                     verifier,
                     character_entity_id,

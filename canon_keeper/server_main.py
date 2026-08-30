@@ -53,6 +53,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     accounts.add_argument("--list-players", action="store_true", help="show who may log in")
     accounts.add_argument("--add-player", metavar="USERNAME", help="create a player login")
     accounts.add_argument("--add-dm", metavar="USERNAME", help="create a DM login")
+    accounts.add_argument(
+        "--add-agent",
+        metavar="USERNAME",
+        help="create an autopilot login for an agent to answer with",
+    )
     accounts.add_argument("--set-password", metavar="USERNAME", help="change a password")
     accounts.add_argument("--remove-player", metavar="USERNAME", help="delete a login")
     accounts.add_argument(
@@ -91,7 +96,11 @@ def _manage_accounts(args, repos: Repos, campaign_id: int) -> bool:
             state = " (disabled)" if account.disabled else ""
             print(f"  {account.username:20} {account.role:6}{character}{state}")
 
-    for flag, role in ((args.add_player, "player"), (args.add_dm, "dm")):
+    for flag, role in (
+        (args.add_player, "player"),
+        (args.add_dm, "dm"),
+        (args.add_agent, "agent"),
+    ):
         if not flag:
             continue
         handled = True

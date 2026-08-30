@@ -85,6 +85,9 @@ class _Session:
     member: Member
     account_id: int | None
     viewer: Viewer
+    #: An autopilot login. Its chat is refused while autopilot is off, which is
+    #: the whole of what "off" means -- not a politeness the agent observes.
+    is_agent: bool = False
     visible: set[int] = field(default_factory=set)
     #: What version of each entity we last sent this connection. The base for
     #: any edit they send back, because a client must not be able to choose
@@ -143,6 +146,12 @@ class SessionServer(QObject):
 
         self._server: QWebSocketServer | None = None
         self._sessions: dict[QWebSocket, _Session] = {}
+        # Runtime only, never persisted. Reopening a campaign and finding a
+        # machine already running your table is not a state anyone should
+        # arrive in by default: autopilot is switched on deliberately, each
+        # time, by someone in the room.
+        self._autopilot = False
+        self._autopilot_by = ""
         self._pending: dict[QWebSocket, _Pending] = {}
         self._beacon = discovery.Beacon(self)
 
@@ -310,7 +319,7 @@ class SessionServer(QObject):
             return  # already gone
 
         if message.type == MessageType.CHAT:
-            self._handle_chat(session, message)
+            self._handle_chat(socket, session, message)
         elif message.type == MessageType.ROLL:
             self._handle_roll(socket, session, message)
         elif message.type == MessageType.EDIT:
@@ -418,23 +427,37 @@ class SessionServer(QObject):
             account_id = None
         else:
             viewer = Viewer(
+                # An agent standing in for the DM answers from the canon, so it
+                # sees what they see. What it may *do* is a separate question,
+                # settled by the autopilot switch rather than by the projection.
                 account_id=account.id,
-                is_dm=account.is_dm,
+                is_dm=account.sees_everything,
                 owned_entity_ids=self.repos.entities.owned_ids(account.id),
             )
             character = ""
             if account.character_entity_id is not None:
                 entity = self.repos.entities.get(account.character_entity_id)
                 character = entity.name if entity else ""
+            if account.is_agent:
+                role = Role.AGENT.value
+            elif account.is_dm:
+                role = Role.DM.value
+            else:
+                role = Role.PLAYER.value
             member = Member(
                 id=new_member_id(),
                 name=clean_name(account.display_name or account.username),
-                role=Role.DM.value if account.is_dm else Role.PLAYER.value,
+                role=role,
                 character=character,
             )
             account_id = account.id
 
-        session = _Session(member=member, account_id=account_id, viewer=viewer)
+        session = _Session(
+            member=member,
+            account_id=account_id,
+            viewer=viewer,
+            is_agent=account is not None and account.is_agent,
+        )
         session.visible = visible_entity_ids(self.repos, self.campaign_id, viewer)
         self._sessions[socket] = session
         log.info("%s logged in as %s", member.label, member.role)
@@ -457,6 +480,9 @@ class SessionServer(QObject):
         if session.viewer.is_dm:
             self._send(socket, MessageType.PROPOSALS, proposals=self.proposals)
             self._send(socket, MessageType.FACTS, facts=self.facts)
+        # Everyone, not only the agent: a table deserves to know whether it is
+        # being answered by a person.
+        self._send(socket, MessageType.AUTOPILOT, on=self._autopilot, by=self._autopilot_by)
         self._broadcast_system(f"{member.label} joined", exclude=socket)
         self._send_roster()
         self.roster_changed.emit(self.members)
@@ -580,9 +606,21 @@ class SessionServer(QObject):
 
     # ------------------------------------------------------------------- actions
 
-    def _handle_chat(self, session: _Session, message) -> None:
+    def _handle_chat(self, socket: QWebSocket, session: _Session, message) -> None:
         text = str(message.get("text", "")).strip()[:MAX_CHAT_LENGTH]
         if not text:
+            return
+        if session.is_agent and not self._autopilot:
+            # The entire meaning of autopilot being off. The agent stays
+            # connected and keeps receiving, so switching back on is instant --
+            # it simply cannot speak, and that is enforced here rather than
+            # trusted to it.
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="autopilot_off",
+                message="Autopilot is off. The DM is answering.",
+            )
             return
         self._record(SAID, text, speaker=session.member.label, role=session.member.role)
         self._broadcast(MessageType.SAID, member=session.member.to_dict(), text=text)
@@ -755,6 +793,49 @@ class SessionServer(QObject):
                 }
             )
         return out
+
+    # ------------------------------------------------------------- autopilot
+
+    @property
+    def autopilot(self) -> bool:
+        return self._autopilot
+
+    def set_autopilot(self, on: bool, by: str = "") -> None:
+        """Hand the table to the agent, or take it back.
+
+        Taking it back is immediate and needs no cooperation from the agent: it
+        stays connected, and its next line is refused. There is no drain, no
+        handshake and nothing to wait for, because the DM interrupting a machine
+        mid-sentence is the point.
+        """
+        on = bool(on)
+        if on == self._autopilot:
+            return
+        self._autopilot = on
+        self._autopilot_by = by if on else ""
+        log.info("autopilot %s%s", "on" if on else "off", f" by {by}" if by else "")
+
+        self._broadcast(MessageType.AUTOPILOT, on=on, by=self._autopilot_by)
+        # Said out loud in the chat as well, and kept in the log. Who was
+        # answering is part of what happened at that table.
+        self._broadcast_system(
+            "Autopilot on -- an agent is answering for the DM."
+            if on
+            else "Autopilot off -- the DM is answering again."
+        )
+        self._record(
+            SYSTEM,
+            "autopilot on" if on else "autopilot off",
+            speaker=by or "the DM",
+        )
+
+    @property
+    def has_agent(self) -> bool:
+        """Whether this campaign has an agent login at all."""
+        return any(
+            account.is_agent
+            for account in self.repos.accounts.list(self.campaign_id)
+        )
 
     @property
     def facts(self) -> list[dict]:

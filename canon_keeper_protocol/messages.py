@@ -41,6 +41,10 @@ MAX_HOST_FRAME_BYTES = 8 * 1024 * 1024
 class Role(StrEnum):
     DM = "dm"
     PLAYER = "player"
+    #: An autopilot login, standing in for the DM while they let it. Named on
+    #: the roster rather than disguised as a DM: a table deserves to know when
+    #: it is talking to a machine.
+    AGENT = "agent"
 
 
 class MessageType(StrEnum):
@@ -62,6 +66,7 @@ class MessageType(StrEnum):
     ENTITY = "entity"        # one entity added or changed
     ENTITY_GONE = "gone"     # {id} -- deleted, or no longer shared with you
     FACTS = "facts"          # the canon log. DM viewers only, never a player.
+    AUTOPILOT = "autopilot"  # {on, by} -- whether the agent is answering
     ERROR = "error"
     ROSTER = "roster"
     SAID = "said"

@@ -112,6 +112,7 @@ class TableWidget(QWidget):
         self._client.panel_names_received.connect(self._on_panel_names)
         self._client.proposals_received.connect(self._on_proposals)
         self._client.history_received.connect(self._on_history)
+        self._client.autopilot_changed.connect(self._on_autopilot_changed)
 
         self._build_ui()
         # A share changed while hosting: push it to whoever may now see it.
@@ -169,6 +170,15 @@ class TableWidget(QWidget):
         )
         self._funnel_button.clicked.connect(self._toggle_funnel)
         bar.addWidget(self._funnel_button)
+
+        self._autopilot_button = QPushButton("Autopilot")
+        self._autopilot_button.setCheckable(True)
+        self._autopilot_button.setToolTip(
+            "Let the agent answer for you. Press it again to take the table "
+            "back -- it goes quiet immediately, mid-sentence if need be."
+        )
+        self._autopilot_button.clicked.connect(self._toggle_autopilot)
+        bar.addWidget(self._autopilot_button)
 
         self._approvals_button = QPushButton("Waiting for you")
         self._approvals_button.setToolTip(
@@ -358,6 +368,36 @@ class TableWidget(QWidget):
             # level-up they asked for the moment they took damage.
             self._server.refuse_conflicting(entity_id)
         self._server.publish_entity(entity_id)
+
+    def _toggle_autopilot(self) -> None:
+        if self._server is None or not self._server.is_running:
+            self._autopilot_button.setChecked(False)
+            return
+
+        wanted = self._autopilot_button.isChecked()
+        if wanted and not self._server.has_agent:
+            self._autopilot_button.setChecked(False)
+            QMessageBox.information(
+                self,
+                "No agent yet",
+                "This campaign has no agent login, so there is nothing to hand "
+                "the table to.\n\nCreate one with:\n\n"
+                "    canonkeeper-server --db <campaign> --add-agent autopilot"
+                "\n\nthen point the agent at this session with that login.",
+            )
+            return
+
+        me = self._client.me
+        self._server.set_autopilot(wanted, by=me.name if me else "the DM")
+        self._update_state()
+
+    def _on_autopilot_changed(self, on: bool, by: str) -> None:
+        """Someone flipped the switch -- reflect it without echoing it back."""
+        self._autopilot_button.blockSignals(True)
+        self._autopilot_button.setChecked(on)
+        self._autopilot_button.blockSignals(False)
+        self._autopilot_button.setText("Autopilot on" if on else "Autopilot")
+        self._update_state()
 
     def _on_fact_committed(self, _fact_id: int) -> None:
         if self._server is not None and self._server.is_running:
@@ -670,6 +710,9 @@ class TableWidget(QWidget):
         self._host_button.setVisible(is_dm)
         self._funnel_button.setVisible(is_dm)
         self._funnel_button.setEnabled(hosting)
+        # Only the host can hand over what it is hosting.
+        self._autopilot_button.setVisible(is_dm)
+        self._autopilot_button.setEnabled(hosting)
         self._invite_button.setVisible(is_dm)
         self._invite_button.setEnabled(hosting)
         self._join_button.setEnabled(not connected and not hosting)

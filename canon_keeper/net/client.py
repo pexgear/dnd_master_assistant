@@ -56,6 +56,10 @@ class SessionClient(QObject):
     #: The canon log. Only ever arrives on a DM-role connection; the host
     #: sends a player nothing at all rather than a redacted version.
     facts_received = Signal(list)
+    #: Whether an agent is currently answering for the DM, and who said so.
+    #: Sent to everyone, not only the agent: a table deserves to know when it
+    #: is talking to a machine.
+    autopilot_changed = Signal(bool, str)
     #: What was said before we arrived, oldest first.
     history_received = Signal(list)
 
@@ -299,6 +303,11 @@ class SessionClient(QObject):
             proposals = message.get("proposals")
             self.proposals_received.emit(
                 proposals if isinstance(proposals, list) else []
+            )
+
+        elif message.type == MessageType.AUTOPILOT:
+            self.autopilot_changed.emit(
+                bool(message.get("on")), str(message.get("by") or "")
             )
 
         elif message.type == MessageType.FACTS:
