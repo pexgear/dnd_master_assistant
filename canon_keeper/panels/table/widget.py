@@ -92,6 +92,8 @@ class TableWidget(QWidget):
         #: The agent we started, if we started one. An agent someone else
         #: is running is not ours to stop.
         self._agent_process = None
+        #: Who is composing right now, by label.
+        self._busy: set[str] = set()
 
         # Speaking instead of typing. The text lands in the box rather than
         # being sent, because a transcription is a first draft.
@@ -121,6 +123,8 @@ class TableWidget(QWidget):
         self._client.proposals_received.connect(self._on_proposals)
         self._client.history_received.connect(self._on_history)
         self._client.autopilot_changed.connect(self._on_autopilot_changed)
+        self._client.busy_changed.connect(self._on_busy_changed)
+        self._client.spend_changed.connect(self._on_spend_changed)
 
         self._build_ui()
         # A share changed while hosting: push it to whoever may now see it.
@@ -215,6 +219,20 @@ class TableWidget(QWidget):
         bar.addWidget(self._invite_button)
         bar.addStretch(1)
         outer.addLayout(bar)
+
+        # Who is composing, and -- for the DM -- what the agent has cost. Both
+        # answer the same question: is anything actually happening?
+        self._busy_label = QLabel("")
+        self._busy_label.setWordWrap(True)
+        self._busy_label.setVisible(False)
+        outer.addWidget(self._busy_label)
+
+        self._spend_label = QLabel("")
+        self._spend_label.setVisible(False)
+        self._spend_label.setToolTip(
+            "What autopilot has cost this session, as the agent reports it."
+        )
+        outer.addWidget(self._spend_label)
 
         self._status = QLabel("Not connected.")
         self._status.setWordWrap(True)
@@ -483,6 +501,50 @@ class TableWidget(QWidget):
         # Only ours. An agent someone else started is not the app's to kill.
         agent_runner.stop(self._agent_process)
         self._agent_process = None
+
+    def _on_busy_changed(self, member, on: bool) -> None:
+        """Show that someone is composing.
+
+        Held as a set rather than a flag: two people can be typing at once, and
+        one of them finishing must not clear the other.
+        """
+        label = getattr(member, "label", "") or "Someone"
+        if on:
+            self._busy.add(label)
+        else:
+            self._busy.discard(label)
+
+        if not self._busy:
+            self._busy_label.setVisible(False)
+            return
+
+        names = sorted(self._busy)
+        if len(names) == 1:
+            text = f"{names[0]} is writing..."
+        else:
+            text = f"{', '.join(names[:-1])} and {names[-1]} are writing..."
+        self._busy_label.setText(text)
+        self._busy_label.setVisible(True)
+
+    def _on_spend_changed(self, spend: dict) -> None:
+        """The agent's running bill, on the DM's screen only."""
+        dollars = float(spend.get("dollars") or 0.0)
+        turns = int(spend.get("turns") or 0)
+        if not turns:
+            self._spend_label.setVisible(False)
+            return
+
+        went_in = int(spend.get("tokens_in") or 0)
+        came_out = int(spend.get("tokens_out") or 0)
+        cost = f"${dollars:.2f}" if dollars >= 0.005 else "under a cent"
+        if dollars <= 0:
+            # An unpriced model: report the tokens rather than invent a figure.
+            cost = "cost unknown for this model"
+        self._spend_label.setText(
+            f"Autopilot: {turns} answer{'s' if turns != 1 else ''}, "
+            f"{went_in:,} in / {came_out:,} out, {cost}"
+        )
+        self._spend_label.setVisible(True)
 
     def _on_autopilot_changed(self, on: bool, by: str) -> None:
         """Someone flipped the switch -- reflect it without echoing it back."""

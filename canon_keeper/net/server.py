@@ -88,6 +88,9 @@ class _Session:
     #: An autopilot login. Its chat is refused while autopilot is off, which is
     #: the whole of what "off" means -- not a politeness the agent observes.
     is_agent: bool = False
+    #: Composing something right now. Broadcast so a table can see that
+    #: silence means thinking rather than nothing happening.
+    busy: bool = False
     visible: set[int] = field(default_factory=set)
     #: What version of each entity we last sent this connection. The base for
     #: any edit they send back, because a client must not be able to choose
@@ -152,6 +155,9 @@ class SessionServer(QObject):
         # time, by someone in the room.
         self._autopilot = False
         self._autopilot_by = ""
+        #: What the agent reports having spent. Runtime only, like autopilot:
+        #: it is "this session's bill", not a total anyone is accruing.
+        self._spend: dict = {}
         self._pending: dict[QWebSocket, _Pending] = {}
         self._beacon = discovery.Beacon(self)
 
@@ -281,6 +287,11 @@ class SessionServer(QObject):
         if pending is not None:
             pending.timer.stop()
         session = self._sessions.pop(socket, None)
+        if session is not None and session.busy:
+            # Otherwise "Autopilot is writing..." outlives the agent.
+            self._broadcast(
+                MessageType.BUSY_NOW, member=session.member.to_dict(), on=False
+            )
         try:
             socket.deleteLater()
         except RuntimeError:
@@ -324,6 +335,10 @@ class SessionServer(QObject):
             self._handle_roll(socket, session, message)
         elif message.type == MessageType.EDIT:
             self._handle_edit(socket, session, message)
+        elif message.type == MessageType.BUSY:
+            self._handle_busy(session, message)
+        elif message.type == MessageType.SPENT:
+            self._handle_spent(socket, session, message)
         elif message.type == MessageType.DECIDE:
             self._handle_decision(socket, session, message)
         else:
@@ -624,6 +639,53 @@ class SessionServer(QObject):
             return
         self._record(SAID, text, speaker=session.member.label, role=session.member.role)
         self._broadcast(MessageType.SAID, member=session.member.to_dict(), text=text)
+
+    def _handle_busy(self, session: _Session, message) -> None:
+        """Someone is composing. Told to everyone, because the point of it is
+        that a table with nothing on screen assumes nothing is happening."""
+        on = bool(message.get("on"))
+        if session.busy == on:
+            return
+        session.busy = on
+        self._broadcast(
+            MessageType.BUSY_NOW, member=session.member.to_dict(), on=on
+        )
+
+    def _handle_spent(self, socket: QWebSocket, session: _Session, message) -> None:
+        """What the agent has cost so far.
+
+        Only an agent may report it -- a player claiming a spend figure would
+        be putting a number on the DM's screen that nothing generated. And only
+        DMs are told: it is their bill.
+        """
+        if not session.is_agent:
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="Only an agent reports what it has spent.",
+            )
+            return
+
+        self._spend = {
+            "tokens_in": int(message.get("tokens_in") or 0),
+            "tokens_out": int(message.get("tokens_out") or 0),
+            "cached": int(message.get("cached") or 0),
+            "dollars": float(message.get("dollars") or 0.0),
+            "turns": int(message.get("turns") or 0),
+            "model": str(message.get("model") or ""),
+        }
+        self.publish_spend()
+
+    @property
+    def spend(self) -> dict:
+        return dict(self._spend)
+
+    def publish_spend(self) -> None:
+        frame = encode(MessageType.SPEND, **self._spend)
+        for socket, session in self._sessions.items():
+            if session.viewer.is_dm and not session.is_agent:
+                socket.sendTextMessage(frame)
 
     def _handle_roll(self, socket: QWebSocket, session: _Session, message) -> None:
         notation = str(message.get("notation", "")).strip()[:MAX_NOTATION_LENGTH]

@@ -16,6 +16,16 @@ What changed, from the point of view of someone running a game. See
   session. An agent you started yourself, on this machine or a spare box, is
   left alone. **Agent...** in the Table panel is where the key and model live,
   and it stays reachable so a mistyped key can be corrected.
+- **It waits for a pause before answering.** A turn is a lull, not a message:
+  three players talking to each other is answered once, when they stop, rather
+  than interrupted three times. If the DM answers first, the queued reply is
+  dropped. `--pause` tunes how long it waits.
+- **You can see it thinking.** *Autopilot is writing...* appears under the chat
+  while it composes, because several seconds of silence looks exactly like a
+  broken agent. Anyone at the table can report it, not just the agent.
+- **What it has cost, on the DM's screen.** Answers, tokens and dollars for the
+  session, updated after each turn. Only the DM is shown it -- it is their bill
+  -- and only the agent may report it.
 - **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
   MCP client, so a player can talk instead of typing. It holds one login and has
   exactly that login's authority: dice are rolled on the host, and a change to a

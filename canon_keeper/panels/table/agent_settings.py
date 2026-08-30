@@ -39,9 +39,9 @@ MODEL_SETTING = "agent.model"
 #: What to offer, plainest first. The list is short on purpose -- this is a
 #: choice between "good" and "cheap", not a catalogue.
 MODELS = (
-    ("claude-sonnet-5", "Sonnet 5 — the usual choice"),
-    ("claude-opus-5", "Opus 5 — better, slower, dearer"),
-    ("claude-haiku-4-5-20251001", "Haiku 4.5 — fast and cheap"),
+    ("claude-opus-5", "Opus 5 — the best of them"),
+    ("claude-sonnet-5", "Sonnet 5 — cheaper, still good"),
+    ("claude-haiku-4-5", "Haiku 4.5 — fastest and cheapest"),
 )
 
 

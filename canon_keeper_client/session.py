@@ -135,6 +135,18 @@ class AgentSession:
         await self._socket.send(encode(MessageType.CHAT, text=text))
         return True
 
+    async def set_busy(self, on: bool) -> None:
+        """Say whether we are composing, so the table is not left guessing."""
+        if self._socket is None:
+            return
+        await self._socket.send(encode(MessageType.BUSY, on=bool(on)))
+
+    async def report_spend(self, **spend) -> None:
+        """Tell the host what we have cost. It shows the DM, and nobody else."""
+        if self._socket is None:
+            return
+        await self._socket.send(encode(MessageType.SPENT, **spend))
+
     # --------------------------------------------------------------- handshake
 
     async def _handshake(self, socket) -> None:

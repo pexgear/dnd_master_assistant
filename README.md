@@ -351,6 +351,13 @@ The design is worth stating plainly, because it is what makes handing over safe:
 - **It never rolls.** Dice are the host's, so it asks for a roll like anyone else.
 - **Autopilot is never remembered.** Opening a campaign to find a machine already
   running your table is not a state to arrive in by accident.
+- **It waits for a pause.** A turn is a lull, not a message -- three players
+  talking to each other gets one answer when they stop, not three
+  interruptions. If you answer first, its queued reply is dropped. `--pause`
+  tunes the wait.
+- **You can see it thinking.** *Autopilot is writing...* shows under the chat
+  while it composes, and what it has cost so far -- answers, tokens, dollars --
+  shows on your screen only.
 
 It does get what a DM gets — your motives, your secrets, the canon log — because
 it is standing in for you and cannot answer as an NPC without them. That is also

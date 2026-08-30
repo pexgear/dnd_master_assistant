@@ -63,7 +63,16 @@ def _describe_entity(entity: dict) -> str:
 
 
 def build_prompt(table: Table, said_by: str, said: str) -> str:
-    """The user-turn text: the world, then the room, then the line to answer."""
+    """One line to answer. A thin wrapper over :func:`build_turn_prompt`."""
+    return build_turn_prompt(table, [(said_by, said)])
+
+
+def build_turn_prompt(table: Table, spoken: list[tuple[str, str]]) -> str:
+    """The user-turn text: the world, then the room, then what was just said.
+
+    ``spoken`` is everything said since the agent last answered, because a turn
+    is a lull and not a message -- see :mod:`canon_keeper_dm_agent.responder`.
+    """
     parts: list[str] = []
 
     if table.campaign:
@@ -102,5 +111,15 @@ def build_prompt(table: Table, said_by: str, said: str) -> str:
             + "\n".join(f"{line['speaker']}: {line['text']}" for line in recent)
         )
 
-    parts.append(f"{said_by} says: {said}\n\nAnswer as the DM.")
+    if len(spoken) == 1:
+        speaker, text = spoken[0]
+        parts.append(f"{speaker} says: {text}")
+    else:
+        # Everything said before the table paused, not just the last line.
+        # Answering only whoever got the last word is how a machine ends up
+        # ignoring half the room.
+        burst = "\n".join(f"{speaker}: {text}" for speaker, text in spoken)
+        parts.append(f"The table just said:\n{burst}")
+
+    parts.append("Answer as the DM.")
     return "\n\n".join(parts)

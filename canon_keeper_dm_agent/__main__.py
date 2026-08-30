@@ -19,13 +19,9 @@ import sys
 from canon_keeper_dm_agent import __version__
 from canon_keeper_dm_agent.brain import Brain, BrainUnavailable, is_available, unavailable_hint
 from canon_keeper_client import AgentSession, LoginFailed
+from canon_keeper_dm_agent.responder import QUIET_FOR, Responder
 
 log = logging.getLogger("canonkeeper.agent")
-
-#: Only answer players. Answering the DM would mean talking over the person who
-#: is still in the room, and answering another agent is a loop with a bill.
-ANSWERS_TO = ("player",)
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -40,6 +36,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print what it would say instead of saying it",
     )
+    parser.add_argument(
+        "--pause",
+        type=float,
+        default=QUIET_FOR,
+        metavar="SECONDS",
+        help=(
+            "how long the table must be quiet before it answers "
+            f"(default {QUIET_FOR}). Raise it if it keeps cutting people off."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="log every decision")
     parser.add_argument("--version", action="version", version=__version__)
     return parser
@@ -51,33 +57,45 @@ async def _run(args) -> int:
     )
     brain = Brain(model=args.model)
 
-    async def on_said(session: AgentSession, member, text: str) -> None:
-        if member.role not in ANSWERS_TO:
-            return
-        if not session.table.autopilot:
-            # The host would refuse it anyway. Not calling the model saves the
-            # round trip and the money.
-            log.debug("staying quiet: autopilot is off")
-            return
+    session: AgentSession | None = None
 
+    def answer(table, spoken: list[tuple[str, str]]) -> str:
+        """Runs off the event loop; a model call takes seconds."""
         try:
-            reply = await asyncio.to_thread(
-                brain.answer, session.table, member.label, text
-            )
+            return brain.answer(table, spoken)
         except BrainUnavailable as exc:
             log.error("cannot answer: %s", exc)
-            return
-        except Exception:  # noqa: BLE001 - one bad turn must not end the session
-            log.exception("the model call failed; staying quiet this turn")
-            return
+            return ""
 
-        if not reply:
-            return
+    async def say(reply: str) -> None:
         if args.dry_run:
             print(f"\n[would say] {reply}\n")
             return
-        if not await session.say(reply):
+        if session is not None and not await session.say(reply):
             log.info("not sent -- autopilot went off while we were thinking")
+
+    async def on_busy(on: bool) -> None:
+        if session is None:
+            return
+        await session.set_busy(on)
+        if not on:
+            # Reported after each turn rather than at the end: a bill you only
+            # see when you close the app is not a bill you can act on.
+            await session.report_spend(
+                tokens_in=brain.total.input_tokens,
+                tokens_out=brain.total.output_tokens,
+                cached=brain.total.cached_tokens,
+                dollars=round(brain.total.dollars, 4),
+                turns=brain.turns,
+                model=args.model or "",
+            )
+
+    responder = Responder(answer, say, quiet_for=args.pause, on_busy=on_busy)
+
+    async def on_said(current: AgentSession, member, text: str) -> None:
+        # Returns immediately: the answer happens on its own task, so the
+        # socket keeps being read while the model is busy.
+        await responder.heard(current, member, text)
 
     session = AgentSession(args.url, args.user, password, on_said)
     try:
@@ -88,6 +106,8 @@ async def _run(args) -> int:
     except OSError as exc:
         print(f"Could not reach {args.url}: {exc}", file=sys.stderr)
         return 1
+    finally:
+        await responder.aclose()
     return 0
 
 

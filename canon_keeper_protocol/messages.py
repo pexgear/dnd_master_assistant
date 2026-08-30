@@ -55,6 +55,8 @@ class MessageType(StrEnum):
     ROLL = "roll"
     EDIT = "edit"          # {id, changes} -- a player editing their own PC
     DECIDE = "decide"      # {proposal, approve} -- the DM answering one
+    BUSY = "busy"          # {on} -- I am composing something
+    SPENT = "spent"        # {tokens_in, tokens_out, dollars, turns} -- agent only
 
     # server -> client
     CHALLENGE = "challenge"  # {salt, nonce}
@@ -67,6 +69,8 @@ class MessageType(StrEnum):
     ENTITY_GONE = "gone"     # {id} -- deleted, or no longer shared with you
     FACTS = "facts"          # the canon log. DM viewers only, never a player.
     AUTOPILOT = "autopilot"  # {on, by} -- whether the agent is answering
+    BUSY_NOW = "busy_now"    # {member, on} -- who is composing, for everyone
+    SPEND = "spend"          # what the agent has cost. DM viewers only.
     ERROR = "error"
     ROSTER = "roster"
     SAID = "said"

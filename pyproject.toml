@@ -43,6 +43,8 @@ whisper = ["faster-whisper>=1.0"]
 dev = [
   "pytest>=8.0",
   "pytest-qt>=4.4",
+  # The agent and its responder are asyncio, not Qt.
+  "pytest-asyncio>=0.24",
   "build>=1.0",
   "twine>=5.0",
   # The headless client and the two things built on it are tested here too.
@@ -89,3 +91,5 @@ packages = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# The agent is asyncio; marking every coroutine test by hand is noise.
+asyncio_mode = "auto"

@@ -60,6 +60,10 @@ class SessionClient(QObject):
     #: Sent to everyone, not only the agent: a table deserves to know when it
     #: is talking to a machine.
     autopilot_changed = Signal(bool, str)
+    #: Someone is composing: (who, whether they still are).
+    busy_changed = Signal(object, bool)
+    #: What the agent has cost. DM connections only.
+    spend_changed = Signal(dict)
     #: What was said before we arrived, oldest first.
     history_received = Signal(list)
 
@@ -309,6 +313,16 @@ class SessionClient(QObject):
             self.autopilot_changed.emit(
                 bool(message.get("on")), str(message.get("by") or "")
             )
+
+        elif message.type == MessageType.BUSY_NOW:
+            raw = message.get("member") or {}
+            self.busy_changed.emit(
+                Member.from_dict(raw if isinstance(raw, dict) else {}),
+                bool(message.get("on")),
+            )
+
+        elif message.type == MessageType.SPEND:
+            self.spend_changed.emit(dict(message.payload))
 
         elif message.type == MessageType.FACTS:
             facts = message.get("facts")
