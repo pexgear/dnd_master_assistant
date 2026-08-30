@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
 
 from canon_keeper import agent_runner, credentials
 
-CONSOLE_URL = "https://console.anthropic.com/settings/keys"
+CONSOLE_URL = "https://platform.claude.com/settings/keys"
+WORKSPACES_URL = "https://platform.claude.com/settings/workspaces"
 
 #: Setting key for the model. Per campaign rather than per machine: a one-shot
 #: and a long campaign are not obviously the same choice.
@@ -84,8 +85,21 @@ class AgentSettingsDialog(QDialog):
         # id of the workspace they belong to. Nothing here can detect that in
         # advance; the API says so plainly, and this is where the answer goes.
         self._workspace = QLineEdit(agent_runner.workspace_id())
-        self._workspace.setPlaceholderText("only if your key is refused without one")
-        form.addRow("Workspace id", self._workspace)
+        self._workspace.setPlaceholderText("wrkspc_...  (usually not needed)")
+        self._workspace.setToolTip(
+            "Console > Settings > Workspaces. Only a key with access to several "
+            "workspaces needs to name one; a key scoped to a single workspace "
+            "does not."
+        )
+        workspaces = QPushButton("Find it")
+        workspaces.setMaximumWidth(80)
+        workspaces.clicked.connect(
+            lambda: QDesktopServices.openUrl(WORKSPACES_URL)  # type: ignore[arg-type]
+        )
+        workspace_row = QHBoxLayout()
+        workspace_row.addWidget(self._workspace, 1)
+        workspace_row.addWidget(workspaces)
+        form.addRow("Workspace id", workspace_row)
 
         self._model = QComboBox()
         for value, label in MODELS:
@@ -101,6 +115,16 @@ class AgentSettingsDialog(QDialog):
         where.setWordWrap(True)
         where.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(where)
+
+        # Said here because the API error that sends people to this field does
+        # not mention the simpler answer.
+        note = QLabel(
+            "A workspace id is only needed by a key that can reach several "
+            "workspaces. If yours is refused without one, the simplest fix is a "
+            "new key scoped to a single workspace — then leave this blank."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
 
         get_one = QPushButton("Get a key...")
         get_one.clicked.connect(

@@ -326,7 +326,10 @@ and starts the agent against your own session. There is nothing to configure and
 no command to run.
 
 **Agent…** stays available from the Table panel, so a key can be corrected,
-replaced or forgotten later. The key goes to your credential store, never to the
+replaced or forgotten later. It also has a **Workspace id** field, which most
+keys do not need: only a key that can reach several workspaces has to name one,
+and the API says so plainly if yours does. The simplest answer is usually a new
+key scoped to a single workspace, which needs no id at all. The key goes to your credential store, never to the
 campaign file, so copying a campaign to another machine does not carry it along.
 An `ANTHROPIC_API_KEY` in your environment wins over the stored one.
 
