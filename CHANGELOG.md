@@ -30,6 +30,12 @@ What changed, from the point of view of someone running a game. See
   process exited, the button stayed on, and the table waited for a machine that
   was not there. Its output is now kept and shown, autopilot switches itself
   off, and a missing `anthropic` package is caught before anything is started.
+- **Fixed: two campaigns shared one agent password.** The credential store was
+  keyed by `campaign.id`, which is 1 for almost every campaign there has ever
+  been -- so opening a second campaign quietly overwrote the first's password,
+  and its agent could no longer log in. Keyed by the campaign's own id now, and
+  a saved password that the host would refuse is replaced rather than handed
+  over to fail at the door.
 - **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
   MCP client, so a player can talk instead of typing. It holds one login and has
   exactly that login's authority: dice are rolled on the host, and a change to a

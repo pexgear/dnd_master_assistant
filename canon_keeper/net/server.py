@@ -24,6 +24,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QHostAddress
 from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 
+from canon_keeper import campaigns
 from canon_keeper.content import Content
 from canon_keeper.net import discovery
 from canon_keeper_protocol import auth
@@ -192,11 +193,7 @@ class SessionServer(QObject):
             return []
 
     def _campaign_key(self) -> str:
-        key = self.repos.settings.get("campaign_key", "")
-        if not isinstance(key, str) or not key:
-            key = secrets.token_hex(16)
-            self.repos.settings.set("campaign_key", key)
-        return key
+        return campaigns.campaign_key(self.repos)
 
     # ------------------------------------------------------------------ lifecycle
 

@@ -464,3 +464,83 @@ def test_a_living_agent_is_left_alone(table):
 
     assert table._agent_process is not None
     assert server.autopilot is True
+
+
+# ------------------------------------------------- one campaign, one password
+#
+# campaign.id is not a unique id. Every campaign is its own SQLite file, so
+# almost all of them are campaign 1 -- keying the credential store by that made
+# two campaigns share an entry, and opening the second silently overwrote the
+# first's password. The symptom was an agent that could no longer log in to a
+# campaign nobody had touched.
+
+
+def test_two_campaigns_do_not_share_a_password(ctx, keyring_in_memory, repos):
+    """Both are campaign 1 on disk. They must not be campaign 1 in the keychain."""
+    from canon_keeper.db.connection import connect
+    from canon_keeper.db.migrate import migrate
+    from canon_keeper.repo import Repos
+
+    conn = connect(":memory:")
+    migrate(conn)
+    second = Repos(conn)
+    second_campaign = second.campaigns.ensure_default("A Different Campaign")
+    assert second_campaign.id == ctx.campaign_id, "both really are campaign 1"
+
+    _u1, first = agent_runner.ensure_account(ctx.repos, ctx.campaign_id)
+    _u2, later = agent_runner.ensure_account(second, second_campaign.id)
+
+    # Opening the second must not have clobbered the first.
+    _u3, first_again = agent_runner.ensure_account(ctx.repos, ctx.campaign_id)
+    assert first_again == first
+    assert later != first
+    conn.close()
+
+
+def test_a_saved_password_the_host_would_refuse_is_replaced(ctx, keyring_in_memory):
+    """Handing over a password that fails at the door helps nobody."""
+    from canon_keeper_protocol import auth
+
+    agent_runner.ensure_account(ctx.repos, ctx.campaign_id)
+
+    # Something put the store and the campaign out of step: a restored backup,
+    # a copied campaign, or the id collision above.
+    key = agent_runner._password_key(ctx.repos)
+    keyring_in_memory[(key, agent_runner.AGENT_USERNAME)] = "a-password-from-elsewhere"
+
+    _username, password = agent_runner.ensure_account(ctx.repos, ctx.campaign_id)
+
+    account = ctx.repos.accounts.by_username(
+        ctx.campaign_id, agent_runner.AGENT_USERNAME
+    )
+    assert password != "a-password-from-elsewhere"
+    assert auth.derive_verifier(password, account.salt) == account.verifier
+
+
+def test_a_working_password_is_left_alone(ctx, keyring_in_memory):
+    """Resetting on every press would be churn, and would break a running agent."""
+    _u1, first = agent_runner.ensure_account(ctx.repos, ctx.campaign_id)
+    account_before = ctx.repos.accounts.by_username(
+        ctx.campaign_id, agent_runner.AGENT_USERNAME
+    )
+
+    _u2, second = agent_runner.ensure_account(ctx.repos, ctx.campaign_id)
+    account_after = ctx.repos.accounts.by_username(
+        ctx.campaign_id, agent_runner.AGENT_USERNAME
+    )
+
+    assert first == second
+    assert account_before.verifier == account_after.verifier
+
+
+def test_the_password_check_is_not_fooled_by_a_near_miss(ctx, keyring_in_memory):
+    from canon_keeper_protocol import auth
+
+    _username, password = agent_runner.ensure_account(ctx.repos, ctx.campaign_id)
+    account = ctx.repos.accounts.by_username(
+        ctx.campaign_id, agent_runner.AGENT_USERNAME
+    )
+
+    assert agent_runner._password_works(account, password) is True
+    assert agent_runner._password_works(account, password + "x") is False
+    assert agent_runner._password_works(account, "") is False

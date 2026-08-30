@@ -31,7 +31,8 @@ import sys
 import threading
 from pathlib import Path
 
-from canon_keeper import credentials
+from canon_keeper import campaigns, credentials
+from canon_keeper_protocol import auth
 
 log = logging.getLogger("canonkeeper.agent_runner")
 
@@ -45,11 +46,16 @@ AGENT_DISPLAY_NAME = "Autopilot"
 #: child process, and neither step involves a human.
 _PASSWORD_BYTES = 24
 
-#: Where the agent's password lives in the credential store. Not a session URL
-#: like a player's saved login, because it belongs to the campaign rather than
-#: to any one address it is reachable at.
-def _password_key(campaign_id: int) -> str:
-    return f"agent://campaign/{campaign_id}"
+def _password_key(repos) -> str:
+    """Where this campaign's agent password lives in the credential store.
+
+    Keyed by the campaign's own random id, **not** ``campaign.id``. Every
+    campaign is a separate SQLite file, so almost all of them are campaign 1 --
+    keying by that made two campaigns share one entry, and opening the second
+    quietly overwrote the first's password. The symptom was an agent that could
+    no longer log in to a campaign nobody had touched.
+    """
+    return f"agent://campaign/{campaigns.campaign_key(repos)}"
 
 
 class AgentUnavailable(RuntimeError):
@@ -66,11 +72,17 @@ def ensure_account(repos, campaign_id: int) -> tuple[str, str]:
     password cannot be kept anywhere -- a machine with no credential store can
     still run an agent, but someone has to supply the password themselves.
     """
+    key = _password_key(repos)
     existing = repos.accounts.by_username(campaign_id, AGENT_USERNAME)
-    saved = credentials.load(_password_key(campaign_id), AGENT_USERNAME)
+    saved = credentials.load(key, AGENT_USERNAME)
 
-    if existing is not None and saved:
+    if existing is not None and saved and _password_works(existing, saved):
         return AGENT_USERNAME, saved
+    if existing is not None and saved:
+        # A saved password the host would refuse. Rather than hand it over and
+        # let the agent fail at the door with "that did not match", mint a new
+        # one -- the DM owns this campaign, and this login exists to serve them.
+        log.warning("the saved agent password no longer works; resetting it")
 
     if not credentials.is_available():
         raise AgentUnavailable(
@@ -97,12 +109,27 @@ def ensure_account(repos, campaign_id: int) -> tuple[str, str]:
         repos.accounts.set_password(existing.id, password)
         log.info("reset the agent password for campaign %s", campaign_id)
 
-    if not credentials.save(_password_key(campaign_id), AGENT_USERNAME, password):
+    if not credentials.save(key, AGENT_USERNAME, password):
         raise AgentUnavailable(
             "The agent login was created, but its password could not be saved "
             "to your credential store."
         )
     return AGENT_USERNAME, password
+
+
+def _password_works(account, password: str) -> bool:
+    """Whether the host would actually accept this password.
+
+    Checked rather than assumed. Anything that can put the store and the
+    campaign file out of step -- a restored backup, a copied campaign, a
+    cleared keychain, a bug like the one above -- otherwise surfaces as a login
+    failure with no way for the app to fix itself.
+    """
+    try:
+        return auth.derive_verifier(password, account.salt) == account.verifier
+    except Exception:  # noqa: BLE001 - a malformed stored value is a mismatch
+        log.debug("could not check the saved agent password", exc_info=True)
+        return False
 
 
 # ------------------------------------------------------------------ the process

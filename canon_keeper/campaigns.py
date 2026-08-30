@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -247,3 +248,25 @@ def _write_remote(servers: list[RemoteCampaign]) -> None:
         )
     except OSError:
         log.warning("could not save the server list")
+
+
+# ------------------------------------------------------------ campaign identity
+
+
+#: Setting holding a campaign's own random id.
+CAMPAIGN_KEY = "campaign_key"
+
+
+def campaign_key(repos) -> str:
+    """A stable, unique id for this campaign, minted on first use.
+
+    ``campaign.id`` is not one. Every campaign is its own SQLite file, so almost
+    every campaign in existence has ``id = 1`` -- fine inside a file, useless
+    the moment two of them are told apart from outside: a cache, a credential
+    store, a reconnecting client holding versions from somewhere else.
+    """
+    key = repos.settings.get(CAMPAIGN_KEY, "")
+    if not isinstance(key, str) or not key:
+        key = secrets.token_hex(16)
+        repos.settings.set(CAMPAIGN_KEY, key)
+    return key
