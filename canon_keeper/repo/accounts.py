@@ -6,7 +6,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
-from canon_keeper.net import auth
+from canon_keeper_protocol import auth
 
 
 @dataclass(slots=True)

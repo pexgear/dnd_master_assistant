@@ -9,7 +9,7 @@ to it in-process. That keeps exactly one path through the code: whatever the DM
 sees, a player saw arrive the same way.
 """
 
-from canon_keeper.net.protocol import (
+from canon_keeper_protocol.messages import (
     PROTOCOL_VERSION,
     Member,
     Message,

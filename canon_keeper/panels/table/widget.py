@@ -37,7 +37,7 @@ from canon_keeper import campaigns, credentials
 from canon_keeper.audio.dictation import Dictation
 from canon_keeper.net import discovery, funnel
 from canon_keeper.net.client import SessionClient
-from canon_keeper.net.protocol import Member, Role
+from canon_keeper_protocol.messages import Member, Role
 from canon_keeper.net.server import DEFAULT_PORT, SessionServer
 from canon_keeper.panels.table.approvals import ApprovalsDialog
 from canon_keeper.panels.table.dialogs import AccountsDialog, HostDialog, JoinDialog

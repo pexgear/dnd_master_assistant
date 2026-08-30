@@ -25,7 +25,7 @@ from PySide6.QtCore import QCoreApplication, QTimer
 
 from canon_keeper import __version__, config
 from canon_keeper.db import connect, migrate
-from canon_keeper.net.auth import AuthError
+from canon_keeper_protocol.auth import AuthError
 from canon_keeper.net.server import DEFAULT_PORT, SessionServer
 from canon_keeper.repo import Repos
 

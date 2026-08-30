@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from canon_keeper.net import auth
+from canon_keeper_protocol import auth
 from canon_keeper.net.projection import (
     EditRefused,
     Viewer,

@@ -10,7 +10,7 @@ Clients are untrusted. Every outbound entity goes through
 secret and asked to hide it.
 
 Logging in is a challenge/response: the password never crosses the wire. See
-:mod:`canon_keeper.net.auth`.
+:mod:`canon_keeper_protocol.auth`.
 """
 
 from __future__ import annotations
@@ -25,9 +25,10 @@ from PySide6.QtNetwork import QHostAddress
 from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 
 from canon_keeper.content import Content
-from canon_keeper.net import auth, discovery
+from canon_keeper.net import discovery
+from canon_keeper_protocol import auth
 from canon_keeper.repo.chat import DEFAULT_LIMIT, ROLLED, SAID, SYSTEM
-from canon_keeper.net.dice import DiceError, roll
+from canon_keeper_protocol.dice import DiceError, roll
 from canon_keeper.repo.entities import StaleWrite
 from canon_keeper.rules.validation import validate
 from canon_keeper.net.projection import (
@@ -40,7 +41,7 @@ from canon_keeper.net.projection import (
     snapshot,
     visible_entity_ids,
 )
-from canon_keeper.net.protocol import (
+from canon_keeper_protocol.messages import (
     MAX_CHAT_LENGTH,
     MAX_NOTATION_LENGTH,
     Member,

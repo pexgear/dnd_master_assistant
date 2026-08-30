@@ -58,7 +58,10 @@ table = "canon_keeper.panels.table:TablePanel"
 path = "canon_keeper/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["canon_keeper"]
+# The protocol package ships inside this wheel for now. It is a separate
+# package, and stays stdlib-only, so it can be published on its own the moment
+# something outside this repository needs to speak the wire without Qt.
+packages = ["canon_keeper", "canon_keeper_protocol"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -14,8 +14,9 @@ import logging
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtWebSockets import QWebSocket
 
-from canon_keeper.net import auth, cache
-from canon_keeper.net.protocol import (
+from canon_keeper.net import cache
+from canon_keeper_protocol import auth
+from canon_keeper_protocol.messages import (
     MAX_HOST_FRAME_BYTES,
     Member,
     MessageType,

@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from canon_keeper import campaigns, credentials
 from canon_keeper.net import discovery
-from canon_keeper.net.auth import MIN_PASSWORD_LENGTH, AuthError
+from canon_keeper_protocol.auth import MIN_PASSWORD_LENGTH, AuthError
 from canon_keeper.net.server import DEFAULT_PORT
 from canon_keeper.repo.entities import KIND_PC
 
