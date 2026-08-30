@@ -32,6 +32,7 @@ from canon_keeper_protocol.dice import DiceError, roll
 from canon_keeper.repo.entities import StaleWrite
 from canon_keeper.rules.validation import validate
 from canon_keeper.net.projection import (
+    project_facts,
     EditRefused,
     changed_sheet_fields,
     snapshot_since,
@@ -455,6 +456,7 @@ class SessionServer(QObject):
         self._send(socket, MessageType.PANEL_NAMES, names=self.panel_names)
         if session.viewer.is_dm:
             self._send(socket, MessageType.PROPOSALS, proposals=self.proposals)
+            self._send(socket, MessageType.FACTS, facts=self.facts)
         self._broadcast_system(f"{member.label} joined", exclude=socket)
         self._send_roster()
         self.roster_changed.emit(self.members)
@@ -753,6 +755,22 @@ class SessionServer(QObject):
                 }
             )
         return out
+
+    @property
+    def facts(self) -> list[dict]:
+        """The canon log as it goes on the wire. Empty for anyone but a DM."""
+        return project_facts(self.repos, self.campaign_id, Viewer.dungeon_master())
+
+    def publish_facts(self) -> None:
+        """Tell DM-role connections the canon moved.
+
+        Only they get it, so this walks the sessions rather than broadcasting:
+        a broadcast with a DM check inside is one edit away from being a leak.
+        """
+        frame = encode(MessageType.FACTS, facts=self.facts)
+        for socket, session in self._sessions.items():
+            if session.viewer.is_dm:
+                socket.sendTextMessage(frame)
 
     def publish_proposals(self) -> None:
         """Only the DM needs the queue; players see the chat line."""

@@ -61,6 +61,7 @@ class MessageType(StrEnum):
     HISTORY = "history"      # what was said before you arrived
     ENTITY = "entity"        # one entity added or changed
     ENTITY_GONE = "gone"     # {id} -- deleted, or no longer shared with you
+    FACTS = "facts"          # the canon log. DM viewers only, never a player.
     ERROR = "error"
     ROSTER = "roster"
     SAID = "said"

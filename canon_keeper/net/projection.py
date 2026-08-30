@@ -284,3 +284,34 @@ def apply_player_edit(
     # Name, kind, parent and every DM field are untouched by construction: they
     # are simply never read from `changes`.
     return repos.entities.update(entity, expected_version=expected_version)
+
+
+# ------------------------------------------------------------------- the canon
+
+
+def project_facts(repos, campaign_id: int, viewer: Viewer) -> list[dict]:
+    """The canon log, for a viewer entitled to it.
+
+    An allowlist of exactly one role. A fact is the DM's working note about what
+    is true -- half of them are things the party has not worked out yet, and
+    which entity a fact hangs off is itself a spoiler. There is no filtered
+    version worth sending, so a player gets an empty list rather than a
+    carefully redacted one.
+
+    Superseded rows never leave: what the DM changed their mind about is not
+    part of what is true now, and sending both invites a reader to average them.
+    """
+    if not viewer.is_dm:
+        return []
+
+    return [
+        {
+            "id": fact.id,
+            "subject": fact.subject_entity,
+            "predicate": fact.predicate,
+            "object": fact.object,
+            "confirmed": fact.confirmed,
+            "at": fact.asserted_at,
+        }
+        for fact in repos.facts.current(campaign_id)
+    ]

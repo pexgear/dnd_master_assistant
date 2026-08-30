@@ -53,6 +53,9 @@ class SessionClient(QObject):
     panel_names_received = Signal(dict)
     #: Build changes waiting on the DM. Only the DM's client sees these.
     proposals_received = Signal(list)
+    #: The canon log. Only ever arrives on a DM-role connection; the host
+    #: sends a player nothing at all rather than a redacted version.
+    facts_received = Signal(list)
     #: What was said before we arrived, oldest first.
     history_received = Signal(list)
 
@@ -297,6 +300,10 @@ class SessionClient(QObject):
             self.proposals_received.emit(
                 proposals if isinstance(proposals, list) else []
             )
+
+        elif message.type == MessageType.FACTS:
+            facts = message.get("facts")
+            self.facts_received.emit(facts if isinstance(facts, list) else [])
 
         elif message.type == MessageType.ENTITY:
             self.state.upsert(message.get("entity") or {})

@@ -123,6 +123,9 @@ class TableWidget(QWidget):
         # player's screen until they reconnect. publish_entity turns a missing
         # entity into a removal, so the same handler covers it.
         ctx.bus.entity_deleted.connect(self._on_share_changed)
+        # The canon log, for DM-role connections only -- an agent on autopilot
+        # answers from it, so a fact committed mid-scene has to reach it.
+        ctx.bus.fact_committed.connect(self._on_fact_committed)
         ctx.bus.theme_changed.connect(lambda _dark: self._refresh_colours())
         self._refresh_colours()
         self._update_state()
@@ -355,6 +358,10 @@ class TableWidget(QWidget):
             # level-up they asked for the moment they took damage.
             self._server.refuse_conflicting(entity_id)
         self._server.publish_entity(entity_id)
+
+    def _on_fact_committed(self, _fact_id: int) -> None:
+        if self._server is not None and self._server.is_running:
+            self._server.publish_facts()
 
     def _on_player_edit_applied(self, entity_id: int) -> None:
         """Tell the DM's own panels to re-read what a player just changed."""
