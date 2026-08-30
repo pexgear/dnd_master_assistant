@@ -94,6 +94,12 @@ class TableWidget(QWidget):
         self._agent_process = None
         #: Who is composing right now, by label.
         self._busy: set[str] = set()
+        # An agent that dies a millisecond after starting used to do so in
+        # silence, leaving the button on and the table waiting for a machine
+        # that was not there.
+        self._agent_watchdog = QTimer(self)
+        self._agent_watchdog.setInterval(1000)
+        self._agent_watchdog.timeout.connect(self._check_agent)
 
         # Speaking instead of typing. The text lands in the box rather than
         # being sent, because a transcription is a first draft.
@@ -441,10 +447,9 @@ class TableWidget(QWidget):
         if self._agent_process is not None and self._agent_process.poll() is None:
             return True  # started, still connecting
 
-        if agent_runner.find_executable() is None:
-            QMessageBox.information(
-                self, "No agent installed", agent_runner.explain_missing()
-            )
+        problem = agent_runner.missing_requirement()
+        if problem:
+            QMessageBox.information(self, "The agent cannot run", problem)
             return False
 
         key = agent_runner.api_key()
@@ -472,8 +477,30 @@ class TableWidget(QWidget):
             QMessageBox.warning(self, "Cannot start the agent", str(exc))
             return False
 
+        self._agent_watchdog.start()
         self._append("system", "Starting the agent...")
         return True
+
+    def _check_agent(self) -> None:
+        """Notice when the agent stops, and say why."""
+        agent = self._agent_process
+        if agent is None:
+            self._agent_watchdog.stop()
+            return
+        if agent.poll() is None:
+            return  # still running
+
+        self._agent_watchdog.stop()
+        self._agent_process = None
+        reason = agent.why_it_stopped()
+        self._ctx.log.warning("the agent stopped (%s): %s", agent.returncode, reason)
+        self._append("error", f"The agent stopped. {reason}")
+
+        # Autopilot without an agent is a table waiting on nothing.
+        if self._server is not None and self._server.is_running:
+            self._server.set_autopilot(False, by=self._my_name())
+        self._autopilot_button.setChecked(False)
+        self._update_state()
 
     def _ask_for_api_key(self) -> str:
         """Open the agent settings so a first-time key can be typed.
@@ -496,6 +523,7 @@ class TableWidget(QWidget):
         return self._ctx.repos.settings.get(MODEL_SETTING, "")
 
     def _stop_agent(self) -> None:
+        self._agent_watchdog.stop()
         if self._agent_process is None:
             return
         # Only ours. An agent someone else started is not the app's to kill.

@@ -20,12 +20,15 @@ running on a spare box -- nothing is spawned. The switch just gets flipped.
 
 from __future__ import annotations
 
+import collections
+import importlib.util
 import logging
 import os
 import secrets
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from canon_keeper import credentials
@@ -105,6 +108,82 @@ def ensure_account(repos, campaign_id: int) -> tuple[str, str]:
 # ------------------------------------------------------------------ the process
 
 
+class RunningAgent:
+    """The agent process, and what it has said.
+
+    Its output is read on a thread rather than left in a pipe. A child whose
+    stdout nobody reads eventually blocks on a full buffer, and -- the reason
+    this exists -- an agent that exits immediately would otherwise do so in
+    silence, leaving the app showing "Starting the agent..." forever.
+    """
+
+    #: Enough to explain a failure, not enough to hold a session's logging.
+    KEEP_LINES = 60
+
+    def __init__(self, process: subprocess.Popen) -> None:
+        self._process = process
+        self._lines: collections.deque[str] = collections.deque(maxlen=self.KEEP_LINES)
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
+
+    def _read(self) -> None:
+        stream = self._process.stdout
+        if stream is None:
+            return
+        try:
+            for line in stream:
+                text = line.rstrip()
+                if text:
+                    self._lines.append(text)
+                    log.debug("agent: %s", text)
+        except (ValueError, OSError):  # pragma: no cover - the pipe closed
+            pass
+
+    # Delegated so this can be passed anywhere a Popen was.
+    def poll(self):
+        return self._process.poll()
+
+    def terminate(self) -> None:
+        self._process.terminate()
+
+    def kill(self) -> None:
+        self._process.kill()
+
+    def wait(self, timeout: float | None = None):
+        return self._process.wait(timeout=timeout)
+
+    @property
+    def returncode(self):
+        return self._process.returncode
+
+    def why_it_stopped(self, lines: int = 4) -> str:
+        """The last thing it said, for showing to a person.
+
+        The tail rather than the head: an agent that fails does it on the way
+        out, and the first lines are usually just it starting up.
+        """
+        tail = list(self._lines)[-lines:]
+        return "\n".join(tail) if tail else "It stopped without saying why."
+
+
+def missing_requirement() -> str:
+    """What is stopping the agent from running, or empty if nothing is.
+
+    Checked before starting rather than after: a process that exits in the
+    first millisecond is a worse way to learn this than a sentence.
+    """
+    if find_executable() is None:
+        return explain_missing()
+    if importlib.util.find_spec("anthropic") is None:
+        return (
+            "The agent is installed but cannot reach a model: the `anthropic` "
+            "package is missing.\n\n"
+            '    pip install "canon-keeper[agent]"\n\n'
+            "Install it into the same environment Canon Keeper is running from."
+        )
+    return ""
+
+
 def find_executable() -> list[str] | None:
     """How to run the agent, or None if it is not installed.
 
@@ -152,7 +231,7 @@ def remember_api_key(key: str) -> bool:
 
 def start(
     url: str, username: str, password: str, key: str = "", model: str = ""
-) -> subprocess.Popen:
+) -> RunningAgent:
     """Launch the agent against a running session."""
     command = find_executable()
     if command is None:
@@ -175,18 +254,23 @@ def start(
         # Otherwise a console window opens over the app every time.
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-    return subprocess.Popen(
-        command,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        creationflags=creation_flags,
+    return RunningAgent(
+        subprocess.Popen(
+            command,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            # Line buffered, so a failure is readable before the process dies
+            # rather than sitting in an unflushed block buffer.
+            bufsize=1,
+            creationflags=creation_flags,
+        )
     )
 
 
-def stop(process: subprocess.Popen | None, timeout: float = 5.0) -> None:
+def stop(process: "RunningAgent | subprocess.Popen | None", timeout: float = 5.0) -> None:
     """Ask the agent to finish, then insist."""
     if process is None or process.poll() is not None:
         return

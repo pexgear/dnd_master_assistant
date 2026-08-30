@@ -309,11 +309,15 @@ switch you hold: while it is on, an agent answers in your place — for a break,
 second voice, or a shopkeeper haggled with while you read ahead. Press it again
 and you have the table back, mid-sentence if that is when you pressed it.
 
-Install the agent once:
+Install the agent once, **into the same environment Canon Keeper runs from**:
 
 ```bash
-pip install "canon-keeper[agent]"
+.\.venv\Scripts\python -m pip install -e ".[agent]"
 ```
+
+From a source checkout that is the project's own virtualenv, not whichever
+Python is first on your `PATH` -- installing it elsewhere is the one way to get
+an Autopilot button that appears to do nothing.
 
 Then press **Autopilot** in the Table panel while hosting. The first press opens
 **Agent…**, where you paste a key and pick a model; after that it does the rest

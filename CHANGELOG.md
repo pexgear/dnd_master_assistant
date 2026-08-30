@@ -26,6 +26,10 @@ What changed, from the point of view of someone running a game. See
 - **What it has cost, on the DM's screen.** Answers, tokens and dollars for the
   session, updated after each turn. Only the DM is shown it -- it is their bill
   -- and only the agent may report it.
+- **When the agent stops, you are told.** It used to fail in silence: the
+  process exited, the button stayed on, and the table waited for a machine that
+  was not there. Its output is now kept and shown, autopilot switches itself
+  off, and a missing `anthropic` package is caught before anything is started.
 - **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
   MCP client, so a player can talk instead of typing. It holds one login and has
   exactly that login's authority: dice are rolled on the host, and a change to a

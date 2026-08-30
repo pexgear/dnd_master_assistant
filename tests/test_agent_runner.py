@@ -127,7 +127,7 @@ def test_secrets_go_through_the_environment_not_the_command_line(monkeypatch):
     def fake_popen(command, **kwargs):
         captured["command"] = command
         captured["env"] = kwargs.get("env", {})
-        return object()
+        return _FakeProcess()
 
     monkeypatch.setattr(agent_runner.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(agent_runner, "find_executable", lambda: ["canonkeeper-agent"])
@@ -147,7 +147,7 @@ def test_the_url_and_user_do_go_on_the_command_line(monkeypatch):
     monkeypatch.setattr(
         agent_runner.subprocess,
         "Popen",
-        lambda command, **kwargs: captured.update(command=command) or object(),
+        lambda command, **kwargs: captured.update(command=command) or _FakeProcess(),
     )
     monkeypatch.setattr(agent_runner, "find_executable", lambda: ["canonkeeper-agent"])
 
@@ -266,8 +266,23 @@ class _FakeProcess:
     shutdown, which stops the agent -- after monkeypatch has been undone.
     """
 
+    returncode = 0
+    stdout = None
+
     def poll(self):
         return 0
+
+    def terminate(self) -> None:
+        pass
+
+    def kill(self) -> None:
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
+    def why_it_stopped(self, lines: int = 4) -> str:
+        return "for testing"
 
 
 def test_it_does_not_start_one_over_an_agent_already_connected(table, monkeypatch):
@@ -329,3 +344,123 @@ def test_closing_the_app_stops_the_agent(table, monkeypatch):
     table.shutdown()
 
     assert len(stopped) == 1, "an agent left against a dead session is unkillable"
+
+
+# ------------------------------------------------------------- noticing it died
+#
+# The whole reason this section exists: the agent was started, exited a
+# millisecond later because `anthropic` was not installed, and the app said
+# "Starting the agent..." and then nothing. Ever. The table sat waiting for a
+# machine that was not there.
+
+
+def test_a_missing_model_package_is_caught_before_starting(monkeypatch):
+    """A sentence beats a process that dies in the first millisecond."""
+    monkeypatch.setattr(agent_runner, "find_executable", lambda: ["canonkeeper-agent"])
+    monkeypatch.setattr(agent_runner.importlib.util, "find_spec", lambda _name: None)
+
+    problem = agent_runner.missing_requirement()
+
+    assert "anthropic" in problem
+    assert "pip install" in problem
+
+
+def test_nothing_missing_is_an_empty_string(monkeypatch):
+    monkeypatch.setattr(agent_runner, "find_executable", lambda: ["canonkeeper-agent"])
+    monkeypatch.setattr(agent_runner.importlib.util, "find_spec", lambda _name: object())
+
+    assert agent_runner.missing_requirement() == ""
+
+
+def test_a_missing_agent_is_reported_first(monkeypatch):
+    monkeypatch.setattr(agent_runner, "find_executable", lambda: None)
+    assert "pip install" in agent_runner.missing_requirement()
+
+
+def test_it_keeps_what_the_agent_said(tmp_path):
+    """So a failure can be shown to a person instead of vanishing."""
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import sys; print('could not log in: nope'); sys.exit(1)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    agent = agent_runner.RunningAgent(process)
+    agent.wait(timeout=15)
+    agent._reader.join(timeout=5)
+
+    assert "could not log in" in agent.why_it_stopped()
+    assert agent.returncode == 1
+
+
+def test_a_silent_death_still_says_something():
+    process = subprocess.Popen(
+        [sys.executable, "-c", "raise SystemExit(1)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    agent = agent_runner.RunningAgent(process)
+    agent.wait(timeout=15)
+    agent._reader.join(timeout=5)
+
+    assert agent.why_it_stopped(), "an empty explanation is not an explanation"
+
+
+def test_only_the_tail_is_kept():
+    """The failure is on the way out; the first lines are just it starting up."""
+    process = subprocess.Popen(
+        [sys.executable, "-c", "[print(f'line {i}') for i in range(50)]"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    agent = agent_runner.RunningAgent(process)
+    agent.wait(timeout=15)
+    agent._reader.join(timeout=5)
+
+    said = agent.why_it_stopped(lines=3)
+    assert "line 49" in said
+    assert "line 0" not in said
+
+
+def test_the_watchdog_reports_a_dead_agent(table, monkeypatch):
+    table._server = _FakeServer()
+    table._server.autopilot = True
+    table._agent_process = _FakeProcess()
+    table._autopilot_button.setChecked(True)
+
+    table._check_agent()
+
+    assert "stopped" in table._log.toPlainText().lower()
+    assert table._agent_process is None
+
+
+def test_and_switches_autopilot_off(table):
+    """Autopilot with no agent is a table waiting on nothing."""
+    server = _FakeServer()
+    server.autopilot = True
+    table._server = server
+    table._agent_process = _FakeProcess()
+    table._autopilot_button.setChecked(True)
+
+    table._check_agent()
+
+    assert server.autopilot is False
+    assert table._autopilot_button.isChecked() is False
+
+
+def test_a_living_agent_is_left_alone(table):
+    class _Alive(_FakeProcess):
+        def poll(self):
+            return None
+
+    server = _FakeServer()
+    server.autopilot = True
+    table._server = server
+    table._agent_process = _Alive()
+
+    table._check_agent()
+
+    assert table._agent_process is not None
+    assert server.autopilot is True
