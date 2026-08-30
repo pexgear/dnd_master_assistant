@@ -15,7 +15,7 @@ import logging
 import os
 
 from canon_keeper_dm_agent.context import SYSTEM, build_prompt
-from canon_keeper_dm_agent.session import Table
+from canon_keeper_client import Table
 
 log = logging.getLogger("canonkeeper.agent.brain")
 

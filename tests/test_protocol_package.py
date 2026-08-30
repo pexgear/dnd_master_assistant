@@ -85,3 +85,59 @@ def test_the_public_names_are_all_reachable():
     """__all__ that lies is worse than no __all__."""
     for name in canon_keeper_protocol.__all__:
         assert hasattr(canon_keeper_protocol, name), f"__all__ names a missing {name}"
+
+
+# ----------------------------------------------------------------- the layering
+#
+# Four packages now, and the whole argument for splitting them is the direction
+# of the arrows:
+#
+#     canon_keeper_protocol        (stdlib only)
+#         ^                ^
+#     canon_keeper_client   canon_keeper (the app)
+#         ^          ^
+#   dm_agent      mcp
+#
+# Nothing outside the app may import the app. That is what keeps a headless
+# install free of Qt, and what keeps "the agent cannot reach the database" a
+# fact about the import graph rather than a habit.
+
+import canon_keeper_client
+import canon_keeper_dm_agent
+import canon_keeper_mcp
+
+OUTSIDE_THE_APP = (
+    canon_keeper_protocol,
+    canon_keeper_client,
+    canon_keeper_dm_agent,
+    canon_keeper_mcp,
+)
+
+
+def test_nothing_outside_the_app_imports_the_app():
+    offenders: dict[str, set[str]] = {}
+    for package in OUTSIDE_THE_APP:
+        root = Path(package.__file__).parent
+        for source in sorted(root.rglob("*.py")):
+            reaching = {
+                name
+                for name in _imported_roots(source)
+                if name == "canon_keeper"
+            }
+            if reaching:
+                offenders[f"{package.__name__}/{source.name}"] = reaching
+
+    assert not offenders, (
+        f"{offenders} -- these reach into the app. A client that can import "
+        "canon_keeper can open a campaign database directly, which is exactly "
+        "the authority these packages are built not to have."
+    )
+
+
+def test_the_client_needs_no_qt():
+    """The agent and the MCP server both sit on it, and neither has a window."""
+    root = Path(canon_keeper_client.__file__).parent
+    for source in sorted(root.rglob("*.py")):
+        assert "PySide6" not in _imported_roots(source), (
+            f"{source.name} imports Qt; the headless client must not."
+        )

@@ -18,7 +18,7 @@ import sys
 
 from canon_keeper_dm_agent import __version__
 from canon_keeper_dm_agent.brain import Brain, BrainUnavailable, is_available, unavailable_hint
-from canon_keeper_dm_agent.session import AgentSession, LoginFailed
+from canon_keeper_client import AgentSession, LoginFailed
 
 log = logging.getLogger("canonkeeper.agent")
 

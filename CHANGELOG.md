@@ -5,6 +5,22 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+- **Autopilot.** Hand the table to an agent when you want a break, and take it
+  back by pressing the button again -- mid-sentence if that is when you pressed
+  it. The agent is on the roster as an agent, the switch is announced in the
+  chat, and it is never remembered between sessions. While it is off the host
+  refuses the agent's messages outright, so "off" is enforced at the table
+  rather than trusted to the agent. Give a campaign an agent login with
+  `canonkeeper-server --add-agent`, then run `canonkeeper-agent`.
+- **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
+  MCP client, so a player can talk instead of typing. It holds one login and has
+  exactly that login's authority: dice are rolled on the host, and a change to a
+  character is a request the DM answers.
+- **The wire contract is its own package.** `canon_keeper_protocol` depends on
+  nothing but the standard library, so anything headless can speak to a session
+  without installing Qt. Nothing outside the app imports the app, which is
+  checked by tests rather than remembered.
+
 ## 0.3.1
 
 - **Speak into the chat.** A **Speak** button beside the chat box transcribes

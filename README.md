@@ -15,8 +15,10 @@ Early, but usable at a table. The plugin shell with Characters, Cities and
 Transcript panels; local speech-to-text; and LAN sessions with logins, shared
 chat and dice, and role-filtered sharing.
 
-No AI yet — nothing here needs an API key or an internet connection. Where that
-goes next is [further down](#where-this-is-going).
+**Autopilot** hands the table to an agent when you want it, and takes it back
+when you press the button again. An MCP server lets a player say what they mean
+instead of typing it. Both are optional and both need a key you supply — the app
+itself still runs with no key and no internet.
 
 ## Install
 
@@ -300,42 +302,98 @@ So the more you write down, the better the transcription gets. If a name still
 comes out wrong, fix the row — and add the name to an entity so it is right next
 time.
 
-## Where this is going
+## Autopilot
 
-None of this is built yet. It is written down because it explains a decision the
-app has already made.
+You are the DM. Canon Keeper is for you, and it always hosts. **Autopilot** is a
+switch you hold: while it is on, an agent answers in your place — for a break, a
+second voice, or a shopkeeper haggled with while you read ahead. Press it again
+and you have the table back, mid-sentence if that is when you pressed it.
 
-Everything a player does is a **request the host approves** — hit points
-included. That was built for people, but it does not care whether a request came
-from a person or a model. An agent handed a player's login inherits exactly a
-player's authority: it can ask, and nothing else. It cannot set its own hit
-points, invent a level, or read a character nobody shared with it.
+Give the campaign an agent login, once:
 
-So the part that usually makes people nervous about putting a model in a game is
-already handled, and was handled for another reason.
+```bash
+canonkeeper-server --db our-campaign.sqlite3 --add-agent autopilot
+```
 
-**An NPC who answers.** Ask one a question and get a line back in their voice,
-built from what they know and — this is where the sharing layer earns its keep —
-what the party has actually worked out. It arrives as a draft you edit before
-anyone sees it, the same way a dictated line lands in the box rather than in the
-chat.
+Then point the agent at your session and press **Autopilot** in the Table panel:
 
-**Simulated players.** A character run by the app: filling an empty chair when
-someone cannot make it, or giving a party of two enough bodies for a fight built
-for four. It joins as a player, asks as a player, and you approve as you would
-for anyone. There is no separate mode for it, because there does not need to be
-one.
+```bash
+pip install "canon-keeper[agent]"
+canonkeeper-agent --url ws://192.168.1.20:8766 --user autopilot
+```
 
-**A simulated master.** The mirror of that — run a session on your own, or prep
-by playing your own scenario against something that argues back. Further off,
-and the harder of the two.
+`--dry-run` prints what it would have said instead of saying it, which is the
+honest way to find out whether you trust it.
 
-**Saying what you mean.** An MCP server, so "I drink the potion and check the
-door for traps" becomes real changes to real sheets instead of you typing them
-in. Its tools go down the same approval path as everything else.
+The design is worth stating plainly, because it is what makes handing over safe:
 
-All of it will want an API key you supply, and all of it stays optional. The app
-works with no key and no internet, and that is not going to change.
+- **It cannot speak while the switch is off.** Not by good behaviour — the host
+  refuses its messages. It stays connected and keeps listening, so switching back
+  on is instant, but nothing it says reaches the table.
+- **It is on the roster as an agent.** A table deserves to know when it is being
+  answered by a machine, so turning autopilot on and off is announced in the
+  chat and kept in the log.
+- **It has no path to your campaign.** It holds a socket and a login, exactly
+  like a player's app. Everything it knows arrived over the wire.
+- **It never rolls.** Dice are the host's, so it asks for a roll like anyone else.
+- **Autopilot is never remembered.** Opening a campaign to find a machine already
+  running your table is not a state to arrive in by accident.
+
+It does get what a DM gets — your motives, your secrets, the canon log — because
+it is standing in for you and cannot answer as an NPC without them. That is also
+the reason the agent login is worth guarding as carefully as your own.
+
+An API key is yours to supply, and everything above is optional. The app still
+works with no key and no internet.
+
+## Saying what you mean
+
+An MCP server exposing **one seat** at the table, so "I drink the potion and
+check the door for traps" becomes real messages instead of typing:
+
+```bash
+pip install "canon-keeper[mcp]"
+canonkeeper-mcp --url wss://your-host.tailXXXX.ts.net --user marco
+```
+
+It holds one login and has exactly that login's authority. `roll` is rolled on
+the host. `update_my_character` is a **request** — it returns "sent to your DM",
+because that is what happened. There is no privileged path, which is why a bug
+in it cannot corrupt a campaign.
+
+The caveat worth reading first: whatever model your MCP client runs will see
+what that login sees. For a player, that is what you shared with them. Point it
+at a DM login and you have sent your campaign's secrets to whoever runs that
+model.
+
+## Still to come
+
+**Simulated players.** A character run by the app — filling an empty chair, or
+giving a party of two enough bodies for a fight built for four. It joins as a
+player, asks as a player, and you approve as you would for anyone. The seat
+already exists; nothing new has to be invented for it to be safe.
+
+**A simulated master** that invents rather than stands in: prep by playing your
+own scenario against something that argues back. Further off, and the harder of
+the two — a simulated player proposes into a structure that already exists,
+while this has to build one.
+
+## How it is put together
+
+Four packages, and the arrows only point one way:
+
+| Package | Is | Needs |
+|---|---|---|
+| `canon_keeper_protocol` | the wire contract | the standard library, and nothing else |
+| `canon_keeper_client` | a headless connection | `websockets` |
+| `canon_keeper` | the app, and the host | PySide6 |
+| `canon_keeper_dm_agent` / `canon_keeper_mcp` | things that connect | `anthropic` / `mcp` |
+
+Nothing outside the app imports the app. That is what lets an agent run on a
+spare box without installing 660 MB of Qt, and it is what makes "a client cannot
+reach your campaign database" true of the import graph rather than true by
+habit. Both are enforced in `tests/test_protocol_package.py` rather than
+remembered.
 
 ## Writing a plugin
 

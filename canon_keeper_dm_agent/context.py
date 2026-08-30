@@ -14,7 +14,7 @@ will otherwise average them, and averaging invents.
 
 from __future__ import annotations
 
-from canon_keeper_dm_agent.session import Table
+from canon_keeper_client import Table
 
 #: Cap on how much campaign text goes into one prompt. A large campaign would
 #: otherwise send everything every turn -- slow, expensive, and worse, because
