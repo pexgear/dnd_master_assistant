@@ -196,3 +196,154 @@ def test_a_key_typed_on_a_machine_with_no_store_is_still_usable(ctx, qtbot, monk
         "the caller reads the key off the dialog, not back out of a store that "
         "did not keep it"
     )
+
+
+# ------------------------------------------------------------- the workspace id
+#
+# Some keys are identity-linked and are refused outright without the id of the
+# workspace they belong to. Nothing can detect that in advance -- the API says
+# so, in a message the DM now sees -- so there has to be somewhere to put the
+# answer.
+
+
+def test_a_workspace_id_can_be_set_and_comes_back(ctx, qtbot, store):
+    widget = AgentSettingsDialog(ctx)
+    qtbot.addWidget(widget)
+    widget._key.setText("sk-ant-fine")
+    widget._workspace.setText("wrkspc_01abc")
+
+    widget._on_save()
+
+    assert agent_runner.workspace_id() == "wrkspc_01abc"
+
+    again = AgentSettingsDialog(ctx)
+    qtbot.addWidget(again)
+    assert again.workspace == "wrkspc_01abc"
+
+
+def test_clearing_it_actually_clears_it(ctx, qtbot, store):
+    """Saving only non-empty values would make a wrong id impossible to remove."""
+    agent_runner.remember_workspace_id("wrkspc_wrong")
+
+    widget = AgentSettingsDialog(ctx)
+    qtbot.addWidget(widget)
+    widget._key.setText("sk-ant-fine")
+    widget._workspace.clear()
+    widget._on_save()
+
+    assert agent_runner.workspace_id() == ""
+
+
+def test_forgetting_the_key_forgets_the_workspace_too(ctx, qtbot, store):
+    agent_runner.remember_api_key("sk-ant-bye")
+    agent_runner.remember_workspace_id("wrkspc_bye")
+
+    widget = AgentSettingsDialog(ctx)
+    qtbot.addWidget(widget)
+    widget._on_forget()
+
+    assert agent_runner.api_key() == ""
+    assert agent_runner.workspace_id() == ""
+
+
+def test_the_environment_wins(monkeypatch, store):
+    monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_from_env")
+    agent_runner.remember_workspace_id("wrkspc_stored")
+    assert agent_runner.workspace_id() == "wrkspc_from_env"
+
+
+def test_no_workspace_is_an_empty_string(monkeypatch):
+    from canon_keeper import credentials as creds
+
+    monkeypatch.delenv("ANTHROPIC_WORKSPACE_ID", raising=False)
+    monkeypatch.setattr(creds, "load", lambda *_a: None)
+    assert agent_runner.workspace_id() == ""
+
+
+def test_it_reaches_the_agent_on_the_command_line(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        agent_runner.subprocess,
+        "Popen",
+        lambda command, **kwargs: captured.update(command=command) or _NoOutput(),
+    )
+    monkeypatch.setattr(agent_runner, "find_executable", lambda: ["canonkeeper-agent"])
+
+    agent_runner.start("ws://127.0.0.1:8766", "autopilot", "pw", workspace="wrkspc_01")
+
+    assert "--workspace" in captured["command"]
+    assert "wrkspc_01" in captured["command"]
+
+
+def test_no_workspace_means_no_flag(monkeypatch):
+    """An empty --workspace would be argued about by the parser for no reason."""
+    captured = {}
+    monkeypatch.setattr(
+        agent_runner.subprocess,
+        "Popen",
+        lambda command, **kwargs: captured.update(command=command) or _NoOutput(),
+    )
+    monkeypatch.setattr(agent_runner, "find_executable", lambda: ["canonkeeper-agent"])
+
+    agent_runner.start("ws://127.0.0.1:8766", "autopilot", "pw")
+
+    assert "--workspace" not in captured["command"]
+
+
+class _NoOutput:
+    """A started process with nothing to read."""
+
+    returncode = 0
+    stdout = None
+
+    def poll(self):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_the_brain_sends_the_header_when_it_has_one(monkeypatch):
+    """The whole point: the API refuses some keys without it."""
+    from canon_keeper_dm_agent.brain import Brain
+
+    captured = {}
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fine")
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+
+    Brain(workspace="wrkspc_01abc")._ensure_client()
+
+    assert captured["default_headers"] == {"anthropic-workspace-id": "wrkspc_01abc"}
+
+
+def test_and_no_header_when_it_does_not(monkeypatch):
+    from canon_keeper_dm_agent.brain import Brain
+
+    captured = {}
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fine")
+    monkeypatch.delenv("ANTHROPIC_WORKSPACE_ID", raising=False)
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+
+    Brain()._ensure_client()
+
+    assert captured["default_headers"] is None

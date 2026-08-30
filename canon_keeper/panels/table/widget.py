@@ -468,6 +468,7 @@ class TableWidget(QWidget):
                 password,
                 key,
                 self._agent_model(),
+                agent_runner.workspace_id(),
             )
         except agent_runner.AgentUnavailable as exc:
             QMessageBox.warning(self, "Cannot start the agent", str(exc))

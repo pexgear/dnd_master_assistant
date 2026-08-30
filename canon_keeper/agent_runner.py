@@ -256,8 +256,28 @@ def remember_api_key(key: str) -> bool:
     return credentials.save("anthropic://api", "key", key.strip())
 
 
+def workspace_id() -> str:
+    """The workspace some keys must name to be accepted.
+
+    Kept beside the key rather than with the campaign, because it is a property
+    of the key: the same workspace applies to every campaign you run.
+    """
+    return os.environ.get("ANTHROPIC_WORKSPACE_ID", "") or (
+        credentials.load("anthropic://api", "workspace") or ""
+    )
+
+
+def remember_workspace_id(workspace: str) -> bool:
+    return credentials.save("anthropic://api", "workspace", workspace.strip())
+
+
 def start(
-    url: str, username: str, password: str, key: str = "", model: str = ""
+    url: str,
+    username: str,
+    password: str,
+    key: str = "",
+    model: str = "",
+    workspace: str = "",
 ) -> RunningAgent:
     """Launch the agent against a running session."""
     command = find_executable()
@@ -267,6 +287,8 @@ def start(
     command = [*command, "--url", url, "--user", username]
     if model:
         command += ["--model", model]
+    if workspace:
+        command += ["--workspace", workspace]
 
     environment = dict(os.environ)
     # Passed through the environment rather than the command line: arguments are

@@ -80,6 +80,13 @@ class AgentSettingsDialog(QDialog):
         key_row.addWidget(self._show)
         form.addRow("Key", key_row)
 
+        # Some keys -- identity-linked ones -- are refused outright without the
+        # id of the workspace they belong to. Nothing here can detect that in
+        # advance; the API says so plainly, and this is where the answer goes.
+        self._workspace = QLineEdit(agent_runner.workspace_id())
+        self._workspace.setPlaceholderText("only if your key is refused without one")
+        form.addRow("Workspace id", self._workspace)
+
         self._model = QComboBox()
         for value, label in MODELS:
             self._model.addItem(label, value)
@@ -137,6 +144,10 @@ class AgentSettingsDialog(QDialog):
         return self._key.text().strip()
 
     @property
+    def workspace(self) -> str:
+        return self._workspace.text().strip()
+
+    @property
     def model(self) -> str:
         return self._model.currentData() or MODELS[0][0]
 
@@ -144,7 +155,9 @@ class AgentSettingsDialog(QDialog):
 
     def _on_forget(self) -> None:
         credentials.forget("anthropic://api", "key")
+        credentials.forget("anthropic://api", "workspace")
         self._key.clear()
+        self._workspace.clear()
         self._forget.setEnabled(False)
 
     def _on_save(self) -> None:
@@ -165,4 +178,6 @@ class AgentSettingsDialog(QDialog):
         self._ctx.repos.settings.set(MODEL_SETTING, self.model)
         if key:
             agent_runner.remember_api_key(key)
+        # Saved even when blank, so clearing it actually clears it.
+        agent_runner.remember_workspace_id(self.workspace)
         self.accept()

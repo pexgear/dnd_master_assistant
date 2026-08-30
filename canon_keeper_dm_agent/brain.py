@@ -95,9 +95,13 @@ def unavailable_hint() -> str:
 class Brain:
     """Produces a DM's line, or raises."""
 
-    def __init__(self, model: str = "", system: str = "") -> None:
+    def __init__(self, model: str = "", system: str = "", workspace: str = "") -> None:
         self._model = model or DEFAULT_MODEL
         self._system = system or SYSTEM
+        #: Some keys -- identity-linked ones -- are refused without the id of
+        #: the workspace they belong to. The API says so plainly when it
+        #: happens; this is where the answer goes.
+        self._workspace = workspace or os.environ.get("ANTHROPIC_WORKSPACE_ID", "")
         self._client = None
         #: Everything this agent has spent since it started.
         self.total = Usage()
@@ -111,7 +115,10 @@ class Brain:
                 raise BrainUnavailable("pip install anthropic") from exc
             if not os.environ.get("ANTHROPIC_API_KEY"):
                 raise BrainUnavailable("set ANTHROPIC_API_KEY to your key")
-            self._client = anthropic.Anthropic()
+            headers = (
+                {"anthropic-workspace-id": self._workspace} if self._workspace else None
+            )
+            self._client = anthropic.Anthropic(default_headers=headers)
         return self._client
 
     def answer(self, table: Table, spoken: list[tuple[str, str]]) -> str:

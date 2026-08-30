@@ -182,8 +182,10 @@ class Responder:
         self._discard()
 
 
-#: Long enough to name the problem, short enough for a chat line.
-_MAX_TROUBLE = 200
+#: Long enough to carry an API error that tells you what to do about it. The
+#: first version cut at 200 and truncated a message precisely where it started
+#: explaining the fix.
+_MAX_TROUBLE = 600
 
 
 def _players_present(session) -> bool:

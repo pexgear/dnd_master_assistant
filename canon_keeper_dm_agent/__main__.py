@@ -32,6 +32,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--user", required=True, help="the agent login")
     parser.add_argument("--model", default="", help="which model to answer with")
     parser.add_argument(
+        "--workspace",
+        default="",
+        help=(
+            "your Anthropic workspace id. Only needed for keys that are "
+            "refused without one -- the API says so if yours is."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print what it would say instead of saying it",
@@ -55,7 +63,7 @@ async def _run(args) -> int:
     password = os.environ.get("CANONKEEPER_AGENT_PASSWORD") or getpass.getpass(
         f"Password for {args.user}: "
     )
-    brain = Brain(model=args.model)
+    brain = Brain(model=args.model, workspace=args.workspace)
 
     session: AgentSession | None = None
 

@@ -43,6 +43,10 @@ What changed, from the point of view of someone running a game. See
 - **When it cannot answer, you are told why.** A failed model call used to be
   silent: the indicator flashed and nothing followed. The reason -- usually an
   expired or mistyped key -- now reaches the DM privately, and only the DM.
+- **Workspace id, for keys that need one.** An identity-linked key is refused
+  outright until it names its workspace. **Agent...** has a field for it, and
+  it is sent as `anthropic-workspace-id`. Nothing can detect this in advance;
+  the API says so, and now you see what it said.
 - **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
   MCP client, so a player can talk instead of typing. It holds one login and has
   exactly that login's authority: dice are rolled on the host, and a change to a
