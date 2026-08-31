@@ -5,36 +5,57 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.4.1
+
+One-shots, and a table that says what is happening.
+
+### One-shots
+
+- **Start a one-shot** in the chooser builds a campaign from a template, with
+  the characters, places, facts, shares and logins already in it -- the same
+  every time. Three ship: *The Last Coach*, an evening for three; *Test
+  Combat*, which opens on initiative and ends when the fight does; and *Test
+  Table*, for exercising the app without typing a world in first.
+- What you get is an ordinary campaign. It only remembers which template it
+  came from, which is what lets **File > Start Again from the Beginning** put
+  it back. **File > Storyline...** holds the beats and where it ends, and
+  **File > Keep This One** makes it a campaign of your own.
+
+### At the table
+
 - **A refused change is put back.** Saying no used to leave the rejected value
-  sitting on the player's screen, which reads exactly like it was accepted. The
-  host now sends the character as it actually stands, and the panel reloads --
+  on the player's screen, which reads exactly like it was accepted. The host
+  now sends the character as it actually stands and the panel reloads --
   including over a form still being edited, because the host's copy is the true
   one.
 - **The log is out of the way.** The chat hid the game under the app talking
-  about itself. Arrivals, departures, autopilot switching and the rest are now
-  behind **Show log**; anything addressed to you -- a refusal, a roll, an agent
+  about itself. Arrivals, departures, autopilot switching and the rest sit
+  behind **Show log**. Anything addressed to you -- a refusal, a roll, an agent
   that could not answer -- is never filtered.
-- **Errors are in the log, and say so.** Something going wrong is the app
-  talking about itself, so it goes in the log with everything else -- but
-  **Show log** turns red when one arrives, and the message appears in the
-  status bar immediately. Hidden and unannounced would be the worst of both.
-- **One-shots.** **Start a one-shot** in the campaign chooser builds a real
-  campaign from a template: characters, places, facts, shares and logins
-  already in it, the same every time. Two ship -- *The Last Coach*, an evening
-  for three, and *Test Table*, for exercising the app without typing anything
-  first. **File ▸ Storyline...** holds the beats and where it ends,
-  **Start Again** puts it back to the beginning, and **Keep This One** turns it
-  into a campaign of your own.
-- **Going online publishes it.** Hosting for the people in the room and for the
-  one who could not make it was two buttons and one wish. **Share on the
-  internet** is gone; **Go online** does both, and a session whose publish fails
-  stays up on your network.
-- **Fixed: the agent was listed as a player.** It answers for the DM, and now
-  says so. **Join session** is also gone from the DM's view, where it never
-  meant anything.
+- **Errors are in the log, and say so.** **Show log** turns red when something
+  goes wrong, and the message appears in the status bar at once. Hidden *and*
+  unannounced would be the worst of both.
 - **A panel with something new is highlighted** until you look at it, then the
   colour fades. An update in a panel behind another tab may as well not have
   arrived.
+
+### Fewer buttons
+
+- **Going online publishes it.** Hosting for the people in the room and for the
+  one who could not make it was two buttons and one wish. **Share on the
+  internet** is gone. A session whose publish fails stays up on your network --
+  that is half a thing succeeding, not an error.
+- **Join session** is gone from the DM's view, where it never meant anything.
+- **Fixed: the agent was listed as a player.** It answers for the DM, and now
+  says so.
+- Double-clicking any list in the chooser opens what it points at.
+
+### Underneath
+
+- **Fixed: the canon log could reorder itself between reads.** Facts were
+  ordered by timestamp alone, so several asserted in the same millisecond came
+  back in whatever order SQLite chose. Found by the test that asserts two runs
+  of a template are identical.
 
 ## 0.4.0
 
