@@ -20,6 +20,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QDesktopServices, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -38,7 +39,7 @@ from canon_keeper import agent_runner, campaigns, credentials
 from canon_keeper.audio.dictation import Dictation
 from canon_keeper.net import discovery, funnel
 from canon_keeper.net.client import SessionClient
-from canon_keeper_protocol.messages import Member, Role
+from canon_keeper_protocol.messages import Member, Role, SystemKind
 from canon_keeper.net.server import DEFAULT_PORT, SessionServer
 from canon_keeper.panels.table.agent_settings import (
     MODEL_SETTING,
@@ -94,6 +95,8 @@ class TableWidget(QWidget):
         self._agent_process = None
         #: Who is composing right now, by label.
         self._busy: set[str] = set()
+        #: Every line, shown or not, so the filter can be turned back on.
+        self._entries: list[tuple[str, str, float]] = []
         # An agent that dies a millisecond after starting used to do so in
         # silence, leaving the button on and the table waiting for a machine
         # that was not there.
@@ -122,7 +125,7 @@ class TableWidget(QWidget):
         self._client.roster_changed.connect(self._on_roster)
         self._client.said.connect(self._on_said)
         self._client.rolled.connect(self._on_rolled)
-        self._client.system.connect(lambda text: self._append_system(text))
+        self._client.system.connect(self._append_system)
         # The DM's panel names arrive with the campaign; hand them to the
         # shell, which re-titles the docks.
         self._client.panel_names_received.connect(self._on_panel_names)
@@ -131,6 +134,9 @@ class TableWidget(QWidget):
         self._client.autopilot_changed.connect(self._on_autopilot_changed)
         self._client.busy_changed.connect(self._on_busy_changed)
         self._client.spend_changed.connect(self._on_spend_changed)
+        # A refusal has to reach the panel showing the character, not just the
+        # chat: their screen still has the change they asked for on it.
+        self._client.edit_refused.connect(ctx.bus.edit_refused)
 
         self._build_ui()
         # A share changed while hosting: push it to whoever may now see it.
@@ -272,6 +278,14 @@ class TableWidget(QWidget):
         self._entry.setPlaceholderText("Say something, or /roll 2d6+3")
         self._entry.returnPressed.connect(self._send)
         entry.addWidget(self._entry, 1)
+
+        self._show_chatter = QCheckBox("Show joins and leaves")
+        self._show_chatter.setToolTip(
+            "Who arrived, who left, and when autopilot was switched. Hidden by "
+            "default -- it is housekeeping, not the game."
+        )
+        self._show_chatter.toggled.connect(lambda _on: self._redraw())
+        outer.addWidget(self._show_chatter)
 
         self._say_button = QPushButton("Speak")
         self._say_button.setCheckable(True)
@@ -846,6 +860,7 @@ class TableWidget(QWidget):
         "Connecting..." lines are not part of it.
         """
         self._log.clear()
+        self._entries.clear()
         for entry in messages:
             if not isinstance(entry, dict):
                 continue
@@ -856,6 +871,10 @@ class TableWidget(QWidget):
                 text = f"{speaker}: {text}"
             elif kind == "rolled" and speaker:
                 text = f"{speaker} rolled {text}"
+            elif kind == "system":
+                # Old joins and leaves are the same housekeeping as live ones,
+                # and hiding one while showing the other would be odd.
+                kind = "chatter"
             self._append(
                 entry.get("role") or kind,
                 text,
@@ -865,6 +884,29 @@ class TableWidget(QWidget):
             self._append("system", "--- you are here ---")
 
     def _append(self, kind: str, text: str, when: float | None = None) -> None:
+        """Record a line, and show it if it is not being filtered out."""
+        self._entries.append((kind, text, when or datetime.now().timestamp()))
+        if self._is_hidden(kind):
+            return
+        self._draw(kind, text, when)
+
+    def _is_hidden(self, kind: str) -> bool:
+        """Chatter is hidden unless asked for. Nothing else ever is.
+
+        A refusal, a dice roll, an agent that could not answer: those are the
+        reason someone is reading, and no filter should be able to swallow
+        them.
+        """
+        return kind == "chatter" and not self._show_chatter.isChecked()
+
+    def _redraw(self) -> None:
+        """Rebuild the whole log, which is what makes the filter reversible."""
+        self._log.clear()
+        for kind, text, when in self._entries:
+            if not self._is_hidden(kind):
+                self._draw(kind, text, when)
+
+    def _draw(self, kind: str, text: str, when: float | None = None) -> None:
         cursor = self._log.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
 
@@ -882,8 +924,9 @@ class TableWidget(QWidget):
         cursor.insertText(text, body)
         self._log.verticalScrollBar().setValue(self._log.verticalScrollBar().maximum())
 
-    def _append_system(self, text: str) -> None:
-        self._append("system", text)
+    def _append_system(self, text: str, kind: str = "") -> None:
+        """A line from the host. ``kind`` distinguishes chatter from a notice."""
+        self._append("chatter" if kind == SystemKind.CHATTER.value else "system", text)
 
     def _update_state(self) -> None:
         connected = self._client.is_connected

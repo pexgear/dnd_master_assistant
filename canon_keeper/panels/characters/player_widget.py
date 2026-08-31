@@ -43,7 +43,11 @@ class PlayerCharactersWidget(QWidget):
         self._loading = False
 
         self._build_ui()
-        ctx.shared.changed.connect(self.reload)
+        ctx.shared.changed.connect(self._on_shared_changed)
+        # A refusal has to override whatever is on screen, including a form the
+        # player is still editing: the host's copy is the true one, and leaving
+        # a rejected change visible reads exactly like it was accepted.
+        ctx.bus.edit_refused.connect(self._on_refused)
         self.reload()
 
     # --------------------------------------------------------------------- ui
@@ -196,6 +200,27 @@ class PlayerCharactersWidget(QWidget):
             # An update that arrives for the character already on screen is
             # exactly the case that matters, so re-read it explicitly.
             self._refresh_shown()
+
+    def _on_shared_changed(self) -> None:
+        """The host sent something. Reload, and say so if nobody is looking."""
+        self.reload()
+        self._ctx.bus.panel_attention.emit("characters")
+
+    def _on_refused(self, entity_id: int, reason: str) -> None:
+        """The DM said no. Put back what is actually true."""
+        if entity_id != self._current_id:
+            # Not on screen, but their next visit must not show the old form.
+            return
+        # Cleared first: _refresh_shown deliberately skips a dirty form, and
+        # this is the one case where the form loses.
+        self._save.setEnabled(False)
+        entity = self._ctx.shared.get(entity_id)
+        if entity is not None:
+            self._load(entity)
+        self._ctx.bus.status_message.emit(
+            f"Your DM said no{f': {reason}' if reason else ''}"
+        )
+        self._ctx.bus.panel_attention.emit("characters")
 
     def _refresh_shown(self) -> None:
         """Re-read the character on screen, unless it is being edited."""

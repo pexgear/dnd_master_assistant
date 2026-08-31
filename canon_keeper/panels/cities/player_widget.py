@@ -34,7 +34,7 @@ class PlayerCitiesWidget(QWidget):
         self._loading = False
 
         self._build_ui()
-        ctx.shared.changed.connect(self.reload)
+        ctx.shared.changed.connect(self._on_shared_changed)
         self.reload()
 
     # --------------------------------------------------------------------- ui
@@ -93,6 +93,11 @@ class PlayerCitiesWidget(QWidget):
         self._hint.setVisible(not visible)
 
     # ------------------------------------------------------------------ loads
+
+    def _on_shared_changed(self) -> None:
+        """The host sent something. Reload, and say so if nobody is looking."""
+        self.reload()
+        self._ctx.bus.panel_attention.emit("cities")
 
     def reload(self) -> None:
         previous = self._current_id

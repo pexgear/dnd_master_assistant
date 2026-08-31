@@ -17,6 +17,7 @@ from PySide6.QtWebSockets import QWebSocket
 from canon_keeper.net import cache
 from canon_keeper_protocol import auth
 from canon_keeper_protocol.messages import (
+    SystemKind,
     MAX_HOST_FRAME_BYTES,
     Member,
     MessageType,
@@ -46,7 +47,11 @@ class SessionClient(QObject):
     roster_changed = Signal(list)  # list[Member]
     said = Signal(object, str)  # (Member, text)
     rolled = Signal(object, dict)  # (Member, roll payload)
-    system = Signal(str)
+    #: (text, kind) -- see SystemKind. Chatter can be hidden; a notice is
+    #: addressed to the person reading it and must not be.
+    system = Signal(str, str)
+    #: A request of ours was turned down: (entity id, reason).
+    edit_refused = Signal(int, str)
     #: Emitted once the host's filtered view of the campaign has arrived.
     state_replaced = Signal()
     #: What the DM calls each panel, as a {panel_id: name} mapping.
@@ -364,7 +369,15 @@ class SessionClient(QObject):
             self.rolled.emit(Member.from_dict(message.get("member", {})), message.payload)
 
         elif message.type == MessageType.SYSTEM:
-            self.system.emit(str(message.get("text", "")))
+            self.system.emit(
+                str(message.get("text", "")),
+                str(message.get("kind", "") or SystemKind.NOTICE.value),
+            )
+
+        elif message.type == MessageType.REFUSED:
+            entity_id = message.get("id")
+            if isinstance(entity_id, int):
+                self.edit_refused.emit(entity_id, str(message.get("reason", "")))
 
         elif message.type == MessageType.ERROR:
             text = str(message.get("message", "The host refused the connection."))

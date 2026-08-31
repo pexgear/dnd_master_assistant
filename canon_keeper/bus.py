@@ -46,3 +46,12 @@ class Bus(QObject):
 
     # Free-text status for the main window's status bar.
     status_message = Signal(str)
+
+    # A change of ours was refused by the host: (entity id, reason). Panels
+    # showing that entity should throw away what is on screen and re-read --
+    # including mid-edit, because the host's copy is the true one.
+    edit_refused = Signal(int, str)
+
+    # Something arrived that this panel is showing, and the person may not be
+    # looking at it. The shell highlights the panel until they are.
+    panel_attention = Signal(str)

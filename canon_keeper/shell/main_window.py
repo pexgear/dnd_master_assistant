@@ -27,6 +27,7 @@ from canon_keeper import __version__, campaigns, config
 from canon_keeper.content import ATTRIBUTION as SRD_ATTRIBUTION
 from canon_keeper.plugin import API_VERSION, AppContext
 from canon_keeper.repo.layouts import AUTOSAVE_NAME
+from canon_keeper.shell.attention import Attention
 from canon_keeper.shell.loader import LoadedPanel, LoadError
 from canon_keeper.shell.rename_panels import RenamePanelsDialog
 from canon_keeper.shell.theme import Theme, ThemeController
@@ -54,6 +55,9 @@ class MainWindow(QMainWindow):
         self.switch_requested = False
         self._errors = list(errors)
         self._docks: dict[str, QDockWidget] = {}
+        # Tints a panel that has something waiting, and fades it once the
+        # panel has actually been looked at.
+        self._attention = Attention(self)
         self._panels: dict[str, LoadedPanel] = {}
 
         self.setObjectName("CanonKeeperMainWindow")
@@ -75,10 +79,15 @@ class MainWindow(QMainWindow):
 
         self._build_panels(panels)
         self._build_menus()
+        self._recolour_attention()
 
         self._ctx.bus.status_message.connect(self._on_status_message)
         self._ctx.bus.panel_names_changed.connect(self._retitle_docks)
         self._ctx.bus.campaign_changed.connect(lambda _id: self._update_title())
+        self._ctx.bus.panel_attention.connect(self._attention.flag)
+        # The tint sits on the title bar, so it has to follow the theme or it
+        # is a bright blue stripe on a dark window.
+        self._ctx.bus.theme_changed.connect(lambda _dark: self._recolour_attention())
 
         self._update_title()
         self._retitle_docks()
@@ -118,8 +127,12 @@ class MainWindow(QMainWindow):
                 | QDockWidget.DockWidgetFeature.DockWidgetClosable
             )
             self.addDockWidget(area, dock)
+            self._attention.watch(plugin.id, dock)
             self._docks[plugin.id] = dock
             self._panels[plugin.id] = entry
+
+    def _recolour_attention(self) -> None:
+        self._attention.set_colour(self.palette().highlight().color())
 
     # ------------------------------------------------------------------- menus
 

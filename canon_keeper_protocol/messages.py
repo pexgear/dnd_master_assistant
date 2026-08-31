@@ -38,6 +38,20 @@ MAX_FRAME_BYTES = 16 * 1024
 MAX_HOST_FRAME_BYTES = 8 * 1024 * 1024
 
 
+class SystemKind(StrEnum):
+    """Why a system line was sent, so a reader can filter the noise.
+
+    The distinction is not decoration. "Marco joined" is chatter nobody needs
+    to see twice; "your DM said no, and here is why" is addressed to one person
+    and must never be hidden by a filter meant for the former.
+    """
+
+    #: Broadcast housekeeping: joins, leaves, autopilot switching.
+    CHATTER = "chatter"
+    #: Sent to one person, about something they did or must know.
+    NOTICE = "notice"
+
+
 class Role(StrEnum):
     DM = "dm"
     PLAYER = "player"
@@ -72,11 +86,12 @@ class MessageType(StrEnum):
     AUTOPILOT = "autopilot"  # {on, by} -- whether the agent is answering
     BUSY_NOW = "busy_now"    # {member, on} -- who is composing, for everyone
     SPEND = "spend"          # what the agent has cost. DM viewers only.
+    REFUSED = "refused"      # {id, reason} -- your request was turned down
     ERROR = "error"
     ROSTER = "roster"
     SAID = "said"
     ROLLED = "rolled"
-    SYSTEM = "system"
+    SYSTEM = "system"        # {text, kind} -- see SystemKind
 
 
 @dataclass(slots=True)

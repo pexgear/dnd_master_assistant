@@ -50,6 +50,7 @@ from canon_keeper_protocol.messages import (
     MessageType,
     ProtocolError,
     Role,
+    SystemKind,
     clean_name,
     decode,
     encode,
@@ -944,7 +945,7 @@ class SessionServer(QObject):
     def _tell_dms(self, text: str) -> None:
         """Say something to whoever is running the game."""
         self._record(SYSTEM, text)
-        frame = encode(MessageType.SYSTEM, text=text)
+        frame = encode(MessageType.SYSTEM, text=text, kind=SystemKind.NOTICE.value)
         for socket, session in self._sessions.items():
             if session.viewer.is_dm:
                 socket.sendTextMessage(frame)
@@ -953,7 +954,16 @@ class SessionServer(QObject):
         """Say something to one person rather than the whole table."""
         if account_id is None:
             return
-        frame = encode(MessageType.SYSTEM, text=text)
+        frame = encode(MessageType.SYSTEM, text=text, kind=SystemKind.NOTICE.value)
+        for socket, session in self._sessions.items():
+            if session.account_id == account_id:
+                socket.sendTextMessage(frame)
+
+    def _send_to_account(self, account_id: int | None, message_type, **payload) -> None:
+        """One message to every connection that login has open."""
+        if account_id is None:
+            return
+        frame = encode(message_type, **payload)
         for socket, session in self._sessions.items():
             if session.account_id == account_id:
                 socket.sendTextMessage(frame)
@@ -976,6 +986,16 @@ class SessionServer(QObject):
             # Told privately: a refusal is between the two of them, and the
             # table does not need to watch.
             self._tell(proposal.account_id, said)
+            # And told *what is true*, not only that they were wrong. Without
+            # this their screen keeps showing the change they asked for, which
+            # reads exactly like it was accepted.
+            self._send_to_account(
+                proposal.account_id,
+                MessageType.REFUSED,
+                id=proposal.entity_id,
+                reason=note,
+            )
+            self.publish_entity(proposal.entity_id)
             self.publish_proposals()
             return True
 
@@ -1031,8 +1051,18 @@ class SessionServer(QObject):
                 socket.sendTextMessage(frame)
 
     def _broadcast_system(self, text: str, exclude: QWebSocket | None = None) -> None:
+        """Housekeeping the whole table hears: joins, leaves, autopilot.
+
+        Marked as chatter so a reader can hide it. Anything a person actually
+        needs to act on goes through _tell or _tell_dms instead.
+        """
         self._record(SYSTEM, text)
-        self._broadcast(MessageType.SYSTEM, exclude=exclude, text=text)
+        self._broadcast(
+            MessageType.SYSTEM,
+            exclude=exclude,
+            text=text,
+            kind=SystemKind.CHATTER.value,
+        )
 
     def _send_roster(self) -> None:
         self._broadcast(MessageType.ROSTER, members=[m.to_dict() for m in self.members])

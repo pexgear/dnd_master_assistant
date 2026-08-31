@@ -5,6 +5,19 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+- **A refused change is put back.** Saying no used to leave the rejected value
+  sitting on the player's screen, which reads exactly like it was accepted. The
+  host now sends the character as it actually stands, and the panel reloads --
+  including over a form still being edited, because the host's copy is the true
+  one.
+- **Joins and leaves are out of the way.** The chat hid the game under
+  housekeeping. Arrivals, departures and autopilot notices are now hidden
+  behind **Show joins and leaves**; anything addressed to you -- a refusal, a
+  roll, an agent that could not answer -- is never filtered.
+- **A panel with something new is highlighted** until you look at it, then the
+  colour fades. An update in a panel behind another tab may as well not have
+  arrived.
+
 ## 0.4.0
 
 Autopilot: hand the table to an agent, and take it back.
