@@ -471,7 +471,9 @@ pytest
 ```
 
 [ARCHITECTURE.md](ARCHITECTURE.md) is the map: what the packages are, which way
-they depend, and the invariants worth preserving. Its structural claims are
+they depend, the invariants worth preserving, and the main flows.
+[AGENTS.md](AGENTS.md) is the short version for anyone — human or otherwise —
+changing the code. Its structural claims are
 checked by the suite, so it fails rather than quietly going stale.
 
 Releases are cut by pushing a `v*` tag; see [RELEASING.md](RELEASING.md).

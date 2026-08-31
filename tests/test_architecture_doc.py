@@ -230,3 +230,42 @@ def test_the_flow_section_covers_the_paths_that_matter(text):
     section = text.split("## The main flows", 1)[1].split("## Decisions", 1)[0]
     for topic in ("Joining", "changes their character", "Autopilot", "Reconnecting"):
         assert topic in section, f"the {topic!r} flow is no longer described"
+
+
+# ------------------------------------------------------------ the release rule
+#
+# AGENTS.md says the documentation moves with the version number. Most of that
+# is judgement, but one part is mechanical: a version that exists has notes.
+
+
+def test_the_current_version_has_changelog_notes():
+    notes = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    heading = f"## {canon_keeper.__version__}"
+    assert heading in notes, (
+        f"the version is {canon_keeper.__version__} but CHANGELOG.md has no "
+        f"'{heading}' section. Bumping the number is not the release; saying "
+        "what changed is."
+    )
+
+
+def test_the_changelog_keeps_a_place_for_the_next_one():
+    notes = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## Unreleased" in notes, (
+        "the Unreleased heading has gone, so the next change has nowhere to be "
+        "written down as it lands"
+    )
+
+
+def test_agents_md_still_names_the_documents_it_governs():
+    """It is a rule about four files. Losing one silently is the failure mode."""
+    rules = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    for document in ("CHANGELOG.md", "README.md", "ARCHITECTURE.md", "RELEASING.md"):
+        assert document in rules, f"AGENTS.md no longer mentions {document}"
+
+
+def test_the_release_procedure_is_still_written_down():
+    steps = (ROOT / "RELEASING.md").read_text(encoding="utf-8")
+    assert "ARCHITECTURE.md" in steps, (
+        "RELEASING.md no longer asks anyone to check the architecture doc, "
+        "which is the step this project keeps needing to be reminded of"
+    )

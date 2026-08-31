@@ -27,10 +27,15 @@ __version__ = "0.3.0"
 [`CHANGELOG.md`](CHANGELOG.md) describing what changed for someone using the
 app, not what changed in the code.
 
-**3. Check the map still fits.** If the release changed the shape of things --
-a new package, a migration, a version constant -- update
-[`ARCHITECTURE.md`](ARCHITECTURE.md). The suite catches the structural claims,
-but not whether the reasoning is still true.
+**3. Check the documentation still fits.** If the release changed the shape of
+things -- a new package, a migration, a version constant, a flow -- update
+[`ARCHITECTURE.md`](ARCHITECTURE.md). If it changed what a person *does* -- a
+button, a command, an install step -- update [`README.md`](README.md).
+
+The suite catches what it can: every package, migration and version constant in
+the architecture doc, and that this version has changelog notes at all. It
+cannot tell whether the reasoning is still true, or whether the README still
+describes the app someone will open. See [`AGENTS.md`](AGENTS.md).
 
 **4. Commit, tag, push:**
 
