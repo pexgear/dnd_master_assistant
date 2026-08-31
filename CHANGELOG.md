@@ -25,6 +25,13 @@ What changed, from the point of view of someone running a game. See
   first. **File ▸ Storyline...** holds the beats and where it ends,
   **Start Again** puts it back to the beginning, and **Keep This One** turns it
   into a campaign of your own.
+- **Going online publishes it.** Hosting for the people in the room and for the
+  one who could not make it was two buttons and one wish. **Share on the
+  internet** is gone; **Go online** does both, and a session whose publish fails
+  stays up on your network.
+- **Fixed: the agent was listed as a player.** It answers for the DM, and now
+  says so. **Join session** is also gone from the DM's view, where it never
+  meant anything.
 - **A panel with something new is highlighted** until you look at it, then the
   colour fades. An update in a panel behind another tab may as well not have
   arrived.

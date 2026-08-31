@@ -77,6 +77,16 @@ class _FunnelTask(QRunnable):
 
 QUICK_DICE = ("d20", "d12", "d10", "d8", "d6", "d4")
 
+#: What each role is called on the roster. Written out rather than branched on,
+#: because a two-way "DM or player" is how the agent came to be listed as a
+#: player -- which it is not. It answers *for* the DM, and is named as such
+#: while still saying which of the two you are talking to.
+ROLE_LABELS = {
+    Role.DM.value: "DM",
+    Role.AGENT.value: "DM (autopilot)",
+    Role.PLAYER.value: "player",
+}
+
 
 class TableWidget(QWidget):
     def __init__(self, ctx: AppContext) -> None:
@@ -173,7 +183,8 @@ class TableWidget(QWidget):
         bar = QHBoxLayout()
         self._host_button = QPushButton("Go online")
         self._host_button.setToolTip(
-            "Start a server for this campaign so players can join"
+            "Start a server for this campaign and publish it, so players can "
+            "join from your network or from anywhere."
         )
         self._host_button.clicked.connect(self._host)
         bar.addWidget(self._host_button)
@@ -185,15 +196,6 @@ class TableWidget(QWidget):
         self._leave_button = QPushButton("Leave")
         self._leave_button.clicked.connect(self._leave)
         bar.addWidget(self._leave_button)
-
-        self._funnel_button = QPushButton("Share on the internet")
-        self._funnel_button.setCheckable(True)
-        self._funnel_button.setToolTip(
-            "Publish this session through Tailscale Funnel, so players outside "
-            "your network can join. They do not need Tailscale."
-        )
-        self._funnel_button.clicked.connect(self._toggle_funnel)
-        bar.addWidget(self._funnel_button)
 
         self._autopilot_button = QPushButton("Autopilot")
         self._autopilot_button.setCheckable(True)
@@ -316,6 +318,9 @@ class TableWidget(QWidget):
             "player": QColor("#7fd1a0" if dark else "#1c7048"),
             "error": QColor("#ff6b6b" if dark else "#b00020"),
         }
+        # The agent speaks for the DM, so it reads as the DM -- a little paler,
+        # since the roster already says which it is.
+        self._colours["agent"] = QColor("#9db8e8" if dark else "#4a7fc4")
         if getattr(self, "_show_chatter", None) is not None and self._show_chatter.styleSheet():
             self._flag_log()
 
@@ -612,25 +617,20 @@ class TableWidget(QWidget):
         finally:
             self._relaying_player_edit = False
 
-    def _toggle_funnel(self) -> None:
-        if self._funnel_button.isChecked():
-            self._start_funnel()
-        else:
-            self._stop_funnel()
-
     def _start_funnel(self) -> None:
-        if self._server is None or not self._server.is_running:
-            self._append("error", "Go online first, then share it on the internet.")
-            self._funnel_button.setChecked(False)
-            return
+        """Publish the session. Part of going online, not a second decision.
 
-        self._funnel_button.setEnabled(False)
-        self._funnel_button.setText("Starting...")
+        Hosting on a LAN and hosting for people who are not on it are the same
+        intent -- "my players can join" -- so pressing one button does both. The
+        publish is the half that can fail for reasons outside the app, and when
+        it does the session stays up on the network regardless.
+        """
+        if self._server is None or not self._server.is_running:
+            return
         self._append_system("Asking Tailscale to publish this session...")
         self._run_funnel(funnel.start, self._server.port, self._on_funnel_started)
 
     def _stop_funnel(self) -> None:
-        self._funnel_button.setEnabled(False)
         self._funnel_url = ""
         self._proposals: list[dict] = []
         self._approvals_dialog = None
@@ -644,16 +644,12 @@ class TableWidget(QWidget):
         self._funnel_pool.start(task)
 
     def _on_funnel_started(self, result) -> None:
-        self._funnel_button.setEnabled(True)
         if not result.ok:
-            self._funnel_button.setChecked(False)
-            self._funnel_button.setText("Share on the internet")
             self._report_funnel_problem(result)
             self._update_state()
             return
 
         self._funnel_url = result.websocket_url
-        self._funnel_button.setText("Stop sharing")
         self._append_system(f"Published. Players outside your network: {self._funnel_url}")
         self._append_system("Use Copy invite to send that to them.")
         self._update_state()
@@ -665,9 +661,12 @@ class TableWidget(QWidget):
         unaltered rather than paraphrased.
         """
         box = QMessageBox(self)
-        box.setWindowTitle("Share on the internet")
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setText(result.message)
+        box.setWindowTitle("Players outside your network")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(
+            f"{result.message}\n\nYou are online either way: anyone on your "
+            "network can join right now."
+        )
 
         if result.enable_url:
             open_button = box.addButton(
@@ -678,19 +677,19 @@ class TableWidget(QWidget):
             if box.clickedButton() is open_button:
                 QDesktopServices.openUrl(QUrl(result.enable_url))
                 self._append_system(
-                    "Turn Funnel on in the page that just opened, then press "
-                    "Share on the internet again."
+                    "Turn Funnel on in the page that just opened, then leave "
+                    "and go online again."
                 )
                 return
         else:
             box.setStandardButtons(QMessageBox.StandardButton.Close)
             box.exec()
 
-        self._append("error", "Could not publish the session.")
+        # Not an error: the session is up, and reachable by everyone the DM
+        # can actually see. Only the far half did not happen.
+        self._append_system("Not published to the internet. Your network still works.")
 
     def _on_funnel_stopped(self, result) -> None:
-        self._funnel_button.setEnabled(True)
-        self._funnel_button.setText("Share on the internet")
         if result.ok:
             self._append_system("No longer shared on the internet.")
         else:
@@ -751,6 +750,11 @@ class TableWidget(QWidget):
         # code -- with a token, since we already own the campaign file.
         self._client.join_as_host(f"ws://127.0.0.1:{server.port}", server.local_token, name)
         self._update_state()
+        # Publishing is part of going online rather than a second decision --
+        # "my players can join" does not become a different wish when one of
+        # them is not on the sofa. It happens in the background, and failing
+        # does not take the session down with it.
+        self._start_funnel()
 
     def _join(self) -> None:
         dialog = JoinDialog(
@@ -779,10 +783,9 @@ class TableWidget(QWidget):
 
     def _leave(self) -> None:
         self._client.leave()
-        if self._funnel_button.isChecked():
+        if self._funnel_url:
             # Closing the session must also take it off the public internet,
             # or the tunnel outlives the thing it was pointing at.
-            self._funnel_button.setChecked(False)
             self._stop_funnel()
         if self._server is not None:
             self._server.stop()
@@ -843,7 +846,7 @@ class TableWidget(QWidget):
             if member.character and member.character != member.name:
                 label = f"{member.character}  ({member.name})"
             item = QListWidgetItem(
-                f"{label}  -  {'DM' if member.role == Role.DM.value else 'player'}"
+                f"{label}  -  {ROLE_LABELS.get(member.role, member.role)}"
             )
             item.setForeground(self._colours.get(member.role, self._colours["player"]))
             self._roster.addItem(item)
@@ -962,8 +965,6 @@ class TableWidget(QWidget):
         is_dm = self._ctx.role == Role.DM.value
         self._host_button.setEnabled(is_dm and not connected and not hosting)
         self._host_button.setVisible(is_dm)
-        self._funnel_button.setVisible(is_dm)
-        self._funnel_button.setEnabled(hosting)
         # Only the host can hand over what it is hosting.
         self._autopilot_button.setVisible(is_dm)
         self._autopilot_button.setEnabled(hosting)
@@ -972,6 +973,7 @@ class TableWidget(QWidget):
         self._agent_button.setVisible(is_dm)
         self._invite_button.setVisible(is_dm)
         self._invite_button.setEnabled(hosting)
+        self._join_button.setVisible(not is_dm)
         self._join_button.setEnabled(not connected and not hosting)
         self._leave_button.setEnabled(connected or hosting)
         self._entry.setEnabled(connected)

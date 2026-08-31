@@ -329,16 +329,14 @@ def table(ctx, qtbot):
     return widget
 
 
-def test_sharing_needs_a_session_to_share(table):
-    """Publishing nothing to the internet is not a useful state."""
-    table._funnel_button.setChecked(True)
+def test_publishing_without_a_session_does_nothing(table):
+    """Reachable only as a stray call now that hosting drives it."""
+    started = len(table._entries)
+
     table._start_funnel()
 
-    assert table._funnel_button.isChecked() is False
-    # An error is a diagnostic: it goes in the log, and marks the filter so
-    # it is not both hidden and unannounced.
-    assert any("Go online first" in text for _k, text, _w in table._entries)
-    assert table._show_chatter.styleSheet(), "the filter should be marked"
+    assert table._funnel_url == ""
+    assert len(table._entries) == started, "nothing to say about nothing"
 
 
 def test_a_published_address_is_shown_and_copyable(table, qtbot):
@@ -346,7 +344,6 @@ def test_a_published_address_is_shown_and_copyable(table, qtbot):
 
     assert table._funnel_url == "wss://desk.tail1a2b3.ts.net"
     assert "wss://desk.tail1a2b3.ts.net" in table._log.toPlainText()
-    assert table._funnel_button.text() == "Stop sharing"
 
     table._copy_invite()
     from PySide6.QtWidgets import QApplication
@@ -354,17 +351,25 @@ def test_a_published_address_is_shown_and_copyable(table, qtbot):
     assert QApplication.clipboard().text() == "wss://desk.tail1a2b3.ts.net"
 
 
-def test_a_refusal_leaves_the_button_off(table, monkeypatch):
+def test_a_refusal_leaves_the_session_up(table, monkeypatch):
+    """Failing to reach the wider internet is not failing to host.
+
+    Publishing is the half that depends on someone else's service being set
+    up. The table on your own network must not go down with it.
+    """
     from PySide6.QtWidgets import QMessageBox
 
     monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
-    table._funnel_button.setChecked(True)
 
     table._on_funnel_started(funnel.Result(False, message="something broke"))
 
-    assert table._funnel_button.isChecked() is False
     assert table._funnel_url == ""
-    assert any("Could not publish" in text for _k, text, _w in table._entries)
+    assert any(
+        "network still works" in text for _k, text, _w in table._entries
+    ), "the DM should be told the session is still up"
+    assert not any(
+        kind == "error" for kind, _t, _w in table._entries
+    ), "an unpublished session is not an error"
 
 
 def test_the_enable_link_is_offered_as_a_button(table, monkeypatch):
@@ -399,7 +404,6 @@ def test_stopping_clears_the_published_address(table):
     table._on_funnel_stopped(funnel.Result(True))
 
     assert table._funnel_url == ""
-    assert table._funnel_button.text() == "Share on the internet"
 
 
 # ----------------------------------------------- what reaches a player live

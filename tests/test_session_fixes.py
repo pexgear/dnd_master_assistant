@@ -331,3 +331,82 @@ def test_the_mark_is_repainted_when_the_theme_changes(table):
 
     assert table._show_chatter.styleSheet(), "the mark should survive a repaint"
     assert before
+
+
+# ------------------------------------------------------------------ the roster
+#
+# The agent was listed as a player. It answers *for* the DM, and the cause was
+# a two-way branch: "DM if role == dm else player" makes anything that is not
+# a DM into a player, which is right until a third role exists.
+
+
+def test_the_agent_is_not_listed_as_a_player(table):
+    from canon_keeper.panels.table.widget import ROLE_LABELS
+    from canon_keeper_protocol import Member, Role
+
+    table._on_roster([Member(id="1", name="Autopilot", role=Role.AGENT.value)])
+
+    shown = table._roster.item(0).text()
+    assert "player" not in shown
+    assert ROLE_LABELS[Role.AGENT.value] in shown
+
+
+def test_it_is_listed_as_the_dm_it_stands_in_for(table):
+    from canon_keeper_protocol import Member, Role
+
+    table._on_roster([Member(id="1", name="Autopilot", role=Role.AGENT.value)])
+
+    assert "DM" in table._roster.item(0).text()
+
+
+def test_but_you_can_still_tell_which_one_you_are_talking_to(table):
+    """A table deserves to know when it is being answered by a machine."""
+    from canon_keeper.panels.table.widget import ROLE_LABELS
+    from canon_keeper_protocol import Role
+
+    assert ROLE_LABELS[Role.AGENT.value] != ROLE_LABELS[Role.DM.value]
+
+
+def test_a_player_is_still_a_player(table):
+    from canon_keeper_protocol import Member, Role
+
+    table._on_roster([Member(id="2", name="Marco", role=Role.PLAYER.value)])
+    assert "player" in table._roster.item(0).text()
+
+
+def test_every_role_has_a_label():
+    """The bug was a role with no label falling into the wrong one."""
+    from canon_keeper.panels.table.widget import ROLE_LABELS
+    from canon_keeper_protocol import Role
+
+    for role in Role:
+        assert role.value in ROLE_LABELS, f"{role} would be mislabelled"
+
+
+# --------------------------------------------------------- the DM's own buttons
+
+
+def test_the_dm_is_not_offered_join(ctx, qtbot):
+    """Joining someone else's session from inside your own campaign is not a
+    thing you would ever want."""
+    widget = TableWidget(ctx)
+    qtbot.addWidget(widget)
+
+    assert widget._join_button.isVisible() is False
+
+
+def test_a_player_still_is(ctx, qtbot):
+    ctx.role = "player"
+    widget = TableWidget(ctx)
+    qtbot.addWidget(widget)
+    widget._update_state()
+
+    assert widget._join_button.isVisibleTo(widget) is True
+
+
+def test_there_is_no_separate_share_button(ctx, qtbot):
+    """Going online and being reachable are the same wish."""
+    widget = TableWidget(ctx)
+    qtbot.addWidget(widget)
+
+    assert not hasattr(widget, "_funnel_button")

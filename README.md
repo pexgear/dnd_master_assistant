@@ -97,8 +97,14 @@ chooser comes back on its own rather than failing a login you never saw.
 
 ## Playing together (LAN)
 
-Open your campaign and press **Go online** in the Table panel. Players open
-Canon Keeper, pick your session from the list, and log in.
+Open your campaign and press **Go online** in the Table panel. That hosts the
+session on your network *and* publishes it, so players can join whether they are
+in the room or not. Players open Canon Keeper, pick your session from the list,
+or paste the address you send them.
+
+If publishing is not set up, you are told and the session stays up on your
+network regardless -- failing to reach the wider internet is not failing to
+host.
 
 Before anyone can join you need to give them a login -- **Table ▸ Players...**:
 a username, a password, and the character they play. Chat then shows the
@@ -165,9 +171,11 @@ host. Say yes, or nobody can connect.
 
 ### Playing over the internet
 
-Press **Share on the internet** while hosting. That publishes the session
-through [Tailscale Funnel](https://tailscale.com/kb/1223/funnel) and gives you an
-address like `wss://your-machine.tailXXXX.ts.net` to send your players.
+**Go online** publishes the session through
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) and gives you an
+address like `wss://your-machine.tailXXXX.ts.net` to send your players. It is
+not a separate button: hosting for the people in the room and for the one who
+could not make it is the same wish.
 
 It solves three things at once:
 
@@ -189,8 +197,8 @@ because the `tailscale` command itself does something unhelpful here: it prints
 the instructions and then sits there waiting for you to act, looking like a
 hang.
 
-Sharing stops when you press the button again, when you leave the session, or
-when you close the app, so the tunnel never outlives the game.
+Sharing stops when you leave the session or close the app, so the tunnel never
+outlives the game.
 
 **Copy invite** gives you the right address to send either way: the public one
 when you are sharing, your LAN address otherwise.
@@ -198,6 +206,25 @@ when you are sharing, your LAN address otherwise.
 If you would rather not use a tunnel, the alternatives are unchanged: forward a
 port on your router (but then the traffic is unencrypted), or run
 `canonkeeper-server` on a machine that already has a public address.
+
+## One-shots
+
+**Start a one-shot** in the chooser builds a campaign from a template: the
+characters, places, facts and logins are already in it, and it is the same every
+time. Good for an evening that begins somewhere specific, and for trying the app
+without typing a world in first.
+
+| | |
+|---|---|
+| **The Last Coach** | An evening for three. The last coach before the pass closes, and someone on it is being hunted. |
+| **Test Combat** | Initiative on the first line. Three characters, four goblins, one room. |
+| **Test Table** | A world with something in it, for exercising sharing, sheets and autopilot. |
+
+What you get is an ordinary campaign — the only difference is that it remembers
+which template it came from, which is what lets **File ▸ Start Again from the
+Beginning** put it back. **File ▸ Storyline…** holds the beats and where it
+ends. **File ▸ Keep This One** drops the connection and it becomes a campaign of
+your own.
 
 ## Naming the panels
 

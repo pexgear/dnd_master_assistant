@@ -1,0 +1,178 @@
+{
+  "id": "test-combat",
+  "name": "Test Combat",
+  "for_testing": true,
+  "summary": "Initiative on the first line. Three characters, four goblins, one room. Ends when the fight does.",
+  "about": "A fight and nothing else, for trying hit points, conditions, dice and the approval queue without playing an evening first.\n\nThe party are already in the room and already seen. There is no lead-up and no aftermath: it starts on initiative and ends when one side is down.\n\nLogins: marco / elsa / dana, password 'goblin-teeth'. The DM login is 'gm' with 'run-the-game'.\n\nThe goblins are shared with the party deliberately, so players can watch their hit points fall.",
+
+  "entities": [
+    {
+      "key": "elara",
+      "kind": "pc",
+      "name": "Elara Nightwind",
+      "summary": "Wizard. Two spells and no armour.",
+      "data": {
+        "status": "well",
+        "hp": 8, "max_hp": 8,
+        "conditions": "",
+        "party_knows": "The wizard.",
+        "sheet": {
+          "schema": 1,
+          "species": "Elf", "class": "Wizard", "level": 2,
+          "abilities": {"str": 8, "dex": 14, "con": 12, "int": 16, "wis": 13, "cha": 10},
+          "hp": 8, "max_hp": 12,
+          "skills": ["Arcana", "Investigation"],
+          "spells": ["Magic Missile", "Shield", "Burning Hands"],
+          "prepared": ["Magic Missile", "Shield"]
+        }
+      }
+    },
+    {
+      "key": "brok",
+      "kind": "pc",
+      "name": "Brok Ironfoot",
+      "summary": "Fighter. In front, as usual.",
+      "data": {
+        "status": "wounded",
+        "hp": 9, "max_hp": 20,
+        "conditions": "",
+        "party_knows": "The one holding the line.",
+        "sheet": {
+          "schema": 1,
+          "species": "Dwarf", "class": "Fighter", "level": 2,
+          "abilities": {"str": 16, "dex": 12, "con": 15, "int": 8, "wis": 12, "cha": 10},
+          "hp": 9, "max_hp": 20,
+          "skills": ["Athletics", "Perception"],
+          "equipment": ["Chain mail", "Shield", "Battleaxe"]
+        }
+      }
+    },
+    {
+      "key": "sable",
+      "kind": "pc",
+      "name": "Sable",
+      "summary": "Rogue. Behind the goblins already.",
+      "data": {
+        "status": "well",
+        "hp": 14, "max_hp": 14,
+        "conditions": "",
+        "party_knows": "Somewhere behind you.",
+        "sheet": {
+          "schema": 1,
+          "species": "Halfling", "class": "Rogue", "level": 2,
+          "abilities": {"str": 10, "dex": 16, "con": 12, "int": 12, "wis": 13, "cha": 14},
+          "hp": 14, "max_hp": 14,
+          "skills": ["Stealth", "Sleight of Hand", "Acrobatics"],
+          "equipment": ["Leather armour", "Shortsword", "Shortbow"]
+        }
+      }
+    },
+    {
+      "key": "boss",
+      "kind": "npc",
+      "name": "Yeemik",
+      "summary": "Goblin boss. Will bargain the moment it is losing.",
+      "data": {
+        "status": "well",
+        "hp": 12, "max_hp": 12,
+        "conditions": "",
+        "voice": "shrill, wheedling",
+        "motive": "survive, and be in charge of whoever is left",
+        "secrets": "Will offer to sell out the others at half health.",
+        "party_knows": "The one shouting at the others."
+      }
+    },
+    {
+      "key": "goblin-a",
+      "kind": "npc",
+      "name": "Goblin with the bow",
+      "summary": "On the ledge, out of reach.",
+      "data": {
+        "status": "well",
+        "hp": 7, "max_hp": 7,
+        "conditions": "",
+        "motive": "stay on the ledge",
+        "party_knows": "Up on the ledge with a bow."
+      }
+    },
+    {
+      "key": "goblin-b",
+      "kind": "npc",
+      "name": "Goblin with the notched sword",
+      "summary": "Between the party and the door.",
+      "data": {
+        "status": "well",
+        "hp": 7, "max_hp": 7,
+        "conditions": "",
+        "party_knows": "In the doorway."
+      }
+    },
+    {
+      "key": "goblin-c",
+      "kind": "npc",
+      "name": "Goblin in the rubbish",
+      "summary": "Hiding, badly.",
+      "data": {
+        "status": "well",
+        "hp": 5, "max_hp": 7,
+        "conditions": "prone",
+        "secrets": "Will run at the first death.",
+        "party_knows": "Something moved in the rubbish."
+      }
+    },
+    {
+      "key": "cave",
+      "kind": "location",
+      "name": "The Cave Mouth",
+      "summary": "Twenty feet across, a stream down the middle, a ledge on the left.",
+      "data": {
+        "place_type": "room",
+        "shared_notes": "Wet stone, a stream you could slip in, and a ledge about ten feet up on the left."
+      }
+    }
+  ],
+
+  "facts": [
+    {"subject": "boss", "predicate": "will bargain", "object": "once it is down to half"},
+    {"subject": "goblin-a", "predicate": "has cover", "object": "on the ledge"},
+    {"subject": "goblin-c", "predicate": "will flee", "object": "when the first goblin dies"},
+    {"subject": "cave", "predicate": "the stream", "object": "is difficult ground and knocks you prone on a failed save"}
+  ],
+
+  "accounts": [
+    {"username": "gm", "password": "run-the-game", "role": "dm", "display_name": "The DM"},
+    {"username": "marco", "password": "goblin-teeth", "display_name": "Marco", "plays": "elara"},
+    {"username": "elsa", "password": "goblin-teeth", "display_name": "Elsa", "plays": "brok"},
+    {"username": "dana", "password": "goblin-teeth", "display_name": "Dana", "plays": "sable"}
+  ],
+
+  "shares": [
+    {"entity": "cave"},
+    {"entity": "boss"},
+    {"entity": "goblin-a"},
+    {"entity": "goblin-b"},
+    {"entity": "goblin-c"}
+  ],
+
+  "storyline": [
+    {
+      "id": "initiative",
+      "title": "Roll initiative",
+      "read_aloud": "The bow comes up on the ledge before anyone has spoken. Yeemik is already shouting. Roll initiative.",
+      "done_when": "Everyone has an initiative and the first turn is taken."
+    },
+    {
+      "id": "the-fight",
+      "title": "The fight",
+      "read_aloud": "The stream is slick, the ledge is ten feet up, and the one in the rubbish has not moved yet.",
+      "done_when": "Two goblins are down, or Yeemik is at half and starts bargaining."
+    },
+    {
+      "id": "over",
+      "title": "It is over",
+      "read_aloud": "Whatever is left of them is running, dead, or talking.",
+      "done_when": "No goblin is still fighting. That is the end -- there is no aftermath in this one.",
+      "ends_it": true
+    }
+  ]
+}

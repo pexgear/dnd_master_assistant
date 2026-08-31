@@ -39,6 +39,7 @@ from canon_keeper.net import discovery
 
 LOCAL_TAB = 0
 ONLINE_TAB = 1
+TEMPLATE_TAB = 2
 
 _DATA_ROLE = 256
 
@@ -142,6 +143,7 @@ class CampaignDialog(QDialog):
         self._template_list.currentItemChanged.connect(
             lambda *_a: self._describe_template()
         )
+        self._template_list.itemDoubleClicked.connect(lambda _i: self._accept())
         layout.addWidget(self._template_list, 1)
 
         self._template_about = QLabel("")
@@ -205,7 +207,11 @@ class CampaignDialog(QDialog):
             QMessageBox.warning(self, "Could not start it", str(exc))
             return
 
-        self._launch = Launch(kind="local", path=str(campaign.path))
+        # A Path, like the local tab produces -- app.main compares these, and a
+        # string that looks the same is not the same.
+        self._launch = Launch(
+            kind="local", path=campaign.path, name=campaign.name
+        )
         self.accept()
 
     def _sync_local_autostart(self) -> None:
@@ -266,6 +272,7 @@ class CampaignDialog(QDialog):
 
         self._remote_list = QListWidget()
         self._remote_list.itemSelectionChanged.connect(self._use_selected_remote)
+        self._remote_list.itemDoubleClicked.connect(lambda _i: self._accept())
         layout.addWidget(self._remote_list, 1)
 
         form = QFormLayout()
@@ -359,10 +366,16 @@ class CampaignDialog(QDialog):
 
     def _update_buttons(self) -> None:
         open_button = self._buttons.button(QDialogButtonBox.StandardButton.Open)
-        online = self._tabs.currentIndex() == ONLINE_TAB
-        open_button.setText("Join" if online else "Open")
+        open_button.setText(
+            {ONLINE_TAB: "Join", TEMPLATE_TAB: "Start"}.get(
+                self._tabs.currentIndex(), "Open"
+            )
+        )
 
     def _accept(self) -> None:
+        if self._tabs.currentIndex() == TEMPLATE_TAB:
+            self._start_template()
+            return
         if self._tabs.currentIndex() == ONLINE_TAB:
             url = self._url.text().strip()
             username = self._username.text().strip()

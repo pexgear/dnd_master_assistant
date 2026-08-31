@@ -307,3 +307,98 @@ def test_an_ordinary_campaign_has_no_source(tmp_path):
     conn.close()
 
     assert build.source_of(path) == ""
+
+
+# ------------------------------------------------------------------ the chooser
+
+
+@pytest.fixture
+def chooser(qtbot):
+    from canon_keeper.shell.startup import CampaignDialog
+
+    dialog = CampaignDialog()
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+def test_the_chooser_offers_the_one_shots(chooser):
+    from canon_keeper.shell.startup import TEMPLATE_TAB
+
+    chooser._tabs.setCurrentIndex(TEMPLATE_TAB)
+    offered = {
+        chooser._template_list.item(row).data(256)
+        for row in range(chooser._template_list.count())
+    }
+
+    assert {"the-last-coach", "test-combat", "test-table"} <= offered
+
+
+def test_the_button_says_start_on_that_tab(chooser):
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from canon_keeper.shell.startup import LOCAL_TAB, ONLINE_TAB, TEMPLATE_TAB
+
+    button = chooser._buttons.button(QDialogButtonBox.StandardButton.Open)
+
+    chooser._tabs.setCurrentIndex(LOCAL_TAB)
+    assert button.text() == "Open"
+    chooser._tabs.setCurrentIndex(ONLINE_TAB)
+    assert button.text() == "Join"
+    chooser._tabs.setCurrentIndex(TEMPLATE_TAB)
+    assert button.text() == "Start"
+
+
+def test_the_button_starts_a_one_shot_rather_than_opening_a_campaign(
+    chooser, monkeypatch
+):
+    """The tab was added after _accept was written, and fell through to the
+    local branch -- so the Open button tried to open whatever was selected on
+    another tab."""
+    from canon_keeper.shell.startup import TEMPLATE_TAB
+
+    started: list = []
+    monkeypatch.setattr(chooser, "_start_template", lambda: started.append(True))
+    chooser._tabs.setCurrentIndex(TEMPLATE_TAB)
+
+    chooser._accept()
+
+    assert started == [True]
+
+
+@pytest.mark.parametrize(
+    "which,tab",
+    [("_local_list", 0), ("_remote_list", 1), ("_template_list", 2)],
+)
+def test_every_list_opens_on_a_double_click(chooser, monkeypatch, which, tab):
+    """Picking and pressing is one gesture; double-clicking is the other."""
+    accepted: list = []
+    monkeypatch.setattr(chooser, "_accept", lambda: accepted.append(True))
+    chooser._tabs.setCurrentIndex(tab)
+    widget = getattr(chooser, which)
+
+    from PySide6.QtWidgets import QListWidgetItem
+
+    item = QListWidgetItem("something")
+    widget.addItem(item)
+    widget.itemDoubleClicked.emit(item)
+
+    assert accepted == [True], f"{which} ignores a double click"
+
+
+def test_a_started_one_shot_hands_back_a_path(chooser, monkeypatch, tmp_path):
+    """app.main compares these against saved paths; a string is not a Path."""
+    from pathlib import Path
+
+    from canon_keeper import campaigns as campaigns_module
+    from canon_keeper.shell.startup import TEMPLATE_TAB
+    from PySide6.QtWidgets import QInputDialog
+
+    made = campaigns_module.LocalCampaign(tmp_path / "run.sqlite3", "A Run", 0.0)
+    monkeypatch.setattr(build, "start", lambda _t, _n: made)
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("A Run", True)))
+    chooser._tabs.setCurrentIndex(TEMPLATE_TAB)
+
+    chooser._start_template()
+
+    assert isinstance(chooser.launch().path, Path)
+    assert chooser.launch().name == "A Run"
