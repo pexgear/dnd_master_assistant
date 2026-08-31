@@ -45,7 +45,11 @@ class SessionClient(QObject):
     failed = Signal(str)  # human-readable, safe to show
     welcomed = Signal(object)  # Member (you)
     roster_changed = Signal(list)  # list[Member]
-    said = Signal(object, str)  # (Member, text)
+    #: (Member, text, aside). ``aside`` is a DM speaking while autopilot is on:
+    #: it reached the back room and not the party, and their own screen has to
+    #: say so -- a line that looks public and was not is worse than one held
+    #: back.
+    said = Signal(object, str, bool)
     rolled = Signal(object, dict)  # (Member, roll payload)
     #: (text, kind) -- see SystemKind. Chatter can be hidden; a notice is
     #: addressed to the person reading it and must not be.
@@ -71,6 +75,13 @@ class SessionClient(QObject):
     spend_changed = Signal(dict)
     #: What was said before we arrived, oldest first.
     history_received = Signal(list)
+    #: The fight, as the host filtered it for us. Empty when there is none.
+    encounter_received = Signal(dict)
+    #: A turn put to us: what the agent worked out we meant, waiting on yes.
+    #: Sent to the player whose character it is, and to the DM to watch.
+    action_proposed = Signal(dict)
+    #: (id) -- that turn is no longer waiting: answered, or overtaken.
+    action_withdrawn = Signal(str)
 
     def __init__(self, parent: QObject | None = None, state: SharedState | None = None) -> None:
         super().__init__(parent)
@@ -210,6 +221,29 @@ class SessionClient(QObject):
         """
         return self._send(MessageType.EDIT, id=entity_id, changes=changes)
 
+    def send_move(self, combatant_id: int, x: int | None, y: int | None) -> bool:
+        """Ask the host to move a token. ``None, None`` takes it off the map.
+
+        A request like any other: the host decides whether this login may move
+        anything, and the map only changes when the answer comes back.
+        """
+        return self._send(MessageType.MOVE, combatant=combatant_id, x=x, y=y)
+
+    def send_answer(self, action_id: str, accept: bool, note: str = "") -> bool:
+        """Accept a turn that was put to us, or refuse it and say what instead."""
+        return self._send(
+            MessageType.ACTED, id=action_id, accept=bool(accept), note=note
+        )
+
+    def send_turn(self, action: str) -> bool:
+        """Start the fight, pass the turn, or end it. ``begin``/``next``/``end``."""
+        return self._send(MessageType.TURN, action=action)
+
+    def send_initiative(self, combatant_id: int, value: int | None) -> bool:
+        return self._send(
+            MessageType.INITIATIVE, combatant=combatant_id, value=value
+        )
+
     def send_decision(self, proposal_id: int, approve: bool, note: str = "") -> bool:
         """The DM answering a request, with an optional reason for refusing."""
         return self._send(
@@ -329,6 +363,18 @@ class SessionClient(QObject):
         elif message.type == MessageType.SPEND:
             self.spend_changed.emit(dict(message.payload))
 
+        elif message.type == MessageType.ENCOUNTER:
+            encounter = message.get("encounter")
+            encounter = encounter if isinstance(encounter, dict) else {}
+            self.state.set_encounter(encounter or None)
+            self.encounter_received.emit(encounter)
+
+        elif message.type == MessageType.ACTION:
+            self.action_proposed.emit(dict(message.payload))
+
+        elif message.type == MessageType.ACTION_GONE:
+            self.action_withdrawn.emit(str(message.get("id", "")))
+
         elif message.type == MessageType.FACTS:
             facts = message.get("facts")
             self.facts_received.emit(facts if isinstance(facts, list) else [])
@@ -362,7 +408,9 @@ class SessionClient(QObject):
 
         elif message.type == MessageType.SAID:
             self.said.emit(
-                Member.from_dict(message.get("member", {})), str(message.get("text", ""))
+                Member.from_dict(message.get("member", {})),
+                str(message.get("text", "")),
+                bool(message.get("aside")),
             )
 
         elif message.type == MessageType.ROLLED:

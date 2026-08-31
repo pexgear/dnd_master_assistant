@@ -25,6 +25,7 @@ from canon_keeper_protocol.auth import (
     verify,
 )
 from canon_keeper_protocol.dice import DiceError, Roll, roll
+from canon_keeper_protocol import grid
 from canon_keeper_protocol.messages import (
     CODE_LENGTH,
     MAX_CHAT_LENGTH,
@@ -70,6 +71,7 @@ __all__ = [
     "derive_verifier",
     "encode",
     "explain",
+    "grid",
     "new_join_code",
     "new_member_id",
     "normalise_code",

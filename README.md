@@ -11,14 +11,20 @@ Runs on Windows, macOS and Linux. Your data is a single SQLite file you own.
 
 ## Status
 
-Early, but usable at a table. The plugin shell with Characters, Cities and
-Transcript panels; local speech-to-text; and LAN sessions with logins, shared
-chat and dice, and role-filtered sharing.
+Early, but usable at a table. The plugin shell with Characters, Cities, Combat
+and Transcript panels; local speech-to-text; one-shots that start the same way
+every time; and LAN sessions with logins, shared chat and dice, and
+role-filtered sharing.
+
+**Combat** is an initiative order and a shared grid your players watch: you
+place and move everyone, and they see exactly the creatures you have shared.
 
 **Autopilot** hands the table to an agent when you want it, and takes it back
-when you press the button again. An MCP server lets a player say what they mean
-instead of typing it. Both are optional and both need a key you supply — the app
-itself still runs with no key and no internet.
+when you press the button again — and while it has the table it can run a fight
+on that grid, and turn "I get behind the orc and hit it with my axe" into a
+turn the player confirms before anything moves. An MCP server lets a player say
+what they mean instead of typing it. All of it is optional and needs a key you
+supply — the app itself still runs with no key and no internet.
 
 ## Install
 
@@ -121,6 +127,17 @@ Dice are rolled **on the host**, never on the client that asked. `/roll 2d6+3`,
 `/roll 4d6kh3` (keep highest three), `/roll 2d20kl1` (disadvantage), or the quick
 buttons. `/r` works too.
 
+**Rolls you can click.** When the DM writes *"make a DC 14 Perception check"*,
+those words become a link in the chat. Clicking one opens a die that already
+knows what your character adds — proficiency included — and tells you whether
+you beat the DC. Skill checks, saving throws, ability checks, initiative and
+plain dice notation all count. It appears for players who have a character, on
+lines from the DM or from autopilot standing in for them.
+
+The die tumbles while the request is with the host and stops on what the host
+actually rolled. If nothing comes back it says so, rather than settling on a
+number your own machine invented.
+
 ### What players see
 
 Every panel works for both roles, but a player's copy is built from what the
@@ -138,9 +155,13 @@ host sent, and the host sends only what you shared.
 - Players own their character sheet: hit points, conditions, inventory, their
   own notes. They cannot touch anyone else's, and the host enforces that rather
   than trusting the client.
+- The **Combat** map follows the same rule. A player is sent a token only for a
+  creature you have shared, so the ambush on the map is not on theirs.
 - The Transcript stays yours alone.
 
 Take a share back and it disappears from their screen, rather than going stale.
+
+Players do not move anything. You move it, and their map follows.
 
 ### Passwords
 
@@ -279,6 +300,31 @@ stay in your books.
 **Cities & Places** — region, city, district, building, room. Characters are
 parented to a place, so every location knows who is standing in it.
 
+**Combat** — an initiative order and a grid, side by side. **New fight** makes
+one straight away; **Add…** puts characters and NPCs into it; drag a name out of
+the order and onto the map to place them, and drag a token to move it. **Roll
+initiative** rolls for everyone and adds their Dexterity where there is a sheet
+to read it from. **Start**, **Next turn** and **End fight** keep the round.
+
+**Ctrl-click a square** to put something in the way — a rock, a pillar, an
+overturned cart. Nobody can stand there, and it is what a creature gets behind
+for cover. The **+ and −** buttons on the edges of the map push the walls in
+and out a row or a column at a time.
+
+Squares are numbered from the middle: **0,0 is the centre**, x to the right and
+y downwards, so "the one at minus three, two" is a square everybody can find —
+and it is still that square after the map grows.
+
+Someone off the map is still in the fight — the one who fled down the corridor,
+or has not come through the door yet — so *off the map* and *out of the fight*
+are two different right-click actions.
+
+Your players see the fight as it happens and cannot touch it. They see exactly
+the creatures you have **shared** with them: putting a monster on the map does
+not reveal it, so you can lay an ambush out in front of them. Tokens the party
+cannot see are drawn dotted on your map, and right-clicking one offers to share
+it.
+
 **Transcript** — press **F9** (or the Record button), narrate a beat, press it
 again. The clip is transcribed locally and appears on screen. You can also just
 type a line instead.
@@ -383,6 +429,46 @@ The design is worth stating plainly, because it is what makes handing over safe:
   like a player's app, even when the app started it for you. Convenience changed
   who types the command, not what the agent can reach.
 - **It never rolls.** Dice are the host's, so it asks for a roll like anyone else.
+
+### What it can do
+
+Autopilot is not only a voice. While the switch is on it can put a fight on the
+shared map — start it, place everyone where the scene it just described put
+them, add the rocks and pillars it mentioned, move monsters, and pass the turn.
+Everything goes over the wire and through the same checks your own buttons go
+through, so it cannot build a fight the app could not have built itself, and
+the moment you press the switch it can do none of it.
+
+Start it with `--talk-only` if you would rather it kept its hands off the map.
+
+**While autopilot is on, what you type does not reach the party.** There is one
+voice at the table and it is the agent's; two DMs saying different things is
+worse than either. Your line goes to the agent instead — marked *(to autopilot)*
+on your own screen — and it works your direction into the scene in its own
+words, without repeating it back or letting on that anybody said anything. To
+speak to the party yourself, press the switch.
+
+### Players taking their turn
+
+When it is your character's turn the chat says so. Say what you want in plain
+words — *"I get behind the orc and hit it with my axe"* — and autopilot works
+out what that is in rules and hands it back to you:
+
+> **Move to 0,-1 and attack Yeemik with a battleaxe.**  [Do it] [Say more…] [Refuse]
+
+The map shows it while you decide: a dotted line to where you would end up, a
+ghost of your token there, and a sword over whoever you would be hitting. The
+chat box waits — **Do it**, **Say more…**, or **Refuse** — because a question
+about what your character is about to do, left open while everyone chats, is a
+question nobody gets back to. **Say more…** unlocks the box for one message, and
+what comes back is the same turn, changed.
+
+Nothing happens until you accept. Then the host moves you and rolls the attack:
+the d20, your bonus off your sheet, the target's armour class, and the damage.
+Melee reaches one square, diagonals included.
+
+It is deliberately the simple case — a weapon on your sheet, one attack, no
+spells. Everything else is still a DM's ruling, which is where it belongs.
 - **Autopilot is never remembered.** Opening a campaign to find a machine already
   running your table is not a state to arrive in by accident.
 - **It answers players.** While you are at the table, your own lines are yours

@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
-    QTextEdit,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -46,7 +46,9 @@ from canon_keeper.panels.table.agent_settings import (
     AgentSettingsDialog,
 )
 from canon_keeper.panels.table.approvals import ApprovalsDialog
+from canon_keeper.panels.table import rolls
 from canon_keeper.panels.table.dialogs import AccountsDialog, HostDialog, JoinDialog
+from canon_keeper.panels.table.dice_overlay import RollDialog
 from canon_keeper.plugin import AppContext
 
 class _FunnelSignals(QObject):
@@ -100,6 +102,9 @@ class TableWidget(QWidget):
         #: Set while relaying a player's edit to the DM's own panels, so the
         #: refresh does not look like a change *by* the DM.
         self._relaying_player_edit = False
+        #: The same, for a token an agent moved: the host has already sent that
+        #: out, so telling our own panels must not send it again.
+        self._relaying_agent_move = False
         #: The agent we started, if we started one. An agent someone else
         #: is running is not ours to stop.
         self._agent_process = None
@@ -107,6 +112,19 @@ class TableWidget(QWidget):
         self._busy: set[str] = set()
         #: Every line, shown or not, so the filter can be turned back on.
         self._entries: list[tuple[str, str, float]] = []
+        #: Rolls the DM has asked for, by the token in their link. Rebuilt
+        #: whenever the log is, so a filtered-out line leaves no live link.
+        self._roll_prompts: dict[int, object] = {}
+        #: The die currently open, so the host's answer can land in it.
+        self._roll_dialog: RollDialog | None = None
+        #: SRD rules, for working out what a character adds to a roll. Built on
+        #: first use: most sessions never need it.
+        self._content = None
+        #: The turn we have already announced as ours, so it is announced once.
+        self._up_now = None
+        #: A turn worked out for us and waiting on our word. While it is set,
+        #: the entry answers it instead of saying something new.
+        self._offered: dict | None = None
         # An agent that dies a millisecond after starting used to do so in
         # silence, leaving the button on and the table waiting for a machine
         # that was not there.
@@ -147,6 +165,14 @@ class TableWidget(QWidget):
         # A refusal has to reach the panel showing the character, not just the
         # chat: their screen still has the change they asked for on it.
         self._client.edit_refused.connect(ctx.bus.edit_refused)
+        # A turn worked out for us. The Combat panel draws it and asks; this
+        # panel only carries it, because the socket lives here.
+        self._client.action_proposed.connect(ctx.bus.action_proposed)
+        self._client.action_withdrawn.connect(ctx.bus.action_withdrawn)
+        self._client.action_proposed.connect(self._on_turn_offered)
+        self._client.action_withdrawn.connect(self._on_turn_withdrawn)
+        self._client.encounter_received.connect(self._on_encounter_received)
+        ctx.bus.action_answered.connect(self._client.send_answer)
 
         self._build_ui()
         # A share changed while hosting: push it to whoever may now see it.
@@ -161,7 +187,18 @@ class TableWidget(QWidget):
         # The canon log, for DM-role connections only -- an agent on autopilot
         # answers from it, so a fact committed mid-scene has to reach it.
         ctx.bus.fact_committed.connect(self._on_fact_committed)
+        # The DM moved a token, or the turn passed. Everyone at the table is
+        # looking at the same fight, so it goes out immediately. A player's map
+        # does not come through here at all -- it reads ctx.shared, which the
+        # client fills -- so there is no path from receiving a fight back to
+        # publishing one.
+        ctx.bus.encounter_changed.connect(self._on_encounter_changed)
         ctx.bus.theme_changed.connect(lambda _dark: self._refresh_colours())
+        # Our own character arriving is what turns "Perception check" from text
+        # into something clickable, and it arrives after the first lines do.
+        self._had_character = False
+        if ctx.shared is not None:
+            ctx.shared.changed.connect(self._on_shared_changed)
         self._refresh_colours()
         self._update_state()
 
@@ -254,8 +291,14 @@ class TableWidget(QWidget):
         outer.addWidget(self._status)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._log = QTextEdit()
+        # A browser rather than a plain edit, for one reason: the rolls the DM
+        # asks for are links in the text. Nothing here ever opens a real URL --
+        # setOpenLinks(False) makes every click come to us instead.
+        self._log = QTextBrowser()
         self._log.setReadOnly(True)
+        self._log.setOpenLinks(False)
+        self._log.setOpenExternalLinks(False)
+        self._log.anchorClicked.connect(self._on_anchor)
         splitter.addWidget(self._log)
 
         self._roster = QListWidget()
@@ -274,6 +317,40 @@ class TableWidget(QWidget):
             dice_row.addWidget(button)
         dice_row.addStretch(1)
         outer.addLayout(dice_row)
+
+        # A turn worked out for you, sitting exactly where Send is. It replaces
+        # sending rather than adding a second place to press yes: you said what
+        # you wanted here, so here is where you agree that is what you meant.
+        #
+        # And it holds the box until you answer. A question about what your
+        # character is about to do, left open while you carry on chatting, is a
+        # question nobody ever gets back to.
+        self._offer_bar = QWidget()
+        offer = QHBoxLayout(self._offer_bar)
+        offer.setContentsMargins(0, 0, 0, 0)
+        self._offer_label = QLabel("")
+        self._offer_label.setWordWrap(True)
+        offer.addWidget(self._offer_label, 1)
+
+        self._do_it = QPushButton("Do it")
+        self._do_it.setToolTip("Take this turn. The table's dice roll it.")
+        self._do_it.clicked.connect(self._accept_turn)
+        offer.addWidget(self._do_it)
+
+        self._say_more = QPushButton("Say more...")
+        self._say_more.setToolTip(
+            "Not quite. Type what you meant and it will come back changed."
+        )
+        self._say_more.clicked.connect(self._unlock_to_say_more)
+        offer.addWidget(self._say_more)
+
+        self._not_at_all = QPushButton("Refuse")
+        self._not_at_all.setToolTip("Do none of it")
+        self._not_at_all.clicked.connect(self._refuse_turn)
+        offer.addWidget(self._not_at_all)
+
+        self._offer_bar.setVisible(False)
+        outer.addWidget(self._offer_bar)
 
         entry = QHBoxLayout()
         self._entry = QLineEdit()
@@ -317,6 +394,9 @@ class TableWidget(QWidget):
             "dm": QColor("#7aa2f7" if dark else "#1a5fb4"),
             "player": QColor("#7fd1a0" if dark else "#1c7048"),
             "error": QColor("#ff6b6b" if dark else "#b00020"),
+            # Your turn. Loud on purpose: it is the one line that is asking you
+            # to do something right now.
+            "turn": QColor("#ffd166" if dark else "#9a6b00"),
         }
         # The agent speaks for the DM, so it reads as the DM -- a little paler,
         # since the roster already says which it is.
@@ -609,6 +689,54 @@ class TableWidget(QWidget):
         if self._server is not None and self._server.is_running:
             self._server.publish_facts()
 
+    def _on_encounter_received(self, fight: dict) -> None:
+        """Say so, once, when the turn comes round to your character.
+
+        A map three panels away has already said it, in a colour, on a token
+        the size of a fingernail. The chat is where people are looking, and
+        missing your turn is the one thing this app can actually prevent.
+        """
+        mine = self._own_character()
+        if not fight or mine is None:
+            self._up_now = None
+            return
+
+        turn = fight.get("turn")
+        acting = next(
+            (
+                c
+                for c in fight.get("combatants") or []
+                if c.get("id") == turn and c.get("entity") == mine.get("id")
+            ),
+            None,
+        )
+        if acting is None:
+            self._up_now = None
+            return
+        if self._up_now == turn:
+            return  # already said, and saying it twice is worse than not at all
+        self._up_now = turn
+        self._append(
+            "turn",
+            f"It is your turn -- {mine.get('name', 'you')}. Say what you do.",
+        )
+
+    def _on_encounter_changed(self) -> None:
+        if self._relaying_agent_move:
+            # The host has already sent this one out; publishing it a second
+            # time would be a frame to every player saying nothing new.
+            return
+        if self._server is not None and self._server.is_running:
+            self._server.publish_encounter()
+
+    def _on_agent_moved(self) -> None:
+        """A token moved on someone else's say-so. Tell the DM's own panels."""
+        self._relaying_agent_move = True
+        try:
+            self._ctx.bus.encounter_changed.emit()
+        finally:
+            self._relaying_agent_move = False
+
     def _on_player_edit_applied(self, entity_id: int) -> None:
         """Tell the DM's own panels to re-read what a player just changed."""
         self._relaying_player_edit = True
@@ -739,6 +867,7 @@ class TableWidget(QWidget):
         )
         server.failed.connect(self._on_failed)
         server.entity_applied.connect(self._on_player_edit_applied)
+        server.encounter_applied.connect(self._on_agent_moved)
         if not server.start(port):
             server.deleteLater()
             return
@@ -800,8 +929,77 @@ class TableWidget(QWidget):
             return
         if text.startswith("/"):
             self._command(text)
-        elif self._client.send_chat(text):
+            return
+        if self._client.send_chat(text):
             self._entry.clear()
+            # Saying more is one message. After it, the box waits for the
+            # answer again rather than leaving the turn half-open.
+            if self._offered is not None:
+                self._lock_for_the_offer()
+
+    # ------------------------------------------------------------- your turn
+    #
+    # A turn on offer holds the chat box. There are exactly three ways out --
+    # do it, say more, or refuse -- and no fourth one where you carry on
+    # chatting and never come back to it. Combat is the one part of an evening
+    # where everybody is waiting on one person, and the app should not be the
+    # reason that wait is longer.
+
+    def _on_turn_offered(self, action: dict) -> None:
+        """The agent has worked out what you meant. Ask, where Send is."""
+        if action.get("watching"):
+            # The DM's copy: they see what is on offer and do not answer it.
+            self._append("system", f"Offered: {action.get('text', '')}")
+            return
+        self._offered = action
+        self._offer_label.setText(f"<b>{action.get('text', 'Your turn.')}</b>")
+        self._lock_for_the_offer()
+
+    def _holding_for_an_answer(self) -> bool:
+        return self._offered is not None and self._offer_bar.isVisible()
+
+    def _lock_for_the_offer(self) -> None:
+        self._offer_bar.setVisible(True)
+        self._entry.setPlaceholderText(
+            "Do it, say more, or refuse -- it is your turn"
+        )
+        self._update_state()
+
+    def _unlock_to_say_more(self) -> None:
+        """Let them type one more thing. The offer stands until it is replaced.
+
+        The map keeps showing what was proposed while they explain, because the
+        thing being corrected is what they are looking at.
+        """
+        if self._offered is None:
+            return
+        self._offer_bar.setVisible(False)
+        self._entry.setPlaceholderText("What did you mean? It will come back changed.")
+        self._update_state()
+        self._entry.setFocus()
+
+    def _on_turn_withdrawn(self, action_id: str) -> None:
+        if self._offered is not None and self._offered.get("id") == action_id:
+            self._clear_offer()
+
+    def _clear_offer(self) -> None:
+        self._offered = None
+        self._offer_bar.setVisible(False)
+        self._entry.setPlaceholderText("Say something, or /roll 2d6+3")
+        self._update_state()
+
+    def _accept_turn(self) -> None:
+        if self._offered is None:
+            return
+        self._ctx.bus.action_answered.emit(self._offered["id"], True, "")
+        self._clear_offer()
+
+    def _refuse_turn(self) -> None:
+        """None of it. The turn is given back and the box is yours again."""
+        if self._offered is None:
+            return
+        self._ctx.bus.action_answered.emit(self._offered["id"], False, "")
+        self._clear_offer()
 
     def _command(self, text: str) -> None:
         head, _, rest = text[1:].partition(" ")
@@ -851,11 +1049,21 @@ class TableWidget(QWidget):
             item.setForeground(self._colours.get(member.role, self._colours["player"]))
             self._roster.addItem(item)
 
-    def _on_said(self, member: Member, text: str) -> None:
+    def _on_said(self, member: Member, text: str, aside: bool = False) -> None:
+        if aside:
+            # While autopilot is on there is one voice at the table and it is
+            # the agent's. This went to the agent, not the party, and saying so
+            # is the difference between directing and being ignored.
+            self._append(member.role, f"{member.label} (to autopilot): {text}")
+            return
         self._append(member.role, f"{member.label}: {text}")
 
     def _on_rolled(self, member: Member, payload: dict) -> None:
         self._append("roll", f"{member.label} rolled {payload.get('description', '')}")
+        # If we asked for this one, the die that is still tumbling stops here.
+        me = self._client.me
+        if self._roll_dialog is not None and me is not None and member.id == me.id:
+            self._roll_dialog.settle(payload)
 
     # ------------------------------------------------------------------ output
 
@@ -867,6 +1075,7 @@ class TableWidget(QWidget):
         """
         self._log.clear()
         self._entries.clear()
+        self._roll_prompts.clear()
         for entry in messages:
             if not isinstance(entry, dict):
                 continue
@@ -932,6 +1141,7 @@ class TableWidget(QWidget):
     def _redraw(self) -> None:
         """Rebuild the whole log, which is what makes the filter reversible."""
         self._log.clear()
+        self._roll_prompts.clear()
         for kind, text, when in self._entries:
             if not self._is_hidden(kind):
                 self._draw(kind, text, when)
@@ -944,15 +1154,128 @@ class TableWidget(QWidget):
         stamp.setForeground(self._colours["system"])
         body = QTextCharFormat()
         body.setForeground(self._colours.get(kind, self._colours["system"]))
-        if kind in ("roll", "error"):
+        if kind in ("roll", "error", "turn"):
             body.setFontWeight(600)
 
         if not self._log.document().isEmpty():
             cursor.insertBlock()
         moment = datetime.fromtimestamp(when) if when else datetime.now()
         cursor.insertText(f"{moment:%H:%M}  ", stamp)
-        cursor.insertText(text, body)
+        self._insert_body(cursor, kind, text, body)
         self._log.verticalScrollBar().setValue(self._log.verticalScrollBar().maximum())
+
+    # ---------------------------------------------------------- rolls in chat
+    #
+    # "Make a DC 14 Perception check" is an instruction, and every player then
+    # does the same arithmetic by hand. The words become a link, clicking it
+    # opens a die, and the die asks the host -- so the convenience is in the
+    # looking-up, never in the number.
+
+    #: Whose words are read for rolls. The DM's, and the agent's when it is
+    #: standing in for them. Not a player's: someone typing "stealth check" in
+    #: character is not asking the table to roll.
+    ASKS_FOR_ROLLS = (Role.DM.value, Role.AGENT.value)
+
+    def _insert_body(self, cursor, kind: str, text: str, body) -> None:
+        prompts = self._prompts_in(kind, text)
+        if not prompts:
+            cursor.insertText(text, body)
+            return
+
+        at = 0
+        for prompt in prompts:
+            if prompt.start > at:
+                cursor.insertText(text[at : prompt.start], body)
+            token = len(self._roll_prompts) + 1
+            self._roll_prompts[token] = prompt
+            cursor.insertText(
+                text[prompt.start : prompt.end], self._link_format(body, token)
+            )
+            at = prompt.end
+        cursor.insertText(text[at:], body)
+
+    def _prompts_in(self, kind: str, text: str) -> list:
+        """The rolls asked for in one line, if this reader can answer them.
+
+        No character, no links. A DM watching their own table has nothing to
+        roll with, and offering them a die for every prompt they wrote would be
+        noise on the one screen that is already busiest.
+        """
+        if kind not in self.ASKS_FOR_ROLLS:
+            return []
+        if self._own_character() is None:
+            return []
+        return rolls.find(text)
+
+    def _link_format(self, body, token: int) -> QTextCharFormat:
+        link = QTextCharFormat(body)
+        link.setAnchor(True)
+        link.setAnchorHref(f"roll:{token}")
+        link.setForeground(self._colours.get("roll", self._colours["system"]))
+        link.setFontUnderline(True)
+        link.setToolTip("Click to roll this")
+        return link
+
+    def _on_shared_changed(self) -> None:
+        """Gaining -- or losing -- a character changes what the log offers.
+
+        Lines already on screen were drawn before we knew, so the log is
+        rebuilt. Only on the change, not on every entity that arrives: a
+        snapshot of forty characters would otherwise redraw the log forty
+        times.
+        """
+        has_one = self._own_character() is not None
+        if has_one != self._had_character:
+            self._had_character = has_one
+            self._redraw()
+
+    def _own_character(self) -> dict | None:
+        """The character this app is playing, or None for a DM or a spectator."""
+        if self._ctx.shared is None:
+            return None
+        return self._ctx.shared.own_character()
+
+    def _on_anchor(self, url: QUrl) -> None:
+        if url.scheme() != "roll":
+            return
+        try:
+            token = int(url.path() or url.toString().split(":", 1)[1])
+        except (TypeError, ValueError):
+            return
+        prompt = self._roll_prompts.get(token)
+        if prompt is not None:
+            self._open_die(prompt)
+
+    def _open_die(self, prompt) -> None:
+        character = self._own_character() or {}
+        sheet = (character.get("data") or {}).get("sheet") or {}
+        bonus = rolls.bonus_for(prompt, sheet, self._rules_content())
+        notation = rolls.notation_for(prompt, bonus)
+
+        if prompt.kind == rolls.DICE:
+            note = f"{prompt.notation} as asked for."
+        elif bonus:
+            note = f"{character.get('name', 'You')} adds {bonus:+d}."
+        else:
+            note = (
+                f"{character.get('name', 'You')} has no bonus recorded for this, "
+                "so it is a plain d20."
+            )
+
+        dialog = RollDialog(prompt.label, notation, note, prompt.dc, self)
+        dialog.roll_requested.connect(self._roll)
+        self._roll_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            self._roll_dialog = None
+
+    def _rules_content(self):
+        if self._content is None:
+            from canon_keeper.content import Content
+
+            self._content = Content(self._ctx.repos.settings)
+        return self._content
 
     def _append_system(self, text: str, kind: str = "") -> None:
         """A line from the host. ``kind`` distinguishes chatter from a notice."""
@@ -976,7 +1299,9 @@ class TableWidget(QWidget):
         self._join_button.setVisible(not is_dm)
         self._join_button.setEnabled(not connected and not hosting)
         self._leave_button.setEnabled(connected or hosting)
-        self._entry.setEnabled(connected)
+        # Held while a turn is waiting on you: there are three ways to answer
+        # it and carrying on chatting is not one of them.
+        self._entry.setEnabled(connected and not self._holding_for_an_answer())
 
         if hosting and self._server is not None:
             if self._funnel_url:

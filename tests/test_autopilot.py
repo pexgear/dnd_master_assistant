@@ -187,7 +187,7 @@ def test_nobody_hears_what_the_agent_tried_to_say(qtbot, live):
     agent = _join(qtbot, live, "autopilot", "let-me-run-it")
     player = _join(qtbot, live, "marco", "goblin-teeth")
     heard: list[str] = []
-    player.said.connect(lambda _member, text: heard.append(text))
+    player.said.connect(lambda _member, text, _aside: heard.append(text))
     try:
         with qtbot.waitSignal(agent.failed, timeout=5000):
             agent.send_chat("You are all suddenly holding swords.")
@@ -208,8 +208,9 @@ def test_with_autopilot_on_the_agent_is_heard(qtbot, live):
         live.set_autopilot(True, by="Genna")
         with qtbot.waitSignal(player.said, timeout=5000) as blocker:
             agent.send_chat("The innkeeper looks up as you enter.")
-        member, text = blocker.args
+        member, text, aside = blocker.args
         assert text == "The innkeeper looks up as you enter."
+        assert aside is False, "an agent speaking is the table's line, not an aside"
         assert member.role == "agent", "the table should see who is answering"
     finally:
         agent.leave()

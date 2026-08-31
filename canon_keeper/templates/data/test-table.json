@@ -13,13 +13,26 @@
       "summary": "A wizard who reads too much.",
       "data": {
         "status": "well",
-        "hp": 8, "max_hp": 8,
+        "hp": 7, "max_hp": 7,
+        "conditions": "",
         "sheet": {
           "schema": 1,
-          "species": "Elf", "class": "Wizard", "level": 1,
+          "species": "elf", "subspecies": "high-elf",
+          "class_index": "wizard", "subclass": "",
+          "level": 1,
+          "background": "",
           "abilities": {"str": 8, "dex": 14, "con": 12, "int": 16, "wis": 13, "cha": 10},
-          "hp": 8, "max_hp": 8,
-          "skills": ["Arcana", "Investigation"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["arcana", "investigation"],
+          "languages": ["Common", "Elvish"],
+          "equipment": ["quarterstaff", "dagger"],
+          "spells_known": ["magic-missile", "shield", "burning-hands"],
+          "spells_prepared": ["magic-missile", "shield"],
+          "hp_rolled": [],
+          "hp_current": 7,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -30,13 +43,24 @@
       "summary": "A fighter who does not.",
       "data": {
         "status": "well",
-        "hp": 12, "max_hp": 12,
+        "hp": 13, "max_hp": 13,
+        "conditions": "",
         "sheet": {
           "schema": 1,
-          "species": "Dwarf", "class": "Fighter", "level": 1,
+          "species": "dwarf", "subspecies": "hill-dwarf",
+          "class_index": "fighter", "subclass": "",
+          "level": 1,
+          "background": "",
           "abilities": {"str": 16, "dex": 12, "con": 15, "int": 8, "wis": 12, "cha": 10},
-          "hp": 12, "max_hp": 12,
-          "skills": ["Athletics", "Perception"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["athletics", "perception"],
+          "languages": ["Common", "Dwarvish"],
+          "equipment": ["chain-mail", "shield", "battleaxe", "handaxe"],
+          "hp_rolled": [],
+          "hp_current": 13,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -48,12 +72,23 @@
       "data": {
         "status": "well",
         "hp": 9, "max_hp": 9,
+        "conditions": "",
         "sheet": {
           "schema": 1,
-          "species": "Halfling", "class": "Rogue", "level": 1,
+          "species": "halfling", "subspecies": "lightfoot-halfling",
+          "class_index": "rogue", "subclass": "",
+          "level": 1,
+          "background": "",
           "abilities": {"str": 10, "dex": 16, "con": 12, "int": 12, "wis": 13, "cha": 14},
-          "hp": 9, "max_hp": 9,
-          "skills": ["Stealth", "Sleight of Hand"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["stealth", "sleight-of-hand", "acrobatics", "perception"],
+          "languages": ["Common", "Halfling"],
+          "equipment": ["leather-armor", "shortsword", "shortbow", "dagger"],
+          "hp_rolled": [],
+          "hp_current": 9,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -64,10 +99,21 @@
       "summary": "Runs the inn. Nervous lately.",
       "data": {
         "status": "well",
+        "hp": 4, "max_hp": 4,
         "voice": "quick, apologetic",
         "motive": "keep the inn open",
         "secrets": "He is hiding a deserter in the cellar.",
-        "party_knows": "The innkeeper. Friendly enough."
+        "party_knows": "The innkeeper. Friendly enough.",
+        "sheet": {
+          "schema": 1,
+          "species": "human", "class_index": "", "level": 1,
+          "abilities": {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
+          "skill_proficiencies": ["insight", "persuasion"],
+          "equipment": ["club"],
+          "hp_current": 4,
+          "overrides": {"ac": 10, "hp_max": 4},
+          "player_notes": "Commoner, CR 0. Not a fighter and knows it."
+        }
       }
     },
     {
@@ -77,8 +123,20 @@
       "summary": "A goblin with a grievance.",
       "data": {
         "status": "well",
+        "hp": 7, "max_hp": 7,
+        "conditions": "",
         "motive": "revenge, ideally on someone else",
-        "secrets": "He knows the road is watched."
+        "secrets": "He knows the road is watched.",
+        "sheet": {
+          "schema": 1,
+          "species": "", "class_index": "", "level": 1,
+          "abilities": {"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8},
+          "skill_proficiencies": ["stealth"],
+          "equipment": ["scimitar", "shortbow", "leather-armor", "shield"],
+          "hp_current": 7,
+          "overrides": {"ac": 15, "hp_max": 7},
+          "player_notes": "Goblin, CR 1/4. Nimble Escape: disengages or hides as a bonus action."
+        }
       }
     },
     {

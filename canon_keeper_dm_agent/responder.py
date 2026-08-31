@@ -14,8 +14,13 @@ worse at a table rather than because it is tidier:
 
 - **Only one answer in flight.** Anything said while it is thinking joins the
   next turn instead of starting a competing one.
-- **The human wins.** If the DM says something, whatever was queued is dropped.
-  They answered; nobody needs it answered twice.
+- **While autopilot is on, everyone gets answered -- the DM included.** This
+  was once the other way round: a line from the DM dropped whatever was queued,
+  on the grounds that the human had answered it. At a real table that is wrong.
+  A DM with autopilot on who says "there is something behind the door" is
+  talking *to* the agent, and having their line swallowed makes autopilot look
+  broken. Taking the table back is the switch, which is instant and needs no
+  cooperation; a sentence is just a sentence.
 - **Nothing blocks the socket.** :meth:`heard` returns immediately, so the
   client keeps reading while the model is busy.
 """
@@ -32,13 +37,13 @@ log = logging.getLogger("canonkeeper.agent.responder")
 #: is worse than answering slowly.
 QUIET_FOR = 2.5
 
-#: Whose lines are worth answering. Not the DM's -- they are in the room, and
-#: not another agent's, which is a loop with a bill attached.
-ANSWERS_TO = ("player",)
-
-#: Roles whose speaking cancels a pending answer -- but only when somebody
-#: else was being answered. See :meth:`Responder.heard`.
-TAKES_OVER = ("dm",)
+#: Whose lines are worth answering. Everyone at the table, which while
+#: autopilot is on includes the human DM: they switched it on, and a line they
+#: type is addressed to the agent as much as to the room.
+#:
+#: Not another agent's, though. Two of these answering each other is a loop
+#: with a bill attached.
+ANSWERS_TO = ("player", "dm")
 
 
 class Responder:
@@ -75,21 +80,7 @@ class Responder:
 
     async def heard(self, session, member, text: str) -> None:
         """Note a line. Returns at once -- the answer happens on its own task."""
-        if member.role in TAKES_OVER:
-            if _players_present(session):
-                # The DM answered the player. Nobody needs it answered twice.
-                if self._pending or self._timer is not None:
-                    log.info(
-                        "the DM answered; dropping %d queued line(s)",
-                        len(self._pending),
-                    )
-                self._discard()
-                return
-            # Nobody else is here, so the DM *is* the table -- testing the
-            # agent, or running a scene solo. Refusing to answer the only
-            # person present is how autopilot looks broken.
-            log.debug("no players at the table; answering the DM")
-        elif member.role not in self._answers_to:
+        if member.role not in self._answers_to:
             return
         if not session.table.autopilot:
             log.debug("staying quiet: autopilot is off")
@@ -186,13 +177,6 @@ class Responder:
 #: first version cut at 200 and truncated a message precisely where it started
 #: explaining the fix.
 _MAX_TROUBLE = 600
-
-
-def _players_present(session) -> bool:
-    return any(
-        getattr(member, "role", "") == "player"
-        for member in getattr(session.table, "members", [])
-    )
 
 
 def _readable(exc: BaseException) -> str:

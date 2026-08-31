@@ -5,6 +5,111 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.5.0
+
+Combat: a map, an initiative order, and a way for a player to take their turn
+in plain words.
+
+**Everyone at a table needs this version.** The wire moved to 3, and a mixed
+table is refused at the door with a readable reason rather than half-working.
+Campaign files are upgraded when you open them, and nothing needs converting by
+hand.
+
+### Combat
+
+- **A new Combat panel**: an initiative order and a grid, side by side. **New
+  fight** makes one immediately -- no questions -- and **Add...** puts
+  characters and NPCs into it. Name it or resize it later, under **Fight...**,
+  if you ever want to.
+- **Drag someone out of the order and onto the map** to place them, or drag a
+  token from square to square to move it. **Roll initiative** rolls a d20 for
+  everyone and adds their Dexterity where there is a sheet to read it from;
+  double-click a row to set one by hand.
+- **Start**, **Next turn** and **End fight** keep the round. Taking whoever is
+  up out of the fight passes the turn on rather than dropping it, so nobody
+  gets a second go.
+- **Ctrl-click a square** to put something in the way -- a rock, a pillar, an
+  overturned cart. Nobody can stand there and anybody can hide behind it. The
+  **+ / −** buttons on the edges of the map push the walls in and out a row at
+  a time.
+- **Off the map is not out of the fight.** Someone who has fled, or has not
+  come through the door yet, keeps their place in the order. Right-click for
+  either.
+- **Squares are numbered from the middle.** 0,0 is the centre, x to the right
+  and y downwards, with rulers along two edges. "The one at minus three, two"
+  is a square everyone can find, and it is still that square after the map
+  grows.
+- **Players see the fight as it happens**, read-only, and see exactly the
+  creatures you have shared with them. Putting a monster on the map does *not*
+  reveal it, so you can lay an ambush out in front of them. Tokens the party
+  cannot see are drawn dotted on your map, and right-clicking one offers to
+  share it.
+- *Test Combat* opens on round one with everyone already placed, the terrain
+  laid out and the order already rolled -- the same fight every time.
+
+### Taking a turn
+
+- **The chat says when it is your turn.**
+- Say what you want in plain words -- *"I get behind the orc and hit it with my
+  axe"* -- and autopilot works out what that is in rules and hands it back:
+  *"Move to 0,-1 and attack Yeemik with a battleaxe."*
+- The map shows it while you decide: a dotted line to where you would end up, a
+  ghost of your token there, and a sword over whoever you would hit.
+- The chat box waits for **Do it**, **Say more...** or **Refuse**. **Say
+  more...** unlocks it for one message and what comes back is the same turn,
+  changed. Nothing touches your character until you accept -- then the host
+  moves you and rolls the attack, with your bonus off your sheet against the
+  target's armour class.
+- Weapon attacks only, and melee reaches one square. Spells, advantage and the
+  rest are still the DM's to rule on.
+
+### Autopilot
+
+- **It can run a fight.** Start one, place everyone where the scene it just
+  described put them, add the cover it mentioned, move monsters, pass the turn,
+  and put a player's turn to them. All of it goes over the wire through the
+  same checks your own buttons use, so it cannot build a fight the app could
+  not have built itself -- and none of it works with the switch off. Start the
+  agent with `--talk-only` to keep its hands off the map entirely.
+- **While autopilot is on, what you type no longer reaches the party.** There
+  is one voice at the table and it is the agent's. Your line goes to it instead
+  -- marked *(to autopilot)* on your own screen -- and it works your direction
+  into the scene in its own words, without repeating it back or letting on that
+  anybody said anything. Press the switch to speak to the party yourself.
+- **It answers you.** It used to drop whatever was queued the moment the DM
+  spoke, which is how autopilot came to look broken: you switched it on, said
+  something, and nothing ever happened.
+- **It reads more of the conversation**, with the pauses marked, so an exchange
+  that began several messages up is answered as a whole rather than from
+  whichever line happened to arrive last.
+
+### Rolls you can click
+
+- When your DM writes "make a DC 14 Perception check", the words become a link.
+  Clicking it opens a die that already knows what your character adds, and the
+  answer comes from the table's dice, not from your own machine. Skill checks,
+  saving throws, ability checks, initiative and plain dice notation all count.
+- Only your DM's lines -- and autopilot's, when it is standing in for them --
+  and only when you have a character to roll with.
+
+### Sheets
+
+- **The bundled one-shots have real characters**: species, class, level,
+  abilities, skills and equipment. Every sheet now passes the same validation
+  the host runs on a player's edit, which the old ones did not -- so a player's
+  first change to one came back refused as an illegal sheet.
+- **And real monsters.** Every NPC has a statblock: ability scores, armour
+  class, hit points and what it is carrying. Which is also what makes them
+  something a character can attack.
+
+### Fixed
+
+- **Private lines are no longer read out to the next player who logs in.** The
+  chat log is handed over on every login, and everything the host had ever told
+  the DM privately was in it: refusals, requests waiting for approval, and the
+  text of an expired API key. Lines now record who they were for, and old ones
+  stay public, which is what they were.
+
 ## 0.4.1
 
 One-shots, and a table that says what is happening.

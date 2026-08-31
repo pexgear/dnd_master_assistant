@@ -67,6 +67,55 @@ class CanonKeeperTools:
             for entity in self.session.table.entities.values()
         ]
 
+    def the_fight(self) -> dict[str, Any]:
+        """The map, if there is one, as this login was told it.
+
+        Read-only, and it stays that way. A player does not move tokens in the
+        app either, so a tool that let one do it over MCP would be this package
+        handing out authority its login does not have. Running a fight belongs
+        to the DM, and to the agent while autopilot is on; the host refuses this
+        login whatever is asked here.
+
+        Names are resolved from the entities that arrived, so a creature the DM
+        has not shared is a token with no name -- which is what it is. It is on
+        the map because somebody can see it; who it is, this login has not been
+        told.
+        """
+        table = self.session.table
+        fight = table.encounter
+        if not fight:
+            return {"fighting": False}
+
+        def named(combatant: dict) -> str:
+            entity = table.entities.get(combatant.get("entity"))
+            return (entity or {}).get("name") or "someone"
+
+        return {
+            "fighting": True,
+            "name": fight.get("name", ""),
+            "grid": {"width": fight.get("width"), "height": fight.get("height")},
+            "round": fight.get("round", 0),
+            "whose_turn": next(
+                (
+                    named(c)
+                    for c in fight.get("combatants") or []
+                    if c.get("id") == fight.get("turn")
+                ),
+                "",
+            ),
+            "standing": [
+                {
+                    "who": named(combatant),
+                    "x": combatant.get("x"),
+                    "y": combatant.get("y"),
+                    "initiative": combatant.get("initiative"),
+                    "on_the_map": combatant.get("x") is not None,
+                }
+                for combatant in fight.get("combatants") or []
+            ],
+            "in_the_way": fight.get("obstacles") or [],
+        }
+
     def my_characters(self) -> list[dict[str, Any]]:
         table = self.session.table
         return [
@@ -142,6 +191,16 @@ def build_server(session: AgentSession) -> MCPServer:
     @server.tool(description="The characters this login owns, with their sheets.")
     def my_characters() -> list[dict[str, Any]]:
         return tools.my_characters()
+
+    @server.tool(
+        description=(
+            "The fight, if there is one: the grid, who is standing where, "
+            "whose turn it is, and what is in the way. Read-only -- moving "
+            "anything is the DM's, so ask them."
+        )
+    )
+    def the_fight() -> dict[str, Any]:
+        return tools.the_fight()
 
     @server.tool(description="Say something at the table, in character.")
     async def say(text: str) -> str:

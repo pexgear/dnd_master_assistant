@@ -286,6 +286,86 @@ def apply_player_edit(
     return repos.entities.update(entity, expected_version=expected_version)
 
 
+# ------------------------------------------------------------------- the fight
+
+
+def project_encounter(encounter, combatants: list, viewer: Viewer,
+                      visible_ids: set[int] | None = None,
+                      obstacles: set | None = None) -> dict:
+    """One fight, reduced to what ``viewer`` may see of it.
+
+    The same allowlist as everything else, applied to tokens: a combatant
+    reaches a player only if the creature behind it has been shared with them.
+    Two consequences worth stating, because both are choices.
+
+    A token with **no entity** -- a name the DM typed for a fourth goblin --
+    never reaches a player. There is no share to check it against, and "the DM
+    put something on the map" is not a decision to reveal it.
+
+    Placing a monster is therefore **not** the act that reveals it; sharing it
+    is. That means a DM can lay out an ambush in front of the party without
+    them seeing it arrive, and it means "why can they not see the goblin?" has
+    exactly one answer. The panel says which tokens are in that state rather
+    than leaving it to be discovered.
+
+    ``turn_combatant_id`` is sent whoever it belongs to. A player learning that
+    *someone* is acting is the same thing they learn from the DM saying "and
+    now it moves"; which creature it is, they still cannot see.
+
+    **Obstacles go to everyone**, unfiltered. They are the room, not its
+    occupants: a pillar is exactly the sort of thing a party can see, and the
+    reason to draw one on a player's map is so they can decide to stand behind
+    it.
+    """
+    if encounter is None:
+        return {}
+
+    if viewer.is_dm:
+        allowed = list(combatants)
+    else:
+        visible = visible_ids if visible_ids is not None else set()
+        allowed = [
+            c
+            for c in combatants
+            if c.entity_id is not None
+            and (c.entity_id in visible or viewer.owns(c.entity_id))
+        ]
+
+    return {
+        "id": encounter.id,
+        "name": encounter.name,
+        "width": encounter.width,
+        "height": encounter.height,
+        "round": encounter.round,
+        "turn": encounter.turn_combatant_id,
+        "running": encounter.running,
+        "version": encounter.version,
+        "combatants": [_combatant(c, viewer) for c in allowed],
+        # Sorted so the same fight produces the same frame twice, which is what
+        # makes two clients comparable when one of them is wrong.
+        "obstacles": sorted([int(x), int(y)] for x, y in (obstacles or ())),
+    }
+
+
+def _combatant(combatant, viewer: Viewer) -> dict:
+    """A token on the wire.
+
+    No name and no hit points: both already travel on the entity, and a second
+    copy is a second thing to keep in step. The DM's own view is the exception
+    only for a nameless token, which has no entity to carry a name for it.
+    """
+    projected = {
+        "id": combatant.id,
+        "entity": combatant.entity_id,
+        "initiative": combatant.initiative,
+        "x": combatant.x,
+        "y": combatant.y,
+    }
+    if viewer.is_dm:
+        projected["name"] = combatant.name
+    return projected
+
+
 # ------------------------------------------------------------------- the canon
 
 

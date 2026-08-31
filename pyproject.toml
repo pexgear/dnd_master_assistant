@@ -70,6 +70,7 @@ canonkeeper-gui = "canon_keeper.__main__:main"
 [project.entry-points."canonkeeper.panels"]
 characters = "canon_keeper.panels.characters:CharactersPanel"
 cities = "canon_keeper.panels.cities:CitiesPanel"
+encounter = "canon_keeper.panels.encounter:EncounterPanel"
 transcript = "canon_keeper.panels.transcript:TranscriptPanel"
 table = "canon_keeper.panels.table:TablePanel"
 

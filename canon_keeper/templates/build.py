@@ -118,6 +118,7 @@ def populate(repos: Repos, campaign_id: int, template: Template) -> None:
     _create_facts(repos, campaign_id, template, ids)
     accounts = _create_accounts(repos, campaign_id, template, ids)
     _create_shares(repos, campaign_id, template, ids, accounts)
+    _create_encounter(repos, campaign_id, template, ids)
 
     repos.settings.set(SOURCE_SETTING, template.id)
     repos.settings.set(
@@ -222,6 +223,63 @@ def _create_shares(
         )
 
 
+def _create_encounter(
+    repos: Repos, campaign_id: int, template: Template, ids: dict[str, int]
+) -> None:
+    """The fight the evening opens on, if it opens on one.
+
+    Nothing is rolled here. The template states every initiative and every
+    square, so a one-shot laid out for a second table is laid out identically --
+    which is the whole property templates exist to have. A combatant naming an
+    entity the template does not contain is skipped rather than fatal, in the
+    same spirit as a share that points at nothing.
+    """
+    raw = template.encounter
+    if not raw:
+        return
+
+    encounter = repos.encounters.create(
+        campaign_id,
+        name=str(raw.get("name", "")),
+        width=int(raw.get("width") or 20),
+        height=int(raw.get("height") or 15),
+        running=bool(raw.get("running", True)),
+    )
+    for combatant in raw.get("combatants") or []:
+        entity_id = ids.get(str(combatant.get("entity", "")))
+        if entity_id is None:
+            log.warning(
+                "%s: a combatant names %r, which the template does not contain",
+                template.id,
+                combatant.get("entity"),
+            )
+            continue
+        repos.encounters.add(
+            encounter.id,
+            entity_id=entity_id,
+            initiative=_optional_int(combatant.get("initiative")),
+            tiebreak=int(combatant.get("tiebreak") or 0),
+            x=_optional_int(combatant.get("x")),
+            y=_optional_int(combatant.get("y")),
+        )
+
+    # The room itself, before anyone is asked to stand in it.
+    for square in raw.get("obstacles") or []:
+        if isinstance(square, (list, tuple)) and len(square) == 2:
+            repos.encounters.toggle_obstacle(
+                encounter.id, int(square[0]), int(square[1])
+            )
+
+    # Starting it here rather than making the DM press it: a template that says
+    # "this begins on initiative" should begin on initiative.
+    if raw.get("begun", True):
+        repos.encounters.begin(encounter.id)
+
+
+def _optional_int(value) -> int | None:
+    return int(value) if isinstance(value, int) else None
+
+
 # --------------------------------------------------------------------- emptying
 
 
@@ -233,6 +291,11 @@ _TABLES = (
     "chat_message",
     "pending_change",
     "proposal",
+    # The fight before the grid it stands on, and both before the entities the
+    # tokens point at.
+    "combatant",
+    "obstacle",
+    "encounter",
     "fact",
     "utterance",
     "session",

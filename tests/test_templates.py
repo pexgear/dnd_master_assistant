@@ -61,7 +61,28 @@ def _snapshot(repos, campaign_id: int) -> dict:
             for a in repos.accounts.list(campaign_id)
         ],
         "storyline": repos.settings.get(STORYLINE_SETTING),
+        # The fight, if it opens on one. Initiative and squares are stated by
+        # the template rather than rolled, so two runs lay out identically --
+        # and if that ever stops being true, this is what says so.
+        "fight": _fight(repos, campaign_id),
     }
+
+
+def _fight(repos, campaign_id: int):
+    encounter = repos.encounters.current(campaign_id)
+    if encounter is None:
+        return None
+    return (
+        encounter.name,
+        encounter.width,
+        encounter.height,
+        encounter.round,
+        [
+            (c.initiative, c.x, c.y, repos.entities.get(c.entity_id).name)
+            for c in repos.encounters.combatants(encounter.id)
+        ],
+        sorted(repos.encounters.obstacles(encounter.id)),
+    )
 
 
 # ------------------------------------------------------------------- the files
@@ -114,6 +135,164 @@ def test_every_share_and_parent_points_somewhere():
             parent = entity.get("parent")
             if parent:
                 assert parent in keys, f"{template.id}: bad parent {parent}"
+
+
+def test_every_combatant_points_somewhere():
+    """A fight naming an entity the template does not contain is empty air."""
+    for template in available():
+        keys = {str(e.get("key") or e.get("name")) for e in template.entities}
+        for combatant in template.encounter.get("combatants") or []:
+            assert combatant.get("entity") in keys, (
+                f"{template.id}: a combatant names {combatant.get('entity')!r}, "
+                "which is not in the template"
+            )
+
+
+def test_a_fight_states_its_initiative_rather_than_rolling_it():
+    """The determinism rule, at the one place it is easiest to break."""
+    for template in available():
+        for combatant in template.encounter.get("combatants") or []:
+            assert isinstance(combatant.get("initiative"), int), (
+                f"{template.id}: a combatant has no initiative, so the order "
+                "would depend on when it was started"
+            )
+
+
+def test_nobody_shares_a_square():
+    for template in available():
+        squares = [
+            (c.get("x"), c.get("y"))
+            for c in template.encounter.get("combatants") or []
+            if c.get("x") is not None
+        ]
+        assert len(squares) == len(set(squares)), f"{template.id}: two on one square"
+
+
+def test_nobody_starts_standing_in_a_rock():
+    for template in available():
+        blocked = {
+            tuple(square) for square in template.encounter.get("obstacles") or []
+        }
+        for combatant in template.encounter.get("combatants") or []:
+            square = (combatant.get("x"), combatant.get("y"))
+            assert square not in blocked, (
+                f"{template.id}: {combatant.get('entity')} starts inside an obstacle"
+            )
+
+
+def test_everyone_in_a_fight_is_on_its_grid():
+    """0,0 is the middle, so a sixteen-wide map runs from -8 to 7."""
+    from canon_keeper_protocol import grid
+
+    for template in available():
+        fight = template.encounter
+        if not fight:
+            continue
+        width, height = int(fight.get("width") or 20), int(fight.get("height") or 15)
+        squares = [
+            (c.get("x"), c.get("y"), c.get("entity"))
+            for c in fight.get("combatants") or []
+        ]
+        squares += [(x, y, "an obstacle") for x, y in fight.get("obstacles") or []]
+        for x, y, what in squares:
+            if x is None or y is None:
+                continue
+            assert grid.holds(width, height, x, y), (
+                f"{template.id}: {what} is at {x},{y}, outside a "
+                f"{width}x{height} grid ({grid.bounds(width, height)})"
+            )
+
+
+# ------------------------------------------------------------------ the sheets
+#
+# A template's characters are the first sheets anybody sees, and for a test
+# fixture they are the *only* ones. A sheet that does not validate is worse than
+# no sheet: the host refuses the player's first edit as illegal, and the reason
+# is a template nobody has looked at since it was written.
+
+
+def _sheets(kind: str):
+    """Every sheet of one kind across every bundled template."""
+    for template in available():
+        for entity in template.entities:
+            if entity.get("kind") != kind:
+                continue
+            sheet = (entity.get("data") or {}).get("sheet")
+            yield template.id, entity.get("key"), sheet
+
+
+def test_every_character_has_a_sheet():
+    for template_id, key, sheet in _sheets("pc"):
+        assert sheet, f"{template_id}: {key} has no sheet"
+
+
+def test_every_monster_has_a_statblock():
+    """An NPC's sheet is its statblock, and is never sent to a player."""
+    for template_id, key, sheet in _sheets("npc"):
+        assert sheet, f"{template_id}: {key} has no sheet"
+
+
+def test_every_sheet_is_one(repos):
+    from canon_keeper.rules.sheet import is_sheet
+
+    for kind in ("pc", "npc"):
+        for template_id, key, sheet in _sheets(kind):
+            assert is_sheet(sheet), f"{template_id}: {key} is not a sheet"
+
+
+def test_every_sheet_is_legal(repos):
+    """The same check the host runs on a player's first edit."""
+    from canon_keeper.content import Content
+    from canon_keeper.rules.validation import validate
+
+    content = Content(repos.settings)
+    for kind in ("pc", "npc"):
+        for template_id, key, sheet in _sheets(kind):
+            report = validate(sheet, content)
+            assert report.ok, f"{template_id}: {key} -- {report.summary()}"
+
+
+def test_characters_have_a_species_and_a_class():
+    """What the sheet is *for*. A level-one nobody is not a character."""
+    for template_id, key, sheet in _sheets("pc"):
+        assert sheet.get("species"), f"{template_id}: {key} has no species"
+        assert sheet.get("class_index"), f"{template_id}: {key} has no class"
+        assert sheet.get("abilities"), f"{template_id}: {key} has no abilities"
+
+
+def test_a_monsters_numbers_are_stated_rather_than_derived():
+    """A goblin has no class, so nothing can work out its hit points or armour."""
+    for template_id, key, sheet in _sheets("npc"):
+        overrides = sheet.get("overrides") or {}
+        assert "ac" in overrides, f"{template_id}: {key} has no armour class"
+        assert "hp_max" in overrides, f"{template_id}: {key} has no hit points"
+
+
+def test_the_two_hit_point_numbers_agree(repos):
+    """``data.hp`` is what players are shown; the sheet is what the DM edits.
+
+    They are two copies of one fact, so a template that disagrees with itself
+    would show a player one number and the DM another.
+    """
+    from canon_keeper.content import Content
+    from canon_keeper.rules import derive
+
+    content = Content(repos.settings)
+    for template in available():
+        for entity in template.entities:
+            data = entity.get("data") or {}
+            sheet = data.get("sheet")
+            if not sheet or "max_hp" not in data:
+                continue
+            _current, maximum = derive.hit_points(sheet, content)
+            assert data["max_hp"] == maximum, (
+                f"{template.id}: {entity.get('key')} says max_hp {data['max_hp']}, "
+                f"but the sheet works out to {maximum}"
+            )
+            assert data.get("hp") == sheet.get("hp_current"), (
+                f"{template.id}: {entity.get('key')} disagrees with its own sheet "
+                "about current hit points"
+            )
 
 
 def test_a_broken_file_is_skipped_not_fatal(tmp_path):
@@ -210,6 +389,23 @@ def test_the_party_starts_knowing_something(blank):
     build.populate(repos, campaign_id, get("the-last-coach"))
 
     assert repos.shares.shared_count(campaign_id) > 0
+
+
+def test_a_one_shot_can_open_on_a_fight(blank):
+    """Test Combat says it starts on initiative. It has to actually do that."""
+    repos, campaign_id = blank
+    build.populate(repos, campaign_id, get("test-combat"))
+
+    encounter = repos.encounters.running(campaign_id)
+    assert encounter is not None, "Test Combat opens with no fight running"
+    assert encounter.round == 1, "the fight has not begun"
+
+    order = repos.encounters.combatants(encounter.id)
+    assert len(order) == 7
+    assert encounter.turn_combatant_id == order[0].id
+    # Highest initiative first, and it is the rogue who was already behind them.
+    assert repos.entities.get(order[0].entity_id).name == "Sable"
+    assert all(c.on_map for c in order), "someone is in the fight but off the map"
 
 
 def test_the_storyline_is_stored_with_nothing_done(blank):

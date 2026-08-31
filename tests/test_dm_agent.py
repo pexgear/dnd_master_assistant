@@ -219,7 +219,146 @@ def test_the_prompt_leads_with_the_canon():
 
 def test_the_prompt_carries_the_line_being_answered():
     prompt = build_prompt(Table(), "Elara", "I check the door for traps.")
-    assert "Elara says: I check the door for traps." in prompt
+    assert "Elara: I check the door for traps." in prompt
+    assert "what you are answering" in prompt
+
+
+def test_the_whole_conversation_goes_in_not_the_last_line():
+    """Lines arrive in bursts, so a short window starts halfway through.
+
+    Three people typing at once are three messages in two seconds. A prompt
+    holding only those three has cut off the question they are all answering.
+    """
+    table = Table()
+    for index in range(12):
+        table.remember("Marco", "player", f"line {index}", at=1000.0 + index)
+
+    prompt = build_prompt(table, "Marco", "and what about the cellar?")
+
+    assert "line 0" in prompt, "the exchange began well above the last line"
+    assert "line 11" in prompt
+
+
+def test_the_agents_own_lines_are_marked_as_its_own():
+    """A transcript it cannot pick itself out of is one it will contradict."""
+    table = Table()
+    table.remember("Marco", "player", "Is the innkeeper in?", at=1000.0)
+    table.remember("Autopilot", "agent", "He looks up from the bar.", at=1001.0)
+
+    prompt = build_prompt(table, "Marco", "I ask about the cellar.")
+
+    assert "you: He looks up from the bar." in prompt
+
+
+def test_the_dm_is_named_as_the_dm():
+    table = Table()
+    table.remember("Genna", "dm", "There is something behind the door.", at=1000.0)
+    prompt = build_prompt(table, "Marco", "I listen at it.")
+    assert "(the DM)" in prompt
+
+
+def test_a_long_gap_is_marked_as_one():
+    """Where the current exchange began, rather than leaving it to be guessed."""
+    table = Table()
+    table.remember("Marco", "player", "Goodnight then.", at=1000.0)
+    table.remember("Marco", "player", "Right, where were we?", at=5000.0)
+
+    prompt = build_prompt(table, "Marco", "I open the door.")
+
+    assert "\n---\n" in prompt
+
+
+def test_lines_close_together_are_one_exchange():
+    table = Table()
+    table.remember("Marco", "player", "I look at the door.", at=1000.0)
+    table.remember("Elsa", "player", "I look at Marco.", at=1002.0)
+
+    prompt = build_prompt(table, "Marco", "Fine, I open it.")
+
+    # The marker is a line of its own; the heading mentions it in quotes.
+    assert "\n---\n" not in prompt
+
+
+def test_what_is_being_answered_is_not_printed_twice():
+    """It is already in the transcript; every line remembered as it arrives."""
+    table = Table()
+    table.remember("Marco", "player", "I check the door for traps.", at=1000.0)
+
+    prompt = build_prompt(table, "Marco", "I check the door for traps.")
+
+    assert prompt.count("I check the door for traps.") == 1
+
+
+def test_the_fight_is_in_the_prompt():
+    """It cannot narrate a combat it is not told the shape of."""
+    table = Table()
+    table.entities = {1: {"id": 1, "name": "Brok Ironfoot", "kind": "pc"}}
+    table.encounter = {
+        "name": "The cave",
+        "width": 10,
+        "height": 8,
+        "round": 2,
+        "turn": 11,
+        "combatants": [{"id": 11, "entity": 1, "x": 3, "y": 4}],
+        "obstacles": [[5, 5]],
+    }
+
+    prompt = build_prompt(table, "Marco", "I charge the goblin.")
+
+    assert "THE FIGHT:" in prompt
+    assert "Brok Ironfoot at 3,4" in prompt
+    assert "round 2" in prompt
+
+
+def test_there_is_no_fight_section_when_there_is_no_fight():
+    assert "THE FIGHT:" not in build_prompt(Table(), "Marco", "Hello?")
+
+
+def test_the_instructions_say_to_answer_the_dm():
+    from canon_keeper_dm_agent.context import SYSTEM
+
+    assert "the DM" in SYSTEM
+    assert "take the table back with the switch" in SYSTEM
+
+
+def test_a_private_line_is_marked_as_one():
+    """The DM's direction did not reach the players, and it must read that way."""
+    table = Table()
+    table.remember(
+        "Genna", "dm", "Make them nervous.", at=1000.0, aside=True
+    )
+    prompt = build_prompt(table, "Marco", "I listen at the door.")
+    assert "privately to you" in prompt
+
+
+def test_a_public_dm_line_is_not_marked_private():
+    table = Table()
+    table.remember("Genna", "dm", "The innkeeper looks up.", at=1000.0)
+    prompt = build_prompt(table, "Marco", "I wave.")
+    assert "privately to you" not in prompt
+
+
+def test_the_instructions_say_to_hide_the_hand_on_the_tiller():
+    """The players must not be able to tell the DM stepped in.
+
+    Half of it is not repeating the words back. The other half is that it goes
+    on applying: a standing instruction stays standing, so working it in once
+    and forgetting it is as visible as quoting it.
+    """
+    from canon_keeper_dm_agent.context import SYSTEM
+
+    assert "in your own words" in SYSTEM
+    assert "as though it had always been true" in SYSTEM
+    assert "standing instruction stays standing" in SYSTEM
+    assert "do not restart the scene" in SYSTEM
+
+
+def test_the_map_instructions_are_separate():
+    """Only sent when the tools are, so it is never told about a missing button."""
+    from canon_keeper_dm_agent.context import SYSTEM, WITH_TOOLS
+
+    assert "start_combat" in WITH_TOOLS
+    assert "start_combat" not in SYSTEM
 
 
 def test_recent_chat_is_bounded():
@@ -234,7 +373,7 @@ def test_recent_chat_is_bounded():
 
 def test_an_empty_table_still_builds_a_prompt():
     """First message of a brand new campaign must not crash it."""
-    assert "Answer as the DM." in build_prompt(Table(), "Elara", "Hello?")
+    assert "Answer as the DM" in build_prompt(Table(), "Elara", "Hello?")
 
 
 # ------------------------------------------------------------------------ util

@@ -98,10 +98,53 @@ def test_the_server_advertises_its_tools(qapp, hosted):
         "whats_happening",
         "who_and_where",
         "my_characters",
+        "the_fight",
         "say",
         "roll",
         "update_my_character",
     }
+
+
+def test_the_seat_can_see_a_fight_but_not_touch_it(qapp, hosted, repos):
+    """A player does not move tokens in the app, so neither does their seat.
+
+    The read is worth having -- "whose turn is it, and what is next to me" is
+    exactly what a player asks. Anything that moves a token is the DM's, and
+    there is no tool here that even asks.
+    """
+    server, campaign, elara, _villain = hosted
+    encounter = repos.encounters.create(campaign.id, "The cellar", width=8, height=6)
+    repos.encounters.add(encounter.id, elara.id, initiative=15, x=2, y=2)
+    repos.encounters.toggle_obstacle(encounter.id, 1, 1)
+    repos.encounters.begin(encounter.id)
+
+    async def go():
+        tools = await _seat(server, "marco", "goblin-teeth")
+        return tools.the_fight(), await build_server(tools.session).list_tools()
+
+    fight, offered = _spin(qapp, go())
+
+    assert fight["fighting"] is True
+    assert fight["name"] == "The cellar"
+    assert fight["whose_turn"] == "Elara"
+    assert fight["standing"][0]["x"] == 2
+    assert fight["in_the_way"] == [[1, 1]]
+
+    names = {tool.name for tool in offered}
+    for forbidden in ("move", "place", "start_combat", "next_turn", "obstacle"):
+        assert not any(forbidden in name for name in names), (
+            f"a player's seat offers {forbidden}, which is the DM's to do"
+        )
+
+
+def test_no_fight_says_so(qapp, hosted):
+    server, *_ = hosted
+
+    async def go():
+        tools = await _seat(server, "marco", "goblin-teeth")
+        return tools.the_fight()
+
+    assert _spin(qapp, go()) == {"fighting": False}
 
 
 def test_it_reports_the_scene(qapp, hosted):

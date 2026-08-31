@@ -152,41 +152,56 @@ async def test_it_does_not_start_a_second_answer_while_thinking(spoken, turns):
     assert len(turns[1]) == 2, "what arrived while thinking becomes the next turn"
 
 
-# ------------------------------------------------------------ the human wins
+# ------------------------------------------------- the DM is at the table too
+#
+# This was once the other way round: a line from the DM dropped whatever was
+# queued, on the grounds that the human had answered it. At a real table that
+# is wrong. Somebody who has switched autopilot on and then types is talking
+# *to* the agent, and swallowing it is how autopilot looks broken -- you switch
+# it on, say something, and nothing ever happens.
+#
+# What takes the table back is the switch, which is instant and needs nothing
+# from the agent. A sentence is just a sentence.
 
 
 @pytest.mark.asyncio
-async def test_the_dm_speaking_cancels_a_queued_answer(responder, spoken):
-    """They answered. Nobody needs it answered twice."""
-    session = _Session(players=1)
-    await responder.heard(session, _Member("player"), "Is the innkeeper in?")
-    await responder.heard(session, _Member("dm", "Genna"), "He is, and he looks up.")
-
-    await _settle()
-
-    assert spoken == []
-
-
-@pytest.mark.asyncio
-async def test_the_dm_is_not_answered_while_players_are_there(responder, spoken):
-    """They are talking to their table, not to the machine."""
+async def test_the_dm_is_answered_like_anyone_else(responder, spoken):
     session = _Session(players=2)
     await responder.heard(session, _Member("dm", "Genna"), "Roll initiative.")
     await _settle()
-    assert spoken == []
+    assert len(spoken) == 1
 
 
 @pytest.mark.asyncio
-async def test_but_a_lone_dm_is_answered(responder, spoken):
-    """Testing it alone must work.
-
-    Refusing to answer the only person present is exactly how autopilot looks
-    broken -- you switch it on, type something, and nothing ever happens.
-    """
+async def test_a_lone_dm_is_answered(responder, spoken):
+    """Trying it out alone must work: that is how anyone first sees it run."""
     session = _Session(players=0)
     await responder.heard(session, _Member("dm", "Genna"), "Is the innkeeper in?")
     await _settle()
     assert len(spoken) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_dm_joins_the_turn_rather_than_cancelling_it(responder, turns):
+    """A player and the DM in the same breath are one exchange, not a race."""
+    session = _Session(players=1)
+    await responder.heard(session, _Member("player"), "Is the innkeeper in?")
+    await responder.heard(session, _Member("dm", "Genna"), "And is the door barred?")
+
+    await _settle()
+
+    assert len(turns) == 1
+    assert len(turns[0]) == 2, "both lines, one answer"
+
+
+@pytest.mark.asyncio
+async def test_the_switch_is_what_silences_it(responder, spoken):
+    """Not a sentence. The DM turning it off mid-pause must end the turn."""
+    session = _Session(players=1)
+    await responder.heard(session, _Member("player"), "Is the innkeeper in?")
+    session.table.autopilot = False
+    await _settle()
+    assert spoken == []
 
 
 @pytest.mark.asyncio

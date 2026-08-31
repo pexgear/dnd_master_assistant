@@ -28,11 +28,19 @@ from canon_keeper import campaigns
 from canon_keeper.content import Content
 from canon_keeper.net import discovery
 from canon_keeper_protocol import auth
-from canon_keeper.repo.chat import DEFAULT_LIMIT, ROLLED, SAID, SYSTEM
+from canon_keeper.repo.chat import (
+    DEFAULT_LIMIT,
+    DM_ONLY,
+    EVERYONE,
+    ROLLED,
+    SAID,
+    SYSTEM,
+)
 from canon_keeper_protocol.dice import DiceError, roll
 from canon_keeper.repo.entities import StaleWrite
 from canon_keeper.rules.validation import validate
 from canon_keeper.net.projection import (
+    project_encounter,
     project_facts,
     EditRefused,
     changed_sheet_fields,
@@ -43,8 +51,11 @@ from canon_keeper.net.projection import (
     snapshot,
     visible_entity_ids,
 )
+from canon_keeper.repo.encounters import DEFAULT_HEIGHT, DEFAULT_WIDTH
+from canon_keeper.rules import attack
 from canon_keeper_protocol.messages import (
     MAX_CHAT_LENGTH,
+    MAX_NAME_LENGTH,
     MAX_NOTATION_LENGTH,
     Member,
     MessageType,
@@ -117,6 +128,10 @@ class SessionServer(QObject):
     #: A player's edit was applied. The DM's own panels read the database
     #: directly, so without this their screen shows yesterday's hit points.
     entity_applied = Signal(int)
+    #: Something moved a token that was not the DM's own panel -- today only an
+    #: agent on autopilot. Same reason as above: the DM's map is read from the
+    #: database, so it does not know until it is told.
+    encounter_applied = Signal()
 
     def __init__(
         self,
@@ -160,6 +175,10 @@ class SessionServer(QObject):
         #: What the agent reports having spent. Runtime only, like autopilot:
         #: it is "this session's bill", not a total anyone is accruing.
         self._spend: dict = {}
+        #: Turns waiting on the player whose character they belong to, by id.
+        #: Runtime only: a proposal nobody answered before the session closed
+        #: is a proposal about a moment that has passed.
+        self._proposed: dict[str, dict] = {}
         self._pending: dict[QWebSocket, _Pending] = {}
         self._beacon = discovery.Beacon(self)
 
@@ -171,7 +190,7 @@ class SessionServer(QObject):
             return None
 
     def _record(self, kind: str, text: str, speaker: str = "", role: str = "",
-                payload: dict | None = None) -> None:
+                payload: dict | None = None, audience: str = EVERYONE) -> None:
         """Keep what was said. Never let the log stop the game."""
         try:
             self.repos.chat.add(
@@ -182,13 +201,25 @@ class SessionServer(QObject):
                 speaker=speaker,
                 role=role,
                 payload=payload,
+                audience=audience,
             )
         except Exception:  # noqa: BLE001
             log.exception("could not write to the chat log")
 
-    def history(self, limit: int = DEFAULT_LIMIT) -> list[dict]:
+    def history(self, limit: int = DEFAULT_LIMIT, for_dm: bool = False) -> list[dict]:
+        """What was said before you arrived, filtered for who is asking.
+
+        The log is handed out on every login, so anything private in it is
+        private only until the next person connects. A refusal, a request
+        waiting for approval, an expired API key -- each of those went to the DM
+        alone at the time and used to be read out to whoever logged in next.
+        """
+        audiences = (EVERYONE, DM_ONLY) if for_dm else (EVERYONE,)
         try:
-            return [m.to_dict() for m in self.repos.chat.recent(self.campaign_id, limit)]
+            return [
+                m.to_dict()
+                for m in self.repos.chat.recent(self.campaign_id, limit, audiences)
+            ]
         except Exception:  # noqa: BLE001
             log.exception("could not read the chat log")
             return []
@@ -333,6 +364,22 @@ class SessionServer(QObject):
             self._handle_roll(socket, session, message)
         elif message.type == MessageType.EDIT:
             self._handle_edit(socket, session, message)
+        elif message.type == MessageType.MOVE:
+            self._handle_move(socket, session, message)
+        elif message.type == MessageType.TURN:
+            self._handle_turn(socket, session, message)
+        elif message.type == MessageType.INITIATIVE:
+            self._handle_initiative(socket, session, message)
+        elif message.type == MessageType.FIGHT:
+            self._handle_fight(socket, session, message)
+        elif message.type == MessageType.ENLIST:
+            self._handle_enlist(socket, session, message)
+        elif message.type == MessageType.TERRAIN:
+            self._handle_terrain(socket, session, message)
+        elif message.type == MessageType.PROPOSE:
+            self._handle_propose(socket, session, message)
+        elif message.type == MessageType.ACTED:
+            self._handle_acted(socket, session, message)
         elif message.type == MessageType.BUSY:
             self._handle_busy(session, message)
         elif message.type == MessageType.TROUBLE:
@@ -489,12 +536,21 @@ class SessionServer(QObject):
         )
         # What was said before they arrived, so a session picks up where the
         # last one stopped rather than from an empty panel.
-        self._send(socket, MessageType.HISTORY, messages=self.history())
+        self._send(
+            socket,
+            MessageType.HISTORY,
+            messages=self.history(for_dm=session.viewer.is_dm),
+        )
         self._send_snapshot(socket, session, known=pending.known)
         self._send(socket, MessageType.PANEL_NAMES, names=self.panel_names)
         if session.viewer.is_dm:
             self._send(socket, MessageType.PROPOSALS, proposals=self.proposals)
             self._send(socket, MessageType.FACTS, facts=self.facts)
+        # Sent to everyone, filtered per person. Joining halfway through a fight
+        # should show you the fight, not an empty grid until something moves.
+        self._send(
+            socket, MessageType.ENCOUNTER, encounter=self._encounter_for(session)
+        )
         # Everyone, not only the agent: a table deserves to know whether it is
         # being answered by a person.
         self._send(socket, MessageType.AUTOPILOT, on=self._autopilot, by=self._autopilot_by)
@@ -637,8 +693,53 @@ class SessionServer(QObject):
                 message="Autopilot is off. The DM is answering.",
             )
             return
+
+        if self._is_an_aside(session):
+            self._say_aside(session, text)
+            return
+
         self._record(SAID, text, speaker=session.member.label, role=session.member.role)
         self._broadcast(MessageType.SAID, member=session.member.to_dict(), text=text)
+
+    def _is_an_aside(self, session: _Session) -> bool:
+        """Whether this line is direction rather than speech.
+
+        While autopilot is on there is one voice at the table, and it is the
+        agent's. A DM typing then is *directing* -- "there is something behind
+        the door" -- and if their words also went out the party would hear two
+        DMs, one of whom keeps being contradicted by the other.
+
+        So it goes to the back room: the DM, any co-DM, and the agent, which
+        answers it as part of the conversation. Wanting to speak to the table
+        directly is what the switch is for.
+        """
+        return (
+            self._autopilot
+            and session.viewer.is_dm
+            and not session.is_agent
+        )
+
+    def _say_aside(self, session: _Session, text: str) -> None:
+        """A DM's line while autopilot is on. Heard by the agent, not the party."""
+        self._record(
+            SAID,
+            text,
+            speaker=session.member.label,
+            role=session.member.role,
+            audience=DM_ONLY,
+        )
+        log.info("%s directed autopilot: %s", session.member.label, text)
+        frame = encode(
+            MessageType.SAID,
+            member=session.member.to_dict(),
+            text=text,
+            # So the DM's own screen can show that it did not go out. A line
+            # that looks public and was not is worse than one held back.
+            aside=True,
+        )
+        for socket, other in self._sessions.items():
+            if other.viewer.is_dm:
+                socket.sendTextMessage(frame)
 
     def _handle_busy(self, session: _Session, message) -> None:
         """Someone is composing. Told to everyone, because the point of it is
@@ -831,6 +932,574 @@ class SessionServer(QObject):
         return "" if report.ok else f"That is not a legal sheet: {report.summary()}"
 
 
+    # -------------------------------------------------------------- the fight
+
+    def _encounter_for(self, session: _Session) -> dict:
+        """The running fight as this one person may see it, or ``{}`` for none.
+
+        Only the *running* fight is ever sent. A DM preparing next week's ambush
+        in another encounter is doing exactly the thing the party must not see,
+        and "which fight is on screen" is not a distinction worth trusting to
+        the panel.
+        """
+        encounter = self.repos.encounters.running(self.campaign_id)
+        if encounter is None:
+            return {}
+        return project_encounter(
+            encounter,
+            self.repos.encounters.combatants(encounter.id),
+            session.viewer,
+            visible_entity_ids(self.repos, self.campaign_id, session.viewer),
+            self.repos.encounters.obstacles(encounter.id),
+        )
+
+    def publish_encounter(self) -> None:
+        """Push the fight to everyone, filtered per person.
+
+        Not one frame broadcast: two people at the same table are shown
+        different tokens, so there is no shared frame to send.
+        """
+        for socket, session in self._sessions.items():
+            self._send(
+                socket, MessageType.ENCOUNTER, encounter=self._encounter_for(session)
+            )
+
+    def _may_run_the_fight(self, session: _Session) -> bool:
+        """Who may move a token, pass the turn, or set an initiative.
+
+        One question for all three, because they are one authority: whoever is
+        running the fight. The DM always is. An agent is gated on autopilot
+        exactly as its chat is, and for the same reason -- "off" has to be
+        something the host enforces, not something the agent is trusted to
+        observe. A player cannot do any of it yet; see the known gaps in
+        ARCHITECTURE.md.
+        """
+        if session.is_agent:
+            return self._autopilot
+        return session.viewer.is_dm
+
+    def _refuse_the_fight(self, socket: QWebSocket) -> None:
+        self._send(
+            socket,
+            MessageType.ERROR,
+            code="refused",
+            message="Only whoever is running the fight can do that.",
+        )
+
+    def _the_running_fight(self):
+        return self.repos.encounters.running(self.campaign_id)
+
+    def _handle_turn(self, socket: QWebSocket, session: _Session, message) -> None:
+        """Start the fight, pass the turn, or stop the clock.
+
+        The same three buttons the DM's panel has, reachable over the wire, so
+        an agent running a combat is doing the thing the DM does rather than a
+        parallel thing that happens to look like it.
+        """
+        if not self._may_run_the_fight(session):
+            self._refuse_the_fight(socket)
+            return
+
+        encounter = self._the_running_fight()
+        if encounter is None:
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="There is no fight being run.",
+            )
+            return
+
+        action = str(message.get("action", "")).lower()
+        if action == "begin":
+            self.repos.encounters.begin(encounter.id)
+        elif action == "next":
+            self.repos.encounters.advance(encounter.id)
+        elif action == "end":
+            self.repos.encounters.end(encounter.id)
+        else:
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="bad_message",
+                message="A turn is begin, next or end.",
+            )
+            return
+
+        log.info("%s: turn %r", session.member.label, action)
+        self._announce_turn(action)
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def _announce_turn(self, action: str) -> None:
+        """Say it in the chat as well, and keep it.
+
+        Whose turn it was is part of what happened at that table, and a fight
+        run by an agent is exactly the case where somebody will want to read
+        back what it did.
+        """
+        encounter = self._the_running_fight()
+        if action == "end":
+            self._broadcast_system("The fight is over.")
+            return
+        if encounter is None:
+            return
+        combatant = (
+            self.repos.encounters.combatant(encounter.turn_combatant_id)
+            if encounter.turn_combatant_id
+            else None
+        )
+        entity = (
+            self.repos.entities.get(combatant.entity_id)
+            if combatant is not None and combatant.entity_id is not None
+            else None
+        )
+        whose = entity.name if entity is not None else "someone"
+        if action == "begin":
+            self._broadcast_system(f"Roll initiative. {whose} is up first.")
+        else:
+            self._broadcast_system(f"Round {encounter.round}: {whose} is up.")
+
+    def _handle_fight(self, socket: QWebSocket, session: _Session, message) -> None:
+        """Start a fight. The one the DM's New fight button makes, over the wire.
+
+        Deliberately the same repository call: an agent setting up a combat must
+        not be able to produce an encounter the app could not have produced
+        itself.
+        """
+        if not self._may_run_the_fight(session):
+            self._refuse_the_fight(socket)
+            return
+
+        encounter = self.repos.encounters.create(
+            self.campaign_id,
+            name=str(message.get("name", ""))[:MAX_NAME_LENGTH],
+            width=int(message.get("width") or DEFAULT_WIDTH),
+            height=int(message.get("height") or DEFAULT_HEIGHT),
+        )
+        log.info("%s started a fight: %r", session.member.label, encounter.name)
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def _handle_enlist(self, socket: QWebSocket, session: _Session, message) -> None:
+        """Put a creature into the fight being run, optionally on a square."""
+        if not self._may_run_the_fight(session):
+            self._refuse_the_fight(socket)
+            return
+
+        encounter = self._the_running_fight()
+        entity_id = message.get("entity")
+        if encounter is None or not isinstance(entity_id, int):
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="There is no fight being run.",
+            )
+            return
+        if self.repos.entities.get(entity_id) is None:
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="There is no such creature.",
+            )
+            return
+
+        x, y = message.get("x"), message.get("y")
+        initiative = message.get("initiative")
+        combatant = self.repos.encounters.add(
+            encounter.id,
+            entity_id=entity_id,
+            initiative=int(initiative) if isinstance(initiative, int) else None,
+            x=int(x) if isinstance(x, int) else None,
+            y=int(y) if isinstance(y, int) else None,
+        )
+        if combatant is None:
+            # Already in the fight. Not an error worth a message: asking twice
+            # is the normal way a model gets to the state it wanted.
+            return
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def _handle_terrain(self, socket: QWebSocket, session: _Session, message) -> None:
+        """Put something in the way, or take it out."""
+        if not self._may_run_the_fight(session):
+            self._refuse_the_fight(socket)
+            return
+
+        encounter = self._the_running_fight()
+        x, y = message.get("x"), message.get("y")
+        if encounter is None or not isinstance(x, int) or not isinstance(y, int):
+            return
+
+        wanted = bool(message.get("on", True))
+        here = (x, y) in self.repos.encounters.obstacles(encounter.id)
+        if here == wanted:
+            return
+        self.repos.encounters.toggle_obstacle(encounter.id, x, y)
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def _handle_initiative(self, socket: QWebSocket, session: _Session, message) -> None:
+        """Set one combatant's initiative, or clear it with a null."""
+        if not self._may_run_the_fight(session):
+            self._refuse_the_fight(socket)
+            return
+
+        combatant_id = message.get("combatant")
+        if not isinstance(combatant_id, int):
+            return
+        value = message.get("value")
+        value = int(value) if isinstance(value, int) else None
+
+        combatant = self.repos.encounters.combatant(combatant_id)
+        encounter = self._the_running_fight()
+        if combatant is None or encounter is None or combatant.encounter_id != encounter.id:
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="That is not in the fight being run.",
+            )
+            return
+
+        self.repos.encounters.set_initiative(combatant_id, value)
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def _handle_move(self, socket: QWebSocket, session: _Session, message) -> None:
+        """A request to move a token. ``x``/``y`` of null takes it off the map."""
+        if not self._may_run_the_fight(session):
+            self._refuse_the_fight(socket)
+            return
+
+        combatant_id = message.get("combatant")
+        if not isinstance(combatant_id, int):
+            return
+        x = message.get("x")
+        y = message.get("y")
+        x = int(x) if isinstance(x, int) else None
+        y = int(y) if isinstance(y, int) else None
+
+        combatant = self.repos.encounters.combatant(combatant_id)
+        encounter = self._the_running_fight()
+        if combatant is None or encounter is None or combatant.encounter_id != encounter.id:
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="That is not in the fight being run.",
+            )
+            return
+
+        if not self.repos.encounters.place(combatant_id, x, y):
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="refused",
+                message="That square is off the grid, or someone is standing in it.",
+            )
+            return
+
+        log.info("%s moved combatant %s to %s,%s", session.member.label, combatant_id, x, y)
+        self.publish_encounter()
+        # The DM's own map reads the database, so it does not know yet.
+        self.encounter_applied.emit()
+
+    # ------------------------------------------------------------ taking a turn
+    #
+    # A player says "I get behind the orc and hit it with my axe". The agent
+    # turns that into squares and a weapon; the host checks it; the player sees
+    # exactly what is about to happen and says yes. Three parties, and none of
+    # them can skip the others:
+    #
+    # * The **agent** may only propose. It never moves anybody.
+    # * The **host** decides whether the proposal is even legal, and does all
+    #   the rolling. The dice were never the client's.
+    # * The **player** owns their own turn. Nothing touches their character
+    #   until they accept, and refusing costs one click.
+    #
+    # That last one is why this is not simply the agent moving tokens. Handing
+    # a machine the power to walk your character into a fire is a different
+    # product from one that offers to.
+
+    def _handle_propose(self, socket: QWebSocket, session: _Session, message) -> None:
+        if not self._may_run_the_fight(session):
+            self._refuse_the_fight(socket)
+            return
+
+        encounter = self._the_running_fight()
+        combatant_id = message.get("combatant")
+        combatant = (
+            self.repos.encounters.combatant(combatant_id)
+            if isinstance(combatant_id, int)
+            else None
+        )
+        if encounter is None or combatant is None or combatant.encounter_id != encounter.id:
+            self._send_refusal(socket, "That is not in the fight being run.")
+            return
+
+        entity = (
+            self.repos.entities.get(combatant.entity_id)
+            if combatant.entity_id is not None
+            else None
+        )
+        if entity is None:
+            self._send_refusal(socket, "That token is not a creature.")
+            return
+        if entity.owner_account_id is None:
+            self._send_refusal(
+                socket,
+                "Nobody plays that character, so there is nobody to ask. Move it "
+                "yourself.",
+            )
+            return
+
+        problem, action = self._shape_the_action(encounter, combatant, entity, message)
+        if problem:
+            self._send_refusal(socket, problem)
+            return
+
+        # One at a time per character. A second proposal replaces the first
+        # rather than queueing: the table has moved on, and a player answering
+        # a stale one would act on a map that no longer looks like that.
+        self._withdraw_for(combatant.id)
+        self._proposed[action["id"]] = action
+
+        log.info("proposed for %s: %s", entity.name, action["text"])
+        self._send_to_account(entity.owner_account_id, MessageType.ACTION, **action)
+        # The DM watches it happen. They are running the table even while a
+        # machine is talking, and a turn being offered is part of that.
+        frame = encode(MessageType.ACTION, **action, watching=True)
+        for other_socket, other in self._sessions.items():
+            if other.viewer.is_dm and other.account_id != entity.owner_account_id:
+                other_socket.sendTextMessage(frame)
+
+    def _shape_the_action(self, encounter, combatant, entity, message):
+        """Turn a proposal into something legal, or say what is wrong with it.
+
+        Checked here rather than trusted, because the thing that wrote it is a
+        language model and the thing that reads it is a person about to press
+        Accept.
+        """
+        move = message.get("move")
+        square = None
+        if isinstance(move, (list, tuple)) and len(move) == 2:
+            x, y = move
+            if not isinstance(x, int) or not isinstance(y, int):
+                return "That is not a square.", None
+            if not encounter.holds(x, y):
+                return f"{x},{y} is off the map.", None
+            standing = self.repos.encounters.at(encounter.id, x, y)
+            if standing is not None and standing.id != combatant.id:
+                return f"Somebody is already at {x},{y}.", None
+            if (x, y) in self.repos.encounters.obstacles(encounter.id):
+                return f"There is something in the way at {x},{y}.", None
+            square = [x, y]
+
+        target_id = message.get("target")
+        target_name = ""
+        if target_id is not None:
+            if not isinstance(target_id, int):
+                return "That is not a target.", None
+            target = self.repos.encounters.combatant(target_id)
+            if target is None or target.encounter_id != encounter.id:
+                return "That target is not in the fight.", None
+            if target.id == combatant.id:
+                return "Nobody attacks themselves.", None
+            hit = (
+                self.repos.entities.get(target.entity_id)
+                if target.entity_id is not None
+                else None
+            )
+            target_name = hit.name if hit else "someone"
+
+        return "", {
+            "id": secrets.token_hex(6),
+            "combatant": combatant.id,
+            "who": entity.name,
+            "move": square,
+            "target": target_id if isinstance(target_id, int) else None,
+            "target_name": target_name,
+            "weapon": str(message.get("weapon", ""))[:MAX_NAME_LENGTH],
+            "text": str(message.get("text", ""))[:MAX_CHAT_LENGTH],
+        }
+
+    def _send_refusal(self, socket: QWebSocket, message: str) -> None:
+        self._send(socket, MessageType.ERROR, code="refused", message=message)
+
+    def _withdraw_for(self, combatant_id: int) -> None:
+        """Take back any turn still waiting for this character."""
+        for action_id, action in list(self._proposed.items()):
+            if action["combatant"] == combatant_id:
+                self._proposed.pop(action_id, None)
+                self._broadcast(MessageType.ACTION_GONE, id=action_id)
+
+    def _handle_acted(self, socket: QWebSocket, session: _Session, message) -> None:
+        """The player's answer to a turn that was put to them."""
+        action = self._proposed.get(str(message.get("id", "")))
+        if action is None:
+            return  # answered already, or overtaken. Not worth a complaint.
+
+        entity = self._entity_of(action["combatant"])
+        # The player whose character it is, or the human DM answering for
+        # somebody who has stepped out. Never the agent: it wrote the proposal,
+        # and a proposal something can accept on your behalf is not a proposal.
+        allowed = entity is not None and (
+            session.account_id == entity.owner_account_id
+            or (session.viewer.is_dm and not session.is_agent)
+        )
+        if not allowed:
+            self._send_refusal(
+                socket,
+                "That turn is not yours to answer."
+                if not session.is_agent
+                else "You proposed it. It is theirs to accept.",
+            )
+            return
+
+        self._proposed.pop(action["id"], None)
+        self._broadcast(MessageType.ACTION_GONE, id=action["id"])
+
+        if not bool(message.get("accept")):
+            note = str(message.get("note", "")).strip()[:MAX_CHAT_LENGTH]
+            # A refusal with instructions is the player still taking their
+            # turn, so it goes to the table as an ordinary line and the agent
+            # hears it and offers something else.
+            self._record(
+                SAID,
+                note or f"{action['who']} does something else.",
+                speaker=session.member.label,
+                role=session.member.role,
+            )
+            self._broadcast(
+                MessageType.SAID,
+                member=session.member.to_dict(),
+                text=note or f"Not that -- {action['who']} does something else.",
+            )
+            return
+
+        self._carry_out(action, session)
+
+    def _entity_of(self, combatant_id: int):
+        combatant = self.repos.encounters.combatant(combatant_id)
+        if combatant is None or combatant.entity_id is None:
+            return None
+        return self.repos.entities.get(combatant.entity_id)
+
+    def _carry_out(self, action: dict, session: _Session) -> None:
+        """Do it. The move first, then the swing, then say what happened."""
+        moved = False
+        if action.get("move"):
+            x, y = action["move"]
+            moved = self.repos.encounters.place(action["combatant"], x, y)
+            if not moved:
+                self._tell(
+                    session.account_id,
+                    f"{action['who']} could not get to {x},{y} -- somebody or "
+                    "something is there now.",
+                )
+
+        if moved:
+            self._broadcast_system(
+                f"{action['who']} moves to {action['move'][0]},{action['move'][1]}."
+            )
+
+        if action.get("target") is not None:
+            self._swing(action)
+
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def _swing(self, action: dict) -> None:
+        """One weapon attack, rolled on the host and applied to the target."""
+        attacker = self._entity_of(action["combatant"])
+        target_combatant = self.repos.encounters.combatant(action["target"])
+        target = (
+            self.repos.entities.get(target_combatant.entity_id)
+            if target_combatant is not None and target_combatant.entity_id is not None
+            else None
+        )
+        if attacker is None or target is None or target_combatant is None:
+            return
+
+        sheet = (attacker.data or {}).get("sheet") or {}
+        try:
+            weapon = attack.find_weapon(sheet, self.content, action.get("weapon", ""))
+        except attack.NoAttack as exc:
+            self._broadcast_system(f"{attacker.name} cannot attack: {exc}")
+            return
+
+        mine = self.repos.encounters.combatant(action["combatant"])
+        if mine is not None and mine.on_map and target_combatant.on_map:
+            gap = attack.squares_between(
+                (mine.x, mine.y), (target_combatant.x, target_combatant.y)
+            )
+            if not attack.within_reach(weapon, gap):
+                self._broadcast_system(
+                    f"{target.name} is {gap * 5} feet away -- too far for "
+                    f"{weapon.name}."
+                )
+                return
+
+        result = attack.resolve(
+            sheet,
+            self.content,
+            weapon,
+            attack.armour_class(target.data or {}, self.content),
+            roll,
+        )
+        said = result.describe(attacker.name, target.name)
+        self._record(ROLLED, said, speaker=attacker.name, role=Role.DM.value)
+        self._broadcast(
+            MessageType.ROLLED,
+            member=Member(id="", name=attacker.name, role=Role.DM.value).to_dict(),
+            notation=f"1d20{result.bonus:+d}",
+            rolls=[result.roll],
+            kept=[result.roll],
+            modifier=result.bonus,
+            total=result.total,
+            description=said,
+        )
+        if result.hit and result.damage:
+            self._take_damage(target, result.damage)
+
+    def _take_damage(self, target, damage: int) -> None:
+        """Apply it, and tell everyone who can see the creature.
+
+        Written straight to the entity: this is the host applying its own
+        decision, not a client's request. Hit points live in two places on a
+        creature -- the shared field and the sheet -- so both move together or
+        the DM and the players read different numbers.
+        """
+        data = dict(target.data or {})
+        maximum = data.get("max_hp")
+        before = data.get("hp")
+        if not isinstance(before, int):
+            before = maximum if isinstance(maximum, int) else None
+        if not isinstance(before, int):
+            return
+
+        after = max(0, before - int(damage))
+        data["hp"] = after
+        sheet = data.get("sheet")
+        if isinstance(sheet, dict):
+            sheet["hp_current"] = after
+        if after == 0:
+            data["status"] = "down"
+        target.data = data
+        self.repos.entities.update(target)
+
+        self._broadcast_system(
+            f"{target.name} is down." if after == 0
+            else f"{target.name}: {after}"
+                 + (f"/{maximum}" if isinstance(maximum, int) else "")
+                 + " hit points."
+        )
+        self.publish_entity(target.id)
+        self.entity_applied.emit(target.id)
+
     # ---------------------------------------------------------------- proposals
 
     def _propose(self, session: _Session, entity_id: int, build: dict, version: int) -> None:
@@ -943,8 +1612,13 @@ class SessionServer(QObject):
                 socket.sendTextMessage(frame)
 
     def _tell_dms(self, text: str) -> None:
-        """Say something to whoever is running the game."""
-        self._record(SYSTEM, text)
+        """Say something to whoever is running the game.
+
+        Kept in the log, but marked as theirs. It used to be recorded as an
+        ordinary line, which meant "Autopilot could not answer: Error code 401"
+        was read out to the next player who logged in.
+        """
+        self._record(SYSTEM, text, audience=DM_ONLY)
         frame = encode(MessageType.SYSTEM, text=text, kind=SystemKind.NOTICE.value)
         for socket, session in self._sessions.items():
             if session.viewer.is_dm:

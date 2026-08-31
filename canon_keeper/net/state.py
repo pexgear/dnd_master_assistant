@@ -19,10 +19,17 @@ class SharedState(QObject):
     """Entities received from the host, keyed by id."""
 
     changed = Signal()
+    #: The fight, or the absence of one. Separate from ``changed`` because the
+    #: map redraws far more often than the roster does -- a token moves every
+    #: few seconds in combat, and rebuilding every panel each time is waste.
+    encounter_changed = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._entities: dict[int, dict] = {}
+        #: What the host says the fight is. Never cached to disk: a map is only
+        #: true while the session it belongs to is open.
+        self._encounter: dict | None = None
 
     # ------------------------------------------------------------------ writes
 
@@ -41,12 +48,24 @@ class SharedState(QObject):
         if self._entities.pop(entity_id, None) is not None:
             self.changed.emit()
 
+    def set_encounter(self, encounter: dict | None) -> None:
+        """What the host says the fight is. An empty payload means there is none."""
+        self._encounter = encounter if encounter else None
+        self.encounter_changed.emit()
+
     def clear(self) -> None:
         if self._entities:
             self._entities.clear()
             self.changed.emit()
+        if self._encounter is not None:
+            self._encounter = None
+            self.encounter_changed.emit()
 
     # ------------------------------------------------------------------- reads
+
+    @property
+    def encounter(self) -> dict | None:
+        return self._encounter
 
     def get(self, entity_id: int) -> dict | None:
         return self._entities.get(entity_id)

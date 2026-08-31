@@ -33,6 +33,20 @@ class Bus(QObject):
     # A panel was renamed, by you or by the DM. The shell re-titles the docks.
     panel_names_changed = Signal()
 
+    # The fight changed: someone moved, the turn passed, the order grew. No id
+    # travels with it -- a client is sent the whole encounter at once, because
+    # a map whose tokens and turn marker can disagree about how current they
+    # are is worse than one that cannot.
+    encounter_changed = Signal()
+
+    # A turn worked out for you and waiting on your word: the payload the host
+    # sent, then its id when it is no longer waiting, then your answer going
+    # back. Three signals rather than one, because "offered", "withdrawn" and
+    # "answered" happen in different places and at different times.
+    action_proposed = Signal(dict)
+    action_withdrawn = Signal(str)
+    action_answered = Signal(str, bool, str)  # (id, accept, what you meant)
+
     # Canon.
     fact_committed = Signal(int)
     utterance_added = Signal(int)

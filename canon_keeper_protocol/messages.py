@@ -18,7 +18,10 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-PROTOCOL_VERSION = 2
+#: Bumped when the contract grows, not only when it breaks. A build that does
+#: not know about encounters would connect happily and show a table no map --
+#: half-working, which is the state this number exists to prevent.
+PROTOCOL_VERSION = 3
 
 #: No O/0 or I/1 -- these get read aloud across a table.
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -72,6 +75,19 @@ class MessageType(StrEnum):
     BUSY = "busy"          # {on} -- I am composing something
     SPENT = "spent"        # {tokens_in, tokens_out, dollars, turns} -- agent only
     TROUBLE = "trouble"    # {message} -- the agent could not answer. To DMs.
+    # Running a fight. The DM's app sends these, and so may an agent while
+    # autopilot is on -- one door, one set of checks, rather than a privileged
+    # path for the app and a lesser one for everything else.
+    MOVE = "move"          # {combatant, x, y} -- x/y null takes it off the map
+    TURN = "turn"          # {action} -- begin | next | end
+    INITIATIVE = "initiative"  # {combatant, value} -- value null unrolls it
+    FIGHT = "fight"        # {name, width, height} -- start a new one
+    ENLIST = "enlist"      # {entity, x, y, initiative} -- into the fight
+    TERRAIN = "terrain"    # {x, y, on} -- something in the way, or not
+    #: A formalised turn, put to the player whose character it is. The agent
+    #: writes it, the host checks it, and nothing happens until they say yes.
+    PROPOSE = "propose"    # {combatant, move, target, weapon, text}
+    ACTED = "acted"        # {id, accept, note} -- the player's answer
 
     # server -> client
     CHALLENGE = "challenge"  # {salt, nonce}
@@ -83,6 +99,9 @@ class MessageType(StrEnum):
     ENTITY = "entity"        # one entity added or changed
     ENTITY_GONE = "gone"     # {id} -- deleted, or no longer shared with you
     FACTS = "facts"          # the canon log. DM viewers only, never a player.
+    ENCOUNTER = "encounter"  # {encounter} -- the fight, or null for none
+    ACTION = "action"        # a turn waiting on the player whose turn it is
+    ACTION_GONE = "action_gone"  # {id} -- answered, withdrawn, or overtaken
     AUTOPILOT = "autopilot"  # {on, by} -- whether the agent is answering
     BUSY_NOW = "busy_now"    # {member, on} -- who is composing, for everyone
     SPEND = "spend"          # what the agent has cost. DM viewers only.

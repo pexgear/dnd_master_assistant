@@ -119,6 +119,8 @@ Migrations are numbered `.sql` files driven by `PRAGMA user_version`:
 | `004_pending_changes.sql` | the proposal queue |
 | `005_chat_log.sql` | chat kept between sessions |
 | `006_agent_accounts.sql` | the `agent` role |
+| `007_encounters.sql` | fights: the initiative order and the grid |
+| `008_private_lines.sql` | who a line in the log was for |
 
 `entity.data_json` is how "start small, then evolve" is paid for: new fields
 cost a form change, not a migration. The price is that nothing validates them,
@@ -128,9 +130,13 @@ so anything load-bearing belongs in a column.
 
 ## The wire
 
-Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 2`; a
+Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 3`; a
 mismatch is refused at the door with a readable reason rather than
 half-working.
+
+The number moves when the contract **grows**, not only when it breaks. A build
+that had never heard of encounters would log in perfectly and then show a table
+no map — half-working, which is the state this number exists to prevent.
 
 **Frame caps are direction-dependent.** `MAX_FRAME_BYTES` (16 KB) for what a
 host accepts from a client, `MAX_HOST_FRAME_BYTES` (8 MB) for what a client
@@ -152,6 +158,13 @@ rather than trusted.
 the canon — and none of a DM's *authority*: the host refuses its chat whenever
 autopilot is off. It is a separate role rather than a DM with an exception,
 because an exception is one forgotten `and not is_agent` away from failing open.
+
+**The log has an audience.** A line is for the table or for whoever is running
+it (`chat.EVERYONE` / `chat.DM_ONLY`), and `history()` filters on the way out.
+This exists because the log is handed to whoever logs in next: refusals,
+pending requests and the text of an expired API key all went to the DM alone
+when they happened, and were then read out to the next player to connect. The
+default is public, so nothing already written changed meaning.
 
 ---
 
@@ -195,11 +208,126 @@ can reach.
 - `canon_keeper_dm_agent/context.py` — **what it is told**. Canon first and
   labelled binding, prose second; a model given atmosphere and facts together
   will average them, and averaging invents.
+- `canon_keeper_dm_agent/tools.py` — **what it can do**, as opposed to say.
+  Start a fight, place people and terrain, move a monster, pass the turn, and
+  put a player's turn to them. Every one goes over the wire and through the
+  same checks the DM's own app goes through, so an agent cannot produce a fight
+  the app could not have produced itself.
 - `canon_keeper_dm_agent/brain.py` — the model call, deliberately thin.
+
+**While autopilot is on there is one voice at the table, and it is the
+agent's.** A DM typing then is *directing*: their line goes to the back room —
+themselves, any co-DM, and the agent — and not to the party, because two DMs
+saying different things is worse than either. The agent is told to carry it out
+in its own words and never to acknowledge it. Speaking to the party directly is
+what the switch is for.
+
+The agent answers the DM as it answers anybody. It once dropped a queued turn
+when the DM spoke, on the grounds that the human had answered; at a real table
+that is wrong, and it is how autopilot came to look broken — you switch it on,
+say something, and nothing happens.
 
 `canon_keeper_mcp` is the same idea with a different mouth: one login exposed as
 MCP tools. `roll` is rolled on the host; `update_my_character` returns "sent to
 your DM", because that is what happened.
+
+---
+
+## Combat
+
+An **encounter** is an initiative order and a grid, in one place because they
+are one activity: the order says whose turn it is, the grid says whether they
+can reach anybody. The `encounter` panel is where a DM runs it.
+
+Four decisions, and the first two are the ones to keep.
+
+**Off the map is not out of the fight.** A combatant with no square is still in
+the order and still takes turns — they fled down the corridor, or they have not
+come through the door yet. Taking them *out* is deleting the row. Two things a
+DM means, two operations, rather than one flag with a meaning to remember.
+
+**Whose turn it is, is an id, not an index.** An index shifts the moment a dead
+goblin is removed, and a marker jumping a place mid-round is indistinguishable
+from a bug. Removing whoever is up passes the turn on first, so the order never
+restarts from the top and nobody acts twice.
+
+**Putting a token on the map does not reveal it.** Visibility is a share, the
+same as everywhere else: a combatant reaches a player only if the creature
+behind it has been shared with them, and a token with no entity behind it
+reaches nobody. So a DM can lay out an ambush in front of the party. The price
+is a DM wondering why the party cannot see the goblin, which the panel answers
+by drawing unshared tokens dotted and offering to share them.
+
+**Running the fight is one authority.** `_may_run_the_fight` answers for moving
+a token, passing the turn, setting an initiative and building a fight alike.
+The DM always has it. An agent has it exactly while autopilot is on — the same
+gate its chat goes through, enforced on the host. A player has it never.
+
+The order is a pure function of the rows: initiative down, Dexterity tiebreak
+down, id up. Nothing stores an ordinal, so nothing can drift, and a template
+that states its initiatives lays out identically every time it is started.
+
+### Where a square is
+
+**0,0 is the middle**, x right and y down, defined once in
+`canon_keeper_protocol.grid` because the app, the agent and the wire all have
+to agree. Counting from a corner reads badly out loud ("you are at fourteen,
+nine") and moves everybody's address the moment the map grows, because the
+corner it counts from is wherever the edge happens to be today. A centre does
+not move: push the north wall out and the goblin at 3,-2 is still at 3,-2.
+
+An even-sided map cannot be perfectly centred, so the extra square goes right
+and down. That is arbitrary and fixed, and it is why growing a map by one adds
+a column on alternating sides.
+
+### A player's turn
+
+A player writes what they want in plain words. The agent turns that into rules
+and **proposes** it; the host checks it is legal; the player confirms it; then
+the host rolls it. Three parties, and none of them can skip the others:
+
+- The **agent** may only propose. `PROPOSE` never moves anything, and the
+  agent is refused if it tries to accept its own proposal — a proposal the
+  proposer can accept is not a proposal.
+- The **host** decides whether it is even legal (`_shape_the_action`) and does
+  all the rolling. An illegal square is refused before any player is shown it.
+- The **player** owns their turn. Nothing touches their character until they
+  say yes, and the confirmation sits where Send is and holds the chat box:
+  do it, say more, or refuse. Only that box and the Combat panel are held —
+  the rest of the app stays open, because being asked what your character does
+  is not a reason to stop being able to look something up.
+
+`rules/attack.py` is deliberately the simple case: a weapon off the sheet, a
+d20, reach of one square. No spells, no advantage, no opportunity attacks.
+Those are rulings a DM makes, and a machine that made half of them would be
+worse than one that makes none — the table would have to check every result to
+find out which half.
+
+---
+
+## Rolls in the chat
+
+When a DM — or the agent standing in for them — writes "make a DC 14 Perception
+check", every player does the same three things: find which of their numbers
+that is, add a d20, and say the total. The first two are arithmetic; the third
+is why anyone came.
+
+So `panels/table/rolls.py` reads a line for the rolls it asks for and the panel
+turns those words into links. Clicking one opens a die.
+
+**The die does not decide anything.** It tumbles while the request is with the
+host and stops when the answer comes back, so the animation covers a real round
+trip rather than decorating a number the client made up. If nothing comes back
+it says so rather than settling on something plausible — dice are rolled on the
+host, and this is the surface where that would be easiest to quietly stop being
+true.
+
+The detector is deliberately conservative: a phrase counts only when "check",
+"save", "saving throw" or dice notation is actually present. Underlining
+"perception" in "his perception of the situation" would teach people to ignore
+underlining, which costs more than the prompts it would catch. It reads the DM's
+and the agent's lines only — a player typing "stealth check" in character is not
+calling for one — and only for a reader who has a character to roll with.
 
 ---
 
@@ -320,6 +448,51 @@ agent waits for a lull rather than answering every line; only one answer is
 ever in flight; and the host refuses its chat outright whenever autopilot is
 off, so "off" is not a promise the agent keeps.
 
+### Running a fight
+
+The map is the one thing at the table that several people watch at once, so it
+is published to each of them separately — there is no shared frame, because two
+people are shown different tokens.
+
+```mermaid
+sequenceDiagram
+    participant D as DM panel
+    participant H as Host
+    participant P as Player
+    participant A as Agent
+    D->>H: repos.encounters.place(...) then bus.encounter_changed
+    H->>H: publish_encounter -- per connection
+    H->>P: ENCOUNTER {only tokens shared with them}
+    Note over A: on autopilot, the agent has the same door
+    A->>H: MOVE {combatant, x, y}
+    Note over H: may they run the fight?<br/>DM always; agent only while autopilot is on
+    H->>P: ENCOUNTER
+    H->>D: encounter_applied -- the DM's own map re-reads
+```
+
+And a player's own turn, which nothing may take for them:
+
+```mermaid
+sequenceDiagram
+    participant P as Player
+    participant H as Host
+    participant A as Agent
+    P->>H: CHAT "I get behind the orc and hit it with my axe"
+    H->>A: SAID
+    Note over A: translate into squares and a weapon
+    A->>H: PROPOSE {combatant, move, target, weapon, text}
+    Note over H: legal square? free? in the fight?<br/>refused here, before anybody is shown it
+    H->>P: ACTION -- the chat box holds until it is answered
+    Note over P: do it, say more, or refuse
+    P->>H: ACTED {accept}
+    H->>H: move, then roll the attack on the host
+    H->>P: ROLLED + ENCOUNTER + the target's hit points
+```
+
+`_encounter_for` sends only the **running** fight. A DM preparing next week's
+ambush in another encounter is doing exactly the thing the party must not see,
+and "which fight is on screen" is not a distinction worth trusting to a panel.
+
 ### Reconnecting
 
 Cheap on purpose, because a session that drops mid-fight should come back
@@ -362,10 +535,10 @@ canon_keeper/
   db/               connection, migrate, migrations/
   repo/             one module per table
   net/              server, client, projection, cache, discovery, funnel, state
-  rules/            sheet schema, derivation, validation
+  rules/            sheet schema, derivation, validation, attacks
   content/          SRD 5.1 + homebrew merge
   audio/            capture, transcription, dictation
-  panels/           characters, cities, transcript, table
+  panels/           characters, cities, transcript, table, encounter
   templates/        one-shots: the format, the builder, and the bundled JSON
 ```
 
@@ -402,6 +575,23 @@ Written down so they are choices rather than surprises.
   whether it writes a good scene is not, and cannot be by a unit test.
 - **No guided level-up.** Levels can be set; nothing prompts for the HP roll or
   the ASI.
+- **A player cannot move their own token directly.** They ask, in words, and
+  confirm what comes back. The host refuses a player's `MOVE` outright, because
+  "your own token, but only on your turn, and only that far" is a rule that
+  needs the care the edit path took to get right.
+- **Obstacles are the only terrain.** A square is empty or blocked; there is no
+  difficult ground, no elevation, and no line of sight. What cover *does* is a
+  ruling the DM makes — the app's job is to agree with everyone about where the
+  pillar is.
+- **Attacks are the simple case only.** A weapon on the sheet, a d20, and
+  reach. No spells, no advantage, no opportunity attacks, no sneak attack, and
+  everyone is assumed proficient with what they are carrying.
+- **A monster's statblock is a character sheet with overrides.** It works, and
+  a goblin is not a level-one nobody with a class; `overrides.ac` and
+  `overrides.hp_max` are doing the load-bearing part, and its traits are prose
+  in a notes field.
+- **The agent's output quality is still unmeasured**, tools included. Whether
+  it lays a fight out sensibly is not something a unit test can answer.
 - **The homebrew merge layer has no editing UI.** `Content` merges it; nothing
   writes to it.
 - **MCP sends campaign context to whatever model the client runs.** Fine for a

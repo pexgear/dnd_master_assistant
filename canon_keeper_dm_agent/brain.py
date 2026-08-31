@@ -15,7 +15,8 @@ import logging
 import os
 from dataclasses import dataclass
 
-from canon_keeper_dm_agent.context import SYSTEM, build_turn_prompt
+from canon_keeper_dm_agent.context import SYSTEM, WITH_TOOLS, build_turn_prompt
+from canon_keeper_dm_agent.tools import TOOLS
 from canon_keeper_client import Table
 
 log = logging.getLogger("canonkeeper.agent.brain")
@@ -37,6 +38,17 @@ PRICES = {
 #: A hard ceiling on the reply. The agent's characteristic failure is talking
 #: too much, and a cap is the one defence that cannot be argued out of.
 MAX_TOKENS = 400
+
+#: Higher when it can act, because setting a fight up is a long tool call
+#: before it is a short line of prose. The cap on *speech* is still the system
+#: prompt's two-to-four sentences; this one only stops a truncated tool call.
+MAX_TOKENS_WITH_TOOLS = 2000
+
+#: How many times round the ask-act-ask loop before giving up on a turn. A
+#: fight is one call plus a look; anything past this is a model stuck, and a
+#: table waiting on a machine having an argument with itself is worse than a
+#: turn that quietly ends.
+MAX_TOOL_ROUNDS = 5
 
 #: A table is waiting. Two to four sentences of dialogue is not a hard problem,
 #: and a considered answer that arrives after everyone has moved on is worse
@@ -140,19 +152,53 @@ class Brain:
             self._client = anthropic.Anthropic(default_headers=headers)
         return self._client
 
-    def answer(self, table: Table, spoken: list[tuple[str, str]]) -> str:
-        """One turn's reply to everything said since the last one."""
+    def answer(self, table: Table, spoken: list[tuple[str, str]], run_tool=None) -> str:
+        """One turn's reply to everything said since the last one.
+
+        ``run_tool(name, arguments) -> str`` is optional. Given one, the model
+        is offered the tools in :mod:`canon_keeper_dm_agent.tools` and this
+        loops until it stops asking for them -- so "goblins burst from the
+        rubbish" and the fight appearing on everyone's map are one turn rather
+        than a description and a chore.
+
+        It is synchronous because this whole method runs off the event loop in
+        a worker thread. The caller bridges back; see ``__main__``.
+        """
         client = self._ensure_client()
         prompt = build_turn_prompt(table, spoken)
         log.debug("prompt is %d characters", len(prompt))
 
-        response = self._ask(client, prompt)
-        self._record(response)
-        return "".join(
-            block.text for block in response.content if getattr(block, "type", "") == "text"
-        ).strip()
+        messages: list[dict] = [{"role": "user", "content": prompt}]
+        response = None
 
-    def _ask(self, client, prompt: str):
+        for _round in range(MAX_TOOL_ROUNDS):
+            response = self._ask(client, messages, tools=run_tool is not None)
+            self._record(response)
+            if run_tool is None or getattr(response, "stop_reason", "") != "tool_use":
+                break
+
+            results = []
+            for block in response.content:
+                if getattr(block, "type", "") != "tool_use":
+                    continue
+                log.info("tool: %s %s", block.name, block.input)
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(run_tool(block.name, dict(block.input or {}))),
+                    }
+                )
+            if not results:
+                break
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": results})
+        else:
+            log.warning("gave up after %d rounds of tool calls", MAX_TOOL_ROUNDS)
+
+        return _text_of(response)
+
+    def _ask(self, client, messages: list[dict], tools: bool = False):
         """One request, retried once without ``effort`` if that is the objection.
 
         The hard-coded list above will go out of date -- it is a list of other
@@ -162,10 +208,12 @@ class Brain:
         """
         message = {
             "model": self._model,
-            "max_tokens": MAX_TOKENS,
-            "system": self._system,
-            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": MAX_TOKENS_WITH_TOOLS if tools else MAX_TOKENS,
+            "system": self._system + ("\n\n" + WITH_TOOLS if tools else ""),
+            "messages": messages,
         }
+        if tools:
+            message["tools"] = TOOLS
         if self._effort:
             message["output_config"] = {"effort": EFFORT}
 
@@ -205,6 +253,17 @@ class Brain:
             turn.dollars,
             self.total.dollars,
         )
+
+
+def _text_of(response) -> str:
+    """The prose, ignoring the tool calls that got us here."""
+    if response is None:
+        return ""
+    return "".join(
+        block.text
+        for block in response.content
+        if getattr(block, "type", "") == "text"
+    ).strip()
 
 
 def _objects_to_effort(exc: BaseException) -> bool:

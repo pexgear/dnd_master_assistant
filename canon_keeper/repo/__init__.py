@@ -7,6 +7,7 @@ import sqlite3
 from canon_keeper.repo.accounts import Account, AccountRepo
 from canon_keeper.repo.campaigns import CampaignRepo
 from canon_keeper.repo.chat import ChatMessage, ChatRepo
+from canon_keeper.repo.encounters import Combatant, Encounter, EncounterRepo
 from canon_keeper.repo.entities import Entity, EntityRepo, StaleWrite
 from canon_keeper.repo.facts import Fact, FactRepo
 from canon_keeper.repo.layouts import LayoutRepo
@@ -24,6 +25,7 @@ class Repos:
         self.accounts = AccountRepo(conn)
         self.campaigns = CampaignRepo(conn)
         self.chat = ChatRepo(conn)
+        self.encounters = EncounterRepo(conn)
         self.entities = EntityRepo(conn)
         self.facts = FactRepo(conn)
         self.layouts = LayoutRepo(conn)
@@ -52,6 +54,9 @@ __all__ = [
     "AccountRepo",
     "ChatMessage",
     "ChatRepo",
+    "Combatant",
+    "Encounter",
+    "EncounterRepo",
     "Proposal",
     "ProposalRepo",
     "Share",

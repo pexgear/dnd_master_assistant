@@ -102,6 +102,11 @@ class Template:
     accounts: list[dict] = field(default_factory=list)
     shares: list[dict] = field(default_factory=list)
     storyline: list[Beat] = field(default_factory=list)
+    #: An optional fight to open on: grid size, and who is standing where.
+    #: Initiatives are stated rather than rolled, because a one-shot that laid
+    #: its combatants out in a different order each time would not be the same
+    #: evening twice.
+    encounter: dict = field(default_factory=dict)
     #: A template meant for exercising the app rather than playing. Kept out of
     #: the chooser's way, since "Four Players And A Goblin" is not an evening.
     for_testing: bool = False
@@ -146,6 +151,7 @@ def load(path: Path) -> Template:
             for beat in (raw.get("storyline") or [])
             if isinstance(beat, dict)
         ],
+        encounter=dict(raw.get("encounter") or {}),
         for_testing=bool(raw.get("for_testing")),
     )
 

@@ -13,13 +13,24 @@
       "data": {
         "status": "well",
         "hp": 10, "max_hp": 10,
+        "conditions": "",
         "party_knows": "Knows the road. Keeps checking behind.",
         "sheet": {
           "schema": 1,
-          "species": "Human", "class": "Rogue", "level": 1,
+          "species": "human", "subspecies": "",
+          "class_index": "rogue", "subclass": "",
+          "level": 1,
+          "background": "",
           "abilities": {"str": 10, "dex": 16, "con": 13, "int": 12, "wis": 14, "cha": 12},
-          "hp": 10, "max_hp": 10,
-          "skills": ["Perception", "Stealth"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["perception", "stealth", "investigation", "insight"],
+          "languages": ["Common", "Thieves' cant"],
+          "equipment": ["leather-armor", "shortsword", "dagger", "shortbow"],
+          "hp_rolled": [],
+          "hp_current": 10,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -30,14 +41,27 @@
       "summary": "A travelling priest, going wherever he is sent.",
       "data": {
         "status": "well",
-        "hp": 11, "max_hp": 11,
+        "hp": 10, "max_hp": 10,
+        "conditions": "",
         "party_knows": "Kind, and asks a great many questions.",
         "sheet": {
           "schema": 1,
-          "species": "Human", "class": "Cleric", "level": 1,
+          "species": "human", "subspecies": "",
+          "class_index": "cleric", "subclass": "life",
+          "level": 1,
+          "background": "acolyte",
           "abilities": {"str": 12, "dex": 10, "con": 14, "int": 11, "wis": 16, "cha": 13},
-          "hp": 11, "max_hp": 11,
-          "skills": ["Insight", "Religion"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["insight", "religion"],
+          "languages": ["Common", "Celestial"],
+          "equipment": ["scale-mail", "shield", "mace"],
+          "spells_known": ["cure-wounds", "bless", "guiding-bolt", "sacred-flame"],
+          "spells_prepared": ["cure-wounds", "bless"],
+          "hp_rolled": [],
+          "hp_current": 10,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -49,13 +73,24 @@
       "data": {
         "status": "well",
         "hp": 13, "max_hp": 13,
+        "conditions": "",
         "party_knows": "Armed, and not hiding it.",
         "sheet": {
           "schema": 1,
-          "species": "Half-Orc", "class": "Fighter", "level": 1,
+          "species": "half-orc", "subspecies": "",
+          "class_index": "fighter", "subclass": "",
+          "level": 1,
+          "background": "",
           "abilities": {"str": 16, "dex": 13, "con": 15, "int": 9, "wis": 12, "cha": 10},
-          "hp": 13, "max_hp": 13,
-          "skills": ["Athletics", "Intimidation"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["athletics", "intimidation"],
+          "languages": ["Common", "Orc"],
+          "equipment": ["chain-mail", "greataxe", "javelin"],
+          "hp_rolled": [],
+          "hp_current": 13,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -69,7 +104,18 @@
         "voice": "slow, flat, never turns round",
         "motive": "get through the pass and be paid",
         "secrets": "Took forty gold to make one extra stop tonight, and not to mention it.",
-        "party_knows": "The driver. Not talkative."
+        "party_knows": "The driver. Not talkative.",
+        "hp": 4, "max_hp": 4,
+        "sheet": {
+          "schema": 1,
+          "species": "human", "class_index": "", "level": 1,
+          "abilities": {"str": 12, "dex": 10, "con": 12, "int": 10, "wis": 12, "cha": 8},
+          "skill_proficiencies": ["animal-handling", "survival"],
+          "equipment": ["club"],
+          "hp_current": 4,
+          "overrides": {"ac": 10, "hp_max": 4},
+          "player_notes": "Commoner, CR 0. Thirty years of this road, and no wish to fight on it."
+        }
       }
     },
     {
@@ -82,7 +128,18 @@
         "voice": "careful, over-polite",
         "motive": "reach the far side of the pass alive",
         "secrets": "Witnessed a killing in the town behind them and is the only one who can name who did it.",
-        "party_knows": "A passenger. Says little."
+        "party_knows": "A passenger. Says little.",
+        "hp": 9, "max_hp": 9,
+        "sheet": {
+          "schema": 1,
+          "species": "human", "class_index": "", "level": 2,
+          "abilities": {"str": 10, "dex": 12, "con": 10, "int": 14, "wis": 12, "cha": 14},
+          "skill_proficiencies": ["deception", "insight", "persuasion"],
+          "equipment": ["dagger"],
+          "hp_current": 9,
+          "overrides": {"ac": 11, "hp_max": 9},
+          "player_notes": "Noble, CR 1/8. Not a fighter, and the whole evening is about keeping them alive."
+        }
       }
     },
     {
@@ -95,7 +152,19 @@
         "voice": "warm, easy, asks about you",
         "motive": "make sure Miren Ashe does not reach the far side",
         "secrets": "Paid the driver for the extra stop. Intends to use it.",
-        "party_knows": "A passenger. Good company."
+        "party_knows": "A passenger. Good company.",
+        "hp": 27, "max_hp": 27,
+        "conditions": "",
+        "sheet": {
+          "schema": 1,
+          "species": "human", "class_index": "", "level": 3,
+          "abilities": {"str": 11, "dex": 16, "con": 12, "int": 12, "wis": 14, "cha": 14},
+          "skill_proficiencies": ["deception", "perception", "stealth", "persuasion"],
+          "equipment": ["leather-armor", "rapier", "shortsword", "crossbow-light"],
+          "hp_current": 27,
+          "overrides": {"ac": 15, "hp_max": 27},
+          "player_notes": "Assassin-shaped, about CR 2. Sneak Attack 2d6, and will not start anything with witnesses in the coach."
+        }
       }
     },
     {

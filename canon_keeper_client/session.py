@@ -68,13 +68,73 @@ class Table:
     #: campaign's whole history, and an unbounded list is a slow leak.
     recent: list[dict] = field(default_factory=list)
     autopilot: bool = False
+    #: The fight, as the host projected it for this login. Empty when there is
+    #: none. An agent running a combat needs to know where everybody is.
+    encounter: dict = field(default_factory=dict)
 
-    RECENT_LIMIT = 40
+    #: Deep enough to hold an evening's exchange rather than the last thing
+    #: anybody said. Lines arrive in bursts -- three people typing at once are
+    #: three messages in two seconds -- so a short window routinely cuts off the
+    #: beginning of the thing being answered.
+    RECENT_LIMIT = 120
 
-    def remember(self, speaker: str, role: str, text: str) -> None:
-        self.recent.append({"speaker": speaker, "role": role, "text": text})
+    def remember(
+        self,
+        speaker: str,
+        role: str,
+        text: str,
+        at: float = 0.0,
+        aside: bool = False,
+    ) -> None:
+        """Keep a line, and when it was said.
+
+        The timestamp is not decoration. It is what lets a reader tell one
+        exchange from the next: six lines in four seconds are one conversation,
+        and the same six lines over ten minutes are not.
+
+        ``aside`` marks a DM speaking while autopilot is on. The party did not
+        hear it -- it is direction, not dialogue, and repeating it back to them
+        word for word would be the one thing it must not do with it.
+        """
+        self.recent.append(
+            {
+                "speaker": speaker,
+                "role": role,
+                "text": text,
+                "at": float(at or 0.0),
+                "aside": bool(aside),
+            }
+        )
         if len(self.recent) > self.RECENT_LIMIT:
             del self.recent[: -self.RECENT_LIMIT]
+
+    @property
+    def fighting(self) -> bool:
+        return bool(self.encounter)
+
+    def entity_named(self, name: str) -> dict | None:
+        """Find a creature by what it is called, the way a person would.
+
+        Exact first, then case-insensitively, then by first name -- a model
+        told "Brok Ironfoot" will write "Brok", and refusing that would make it
+        look broken over a surname.
+        """
+        wanted = (name or "").strip().lower()
+        if not wanted:
+            return None
+        entities = list(self.entities.values())
+
+        for entity in entities:
+            if str(entity.get("name", "")).lower() == wanted:
+                return entity
+        for entity in entities:
+            words = str(entity.get("name", "")).lower().split()
+            if words and (words[0] == wanted or wanted in words):
+                return entity
+        for entity in entities:
+            if wanted in str(entity.get("name", "")).lower():
+                return entity
+        return None
 
 
 class AgentSession:
@@ -93,6 +153,10 @@ class AgentSession:
         self._on_said = on_said
         self._socket: Any = None
         self.table = Table()
+        #: Set every time the host tells us what the fight looks like. A tool
+        #: that has just asked for a change waits on this rather than guessing
+        #: how long the host takes -- and gets the host's answer, not its own.
+        self.encounter_arrived = asyncio.Event()
 
     # ------------------------------------------------------------------ running
 
@@ -152,6 +216,86 @@ class AgentSession:
         if self._socket is None:
             return
         await self._socket.send(encode(MessageType.SPENT, **spend))
+
+    # ------------------------------------------------------------- the fight
+    #
+    # Every one of these is a *request*. The host decides whether this login may
+    # run a fight -- it may, exactly while autopilot is on -- and nothing here
+    # changes anything by itself. What comes back is an ENCOUNTER frame, which
+    # is the only thing that updates `table.encounter`.
+
+    async def ask(self, message_type, **payload) -> bool:
+        if self._socket is None:
+            return False
+        await self._socket.send(encode(message_type, **payload))
+        return True
+
+    async def start_fight(self, name: str, width: int, height: int) -> bool:
+        return await self.ask(
+            MessageType.FIGHT, name=name, width=int(width), height=int(height)
+        )
+
+    async def enlist(
+        self,
+        entity_id: int,
+        x: int | None = None,
+        y: int | None = None,
+        initiative: int | None = None,
+    ) -> bool:
+        return await self.ask(
+            MessageType.ENLIST, entity=entity_id, x=x, y=y, initiative=initiative
+        )
+
+    async def move(self, combatant_id: int, x: int | None, y: int | None) -> bool:
+        return await self.ask(MessageType.MOVE, combatant=combatant_id, x=x, y=y)
+
+    async def set_terrain(self, x: int, y: int, on: bool = True) -> bool:
+        return await self.ask(MessageType.TERRAIN, x=int(x), y=int(y), on=bool(on))
+
+    async def turn(self, action: str) -> bool:
+        return await self.ask(MessageType.TURN, action=action)
+
+    async def propose(
+        self,
+        combatant_id: int,
+        move: list | None = None,
+        target: int | None = None,
+        weapon: str = "",
+        text: str = "",
+    ) -> bool:
+        """Put a formalised turn to the player whose character it is.
+
+        A proposal and nothing more. The host checks it is legal, the player
+        accepts or refuses, and only then does anything move.
+        """
+        return await self.ask(
+            MessageType.PROPOSE,
+            combatant=combatant_id,
+            move=move,
+            target=target,
+            weapon=weapon,
+            text=text,
+        )
+
+    async def set_initiative(self, combatant_id: int, value: int | None) -> bool:
+        return await self.ask(
+            MessageType.INITIATIVE, combatant=combatant_id, value=value
+        )
+
+    async def wait_for_the_fight(self, timeout: float = 2.0) -> dict:
+        """Wait for the host's next word on the fight, then return it.
+
+        A tool that reported success the moment it sent a frame would be
+        reporting that it typed, not that anything happened. Timing out returns
+        whatever we last knew, which is still the host's account and not ours.
+        """
+        self.encounter_arrived.clear()
+        try:
+            async with asyncio.timeout(timeout):
+                await self.encounter_arrived.wait()
+        except TimeoutError:
+            log.debug("no word from the host about the fight within %ss", timeout)
+        return self.table.encounter
 
     # --------------------------------------------------------------- handshake
 
@@ -215,6 +359,11 @@ class AgentSession:
         elif message.type == MessageType.ENTITY_GONE:
             table.entities.pop(message.get("id"), None)
 
+        elif message.type == MessageType.ENCOUNTER:
+            fight = message.get("encounter")
+            table.encounter = fight if isinstance(fight, dict) else {}
+            self.encounter_arrived.set()
+
         elif message.type == MessageType.FACTS:
             facts = message.get("facts")
             table.facts = facts if isinstance(facts, list) else []
@@ -239,13 +388,20 @@ class AgentSession:
                         str(entry.get("speaker", "")),
                         str(entry.get("role", "")),
                         str(entry["text"]),
+                        at=entry.get("at") or 0.0,
                     )
 
         elif message.type == MessageType.SAID:
             raw_member = message.get("member") or {}
             member = Member.from_dict(raw_member if isinstance(raw_member, dict) else {})
             text = str(message.get("text", ""))
-            table.remember(member.label, member.role, text)
+            table.remember(
+                member.label,
+                member.role,
+                text,
+                at=message.ts,
+                aside=bool(message.get("aside")),
+            )
             # Our own line coming back. Answering it would be a conversation
             # with ourselves, and a fast one.
             if table.me is not None and member.id == table.me.id:
@@ -256,7 +412,12 @@ class AgentSession:
             table.remember(
                 str((message.get("member") or {}).get("name", "")),
                 "",
-                str(message.get("text", "") or message.get("result", "")),
+                str(
+                    message.get("description", "")
+                    or message.get("text", "")
+                    or message.get("result", "")
+                ),
+                at=message.ts,
             )
 
         elif message.type == MessageType.ERROR:

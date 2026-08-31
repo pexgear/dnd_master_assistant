@@ -266,7 +266,7 @@ def test_chat_shows_the_character_name(qtbot, server):
     try:
         with qtbot.waitSignal(watcher.said, timeout=5000) as blocker:
             marco.send_chat("I check for traps.")
-        member, text = blocker.args
+        member, text, _aside = blocker.args
         assert member.character == "Elara"
         assert member.label == "Elara"
         assert text == "I check for traps."

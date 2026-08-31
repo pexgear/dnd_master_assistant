@@ -3,7 +3,7 @@
   "name": "Test Combat",
   "for_testing": true,
   "summary": "Initiative on the first line. Three characters, four goblins, one room. Ends when the fight does.",
-  "about": "A fight and nothing else, for trying hit points, conditions, dice and the approval queue without playing an evening first.\n\nThe party are already in the room and already seen. There is no lead-up and no aftermath: it starts on initiative and ends when one side is down.\n\nLogins: marco / elsa / dana, password 'goblin-teeth'. The DM login is 'gm' with 'run-the-game'.\n\nThe goblins are shared with the party deliberately, so players can watch their hit points fall.",
+  "about": "A fight and nothing else, for trying hit points, conditions, dice, the map and the approval queue without playing an evening first.\n\nThe party are already in the room and already seen. There is no lead-up and no aftermath: it starts on initiative and ends when one side is down.\n\nThe Combat panel opens on round one with everyone placed and the order already rolled -- the same order every time, because a one-shot run twice should be the same evening twice.\n\nLogins: marco / elsa / dana, password 'goblin-teeth'. The DM login is 'gm' with 'run-the-game'.\n\nThe goblins are shared with the party deliberately, so players can watch their hit points fall and see them on the map.",
 
   "entities": [
     {
@@ -13,17 +13,27 @@
       "summary": "Wizard. Two spells and no armour.",
       "data": {
         "status": "well",
-        "hp": 8, "max_hp": 8,
+        "hp": 12, "max_hp": 12,
         "conditions": "",
         "party_knows": "The wizard.",
         "sheet": {
           "schema": 1,
-          "species": "Elf", "class": "Wizard", "level": 2,
+          "species": "elf", "subspecies": "high-elf",
+          "class_index": "wizard", "subclass": "evocation",
+          "level": 2,
+          "background": "",
           "abilities": {"str": 8, "dex": 14, "con": 12, "int": 16, "wis": 13, "cha": 10},
-          "hp": 8, "max_hp": 12,
-          "skills": ["Arcana", "Investigation"],
-          "spells": ["Magic Missile", "Shield", "Burning Hands"],
-          "prepared": ["Magic Missile", "Shield"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["arcana", "investigation"],
+          "languages": ["Common", "Elvish"],
+          "equipment": ["quarterstaff", "dagger"],
+          "spells_known": ["magic-missile", "shield", "burning-hands"],
+          "spells_prepared": ["magic-missile", "shield"],
+          "hp_rolled": [],
+          "hp_current": 12,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -34,16 +44,25 @@
       "summary": "Fighter. In front, as usual.",
       "data": {
         "status": "wounded",
-        "hp": 9, "max_hp": 20,
+        "hp": 9, "max_hp": 22,
         "conditions": "",
         "party_knows": "The one holding the line.",
         "sheet": {
           "schema": 1,
-          "species": "Dwarf", "class": "Fighter", "level": 2,
+          "species": "dwarf", "subspecies": "hill-dwarf",
+          "class_index": "fighter", "subclass": "",
+          "level": 2,
+          "background": "",
           "abilities": {"str": 16, "dex": 12, "con": 15, "int": 8, "wis": 12, "cha": 10},
-          "hp": 9, "max_hp": 20,
-          "skills": ["Athletics", "Perception"],
-          "equipment": ["Chain mail", "Shield", "Battleaxe"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["athletics", "perception"],
+          "languages": ["Common", "Dwarvish"],
+          "equipment": ["chain-mail", "shield", "battleaxe", "handaxe"],
+          "hp_rolled": [],
+          "hp_current": 9,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -54,16 +73,25 @@
       "summary": "Rogue. Behind the goblins already.",
       "data": {
         "status": "well",
-        "hp": 14, "max_hp": 14,
+        "hp": 15, "max_hp": 15,
         "conditions": "",
         "party_knows": "Somewhere behind you.",
         "sheet": {
           "schema": 1,
-          "species": "Halfling", "class": "Rogue", "level": 2,
+          "species": "halfling", "subspecies": "lightfoot-halfling",
+          "class_index": "rogue", "subclass": "",
+          "level": 2,
+          "background": "",
           "abilities": {"str": 10, "dex": 16, "con": 12, "int": 12, "wis": 13, "cha": 14},
-          "hp": 14, "max_hp": 14,
-          "skills": ["Stealth", "Sleight of Hand", "Acrobatics"],
-          "equipment": ["Leather armour", "Shortsword", "Shortbow"]
+          "ability_improvements": {},
+          "skill_proficiencies": ["stealth", "sleight-of-hand", "acrobatics", "perception"],
+          "languages": ["Common", "Halfling"],
+          "equipment": ["leather-armor", "shortsword", "shortbow", "dagger"],
+          "hp_rolled": [],
+          "hp_current": 15,
+          "temp_hp": 0,
+          "conditions": [],
+          "death_saves": {"successes": 0, "failures": 0}
         }
       }
     },
@@ -79,7 +107,17 @@
         "voice": "shrill, wheedling",
         "motive": "survive, and be in charge of whoever is left",
         "secrets": "Will offer to sell out the others at half health.",
-        "party_knows": "The one shouting at the others."
+        "party_knows": "The one shouting at the others.",
+        "sheet": {
+          "schema": 1,
+          "species": "", "class_index": "", "level": 1,
+          "abilities": {"str": 10, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 10},
+          "skill_proficiencies": ["stealth"],
+          "equipment": ["scimitar", "javelin", "chain-shirt", "shield"],
+          "hp_current": 12,
+          "overrides": {"ac": 17, "hp_max": 12},
+          "player_notes": "Goblin boss, CR 1. Nimble Escape, and Redirect Attack: swap places with a goblin within 5 feet."
+        }
       }
     },
     {
@@ -92,7 +130,17 @@
         "hp": 7, "max_hp": 7,
         "conditions": "",
         "motive": "stay on the ledge",
-        "party_knows": "Up on the ledge with a bow."
+        "party_knows": "Up on the ledge with a bow.",
+        "sheet": {
+          "schema": 1,
+          "species": "", "class_index": "", "level": 1,
+          "abilities": {"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8},
+          "skill_proficiencies": ["stealth"],
+          "equipment": ["shortbow", "scimitar", "leather-armor", "shield"],
+          "hp_current": 7,
+          "overrides": {"ac": 15, "hp_max": 7},
+          "player_notes": "Goblin, CR 1/4. Nimble Escape. Half cover from the ledge."
+        }
       }
     },
     {
@@ -104,7 +152,17 @@
         "status": "well",
         "hp": 7, "max_hp": 7,
         "conditions": "",
-        "party_knows": "In the doorway."
+        "party_knows": "In the doorway.",
+        "sheet": {
+          "schema": 1,
+          "species": "", "class_index": "", "level": 1,
+          "abilities": {"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8},
+          "skill_proficiencies": ["stealth"],
+          "equipment": ["scimitar", "leather-armor", "shield"],
+          "hp_current": 7,
+          "overrides": {"ac": 15, "hp_max": 7},
+          "player_notes": "Goblin, CR 1/4. Nimble Escape."
+        }
       }
     },
     {
@@ -117,7 +175,18 @@
         "hp": 5, "max_hp": 7,
         "conditions": "prone",
         "secrets": "Will run at the first death.",
-        "party_knows": "Something moved in the rubbish."
+        "party_knows": "Something moved in the rubbish.",
+        "sheet": {
+          "schema": 1,
+          "species": "", "class_index": "", "level": 1,
+          "abilities": {"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8},
+          "skill_proficiencies": ["stealth"],
+          "equipment": ["scimitar", "leather-armor", "shield"],
+          "hp_current": 5,
+          "conditions": ["prone"],
+          "overrides": {"ac": 15, "hp_max": 7},
+          "player_notes": "Goblin, CR 1/4. Nimble Escape. Already hurt, and already prone in the rubbish."
+        }
       }
     },
     {
@@ -127,7 +196,7 @@
       "summary": "Twenty feet across, a stream down the middle, a ledge on the left.",
       "data": {
         "place_type": "room",
-        "shared_notes": "Wet stone, a stream you could slip in, and a ledge about ten feet up on the left."
+        "shared_notes": "Wet stone, a stream you could slip in, and a ledge about ten feet up on the left. Fallen rock and heaped rubbish to get behind."
       }
     }
   ],
@@ -147,12 +216,39 @@
   ],
 
   "shares": [
+    {"entity": "elara"},
+    {"entity": "brok"},
+    {"entity": "sable"},
     {"entity": "cave"},
     {"entity": "boss"},
     {"entity": "goblin-a"},
     {"entity": "goblin-b"},
     {"entity": "goblin-c"}
   ],
+
+  "encounter": {
+    "name": "The Cave Mouth",
+    "width": 16,
+    "height": 12,
+    "running": true,
+    "begun": true,
+    "_note": "0,0 is the middle of the map. 16 across is x -8 to 7; 12 down is y -6 to 5.",
+    "obstacles": [
+      [-8, -5], [-8, -3],
+      [-2, -4], [-2, -3], [-2, -2],
+      [-7, 3], [-5, 3],
+      [3, -1], [3, 0]
+    ],
+    "combatants": [
+      {"entity": "sable",    "initiative": 19, "tiebreak": 3, "x": -3, "y": -3},
+      {"entity": "goblin-a", "initiative": 16, "tiebreak": 2, "x": -7, "y": -4},
+      {"entity": "boss",     "initiative": 14, "tiebreak": 2, "x": -4, "y": 0},
+      {"entity": "brok",     "initiative": 12, "tiebreak": 1, "x": -1, "y": 0},
+      {"entity": "goblin-b", "initiative": 11, "tiebreak": 2, "x": -5, "y": 2},
+      {"entity": "elara",    "initiative": 9,  "tiebreak": 2, "x": 1,  "y": 1},
+      {"entity": "goblin-c", "initiative": 6,  "tiebreak": 2, "x": -6, "y": 3}
+    ]
+  },
 
   "storyline": [
     {
