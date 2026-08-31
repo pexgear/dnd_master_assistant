@@ -203,6 +203,139 @@ your DM", because that is what happened.
 
 ---
 
+## The main flows
+
+The five paths worth knowing before changing anything. Each one is the same
+argument in a different costume: **a client asks, the host decides, and what
+comes back is filtered for whoever asked.**
+
+### Starting up
+
+A campaign comes first, because a Characters panel with no campaign behind it
+is a list of nobody.
+
+`__main__` → `CampaignDialog` (or straight in, if this campaign is set to open
+automatically) → `Launch` → `app.build_context` → the plugin loader discovers
+panels for that `role` → `MainWindow` docks them and restores the saved layout.
+
+A remote launch produces `role = "player"` and a `pending_join`, so the Table
+panel connects without asking for the same password twice.
+
+### Joining a session
+
+The whole handshake, including the part that is deliberately unhelpful.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant H as Host
+    C->>H: HELLO {username, known versions, campaign_key}
+    H->>C: CHALLENGE {salt, nonce}
+    Note over C: verifier = scrypt(password, salt)<br/>the password never leaves
+    C->>H: LOGIN {proof = HMAC(verifier, nonce)}
+    Note over H: verify; every failure returns<br/>one identical message
+    H->>C: WELCOME {you, campaign, campaign_key, members}
+    H->>C: HISTORY {last 100 messages}
+    H->>C: SNAPSHOT {what this account may see}
+    H->>C: PANEL_NAMES
+    H-->>C: PROPOSALS + FACTS (DM viewers only)
+    H->>C: AUTOPILOT {on, by}
+    H->>C: ROSTER, and "X joined" to everyone else
+```
+
+The decoy salt matters: an unknown username still gets a plausible challenge,
+derived deterministically from the name, so timing and shape cannot be used to
+discover who plays in the campaign.
+
+### A player changes their character
+
+Nothing is applied. Everything is a request, hit points included.
+
+```mermaid
+sequenceDiagram
+    participant P as Player
+    participant H as Host
+    participant D as DM
+    P->>H: EDIT {id, changes}   (no version -- see below)
+    Note over H: owns it? exists?<br/>base = what we last sent *this* connection
+    alt the DM moved it since
+        H->>P: ERROR stale + the entity as it now stands
+    else not a legal sheet
+        H->>P: ERROR illegal
+    else
+        H->>H: record a proposal
+        H->>D: PROPOSALS + a private note
+        alt approved
+            H->>H: apply, bump version
+            H->>P: ENTITY (and to everyone it is shared with)
+            H->>D: entity_applied → the DM's own panels re-read
+        else refused
+            H->>P: private message with the reason
+        end
+    end
+```
+
+**The client sends no version.** The base is `_Session.sent[entity_id]` — what
+the host last sent *that connection*. A client that chose its own version could
+pick a convenient one, or omit it and get an unconditional write.
+
+### The DM changes something
+
+The mirror image, and much shorter, because the DM's app *is* the host.
+
+`panel writes via repos` → `bus.entity_changed` → the Table panel calls
+`refuse_conflicting(id)` then `publish_entity(id)` → for each connection:
+visible to them? → `project_entity` for that viewer → `ENTITY`, or
+`ENTITY_GONE` if it has been deleted or unshared.
+
+`refuse_conflicting` is skipped when the change came from a player's approved
+request — otherwise approving a level-up would cancel the damage they took a
+moment earlier.
+
+### Autopilot answering
+
+```mermaid
+sequenceDiagram
+    participant P as Player
+    participant H as Host
+    participant A as Agent
+    P->>H: CHAT
+    H->>A: SAID (broadcast)
+    Note over A: queue the line, restart the pause timer
+    P->>H: CHAT (still talking)
+    H->>A: SAID
+    Note over A: ...the table goes quiet...
+    A->>H: BUSY {on}
+    H->>P: BUSY_NOW → "Autopilot is writing..."
+    Note over A: one model call, all the lines
+    A->>H: BUSY {off} + SPENT
+    H-->>H: SPEND → DM connections only
+    A->>H: CHAT
+    Note over H: is_agent and autopilot off? refuse
+    H->>P: SAID
+```
+
+Three gates, and each exists because the alternative is worse at a table: the
+agent waits for a lull rather than answering every line; only one answer is
+ever in flight; and the host refuses its chat outright whenever autopilot is
+off, so "off" is not a promise the agent keeps.
+
+### Reconnecting
+
+Cheap on purpose, because a session that drops mid-fight should come back
+without re-sending the campaign.
+
+`cache.load(url, user)` → entities **and** the `campaign_key` they came from →
+`HELLO {known, campaign}` → the host's `_trusted_versions` **discards the whole
+lot if the key does not match**, because a cache from another campaign has the
+same ids and the same versions → `snapshot_since` → `SNAPSHOT {changed, gone,
+partial: true}`.
+
+That key check is not defensive programming. Without it a player was served a
+different campaign's character, which is how it came to exist.
+
+---
+
 ## Decisions, and what they cost
 
 | Decision | Why | What it costs |

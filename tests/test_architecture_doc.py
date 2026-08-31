@@ -165,3 +165,68 @@ def test_the_version_is_not_hard_coded_anywhere_in_it(text):
         "ARCHITECTURE.md names a version number. It describes the shape, which "
         "outlives any release; CHANGELOG.md is where versions belong."
     )
+
+
+# -------------------------------------------------------------------- the flows
+#
+# The diagrams name real message types and real methods. Naming one that does
+# not exist is the specific way a flow diagram goes wrong: it stays plausible.
+
+
+def test_every_message_type_named_in_a_diagram_exists(text):
+    from canon_keeper_protocol import MessageType
+
+    known = {member.name for member in MessageType}
+    diagrams = re.findall(r"```mermaid(.*?)```", text, re.S)
+    assert diagrams, "the flow diagrams have gone"
+
+    named = set()
+    for block in diagrams:
+        # Only the arrow lines, and only outside the payload. A `Note over` is
+        # prose, and `{proof = HMAC(...)}` describes a payload -- neither is
+        # claiming HMAC is a message type.
+        for line in block.splitlines():
+            if "->>" not in line:
+                continue
+            spoken = re.sub(r"\{.*?\}|\(.*?\)", "", line)
+            named |= set(re.findall(r"\b([A-Z][A-Z_]{3,})\b", spoken))
+
+    ghosts = named - known
+    assert not ghosts, (
+        f"{ghosts} appear in a flow diagram but are not message types. A "
+        "diagram naming a message that does not exist stays plausible, which "
+        "is what makes it dangerous."
+    )
+
+
+@pytest.mark.parametrize(
+    "described",
+    [
+        ("canon_keeper.net.server", "SessionServer", "publish_entity"),
+        ("canon_keeper.net.server", "SessionServer", "refuse_conflicting"),
+        ("canon_keeper.net.server", "SessionServer", "decide"),
+        ("canon_keeper.net.projection", None, "project_entity"),
+        ("canon_keeper.net.projection", None, "snapshot_since"),
+        ("canon_keeper.campaigns", None, "campaign_key"),
+    ],
+)
+def test_the_functions_the_flows_name_still_exist(text, described):
+    """Renaming one of these is exactly when the flow section needs editing."""
+    import importlib
+
+    module_name, class_name, attribute = described
+    if attribute not in text:
+        pytest.fail(f"{attribute} is no longer described in ARCHITECTURE.md")
+
+    module = importlib.import_module(module_name)
+    owner = getattr(module, class_name) if class_name else module
+    assert hasattr(owner, attribute), (
+        f"ARCHITECTURE.md describes {attribute}, which no longer exists"
+    )
+
+
+def test_the_flow_section_covers_the_paths_that_matter(text):
+    """A missing flow is harder to notice than a wrong one."""
+    section = text.split("## The main flows", 1)[1].split("## Decisions", 1)[0]
+    for topic in ("Joining", "changes their character", "Autopilot", "Reconnecting"):
+        assert topic in section, f"the {topic!r} flow is no longer described"
