@@ -33,7 +33,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from canon_keeper import campaigns, credentials
+from canon_keeper import campaigns, credentials, templates
+from canon_keeper.templates import build
 from canon_keeper.net import discovery
 
 LOCAL_TAB = 0
@@ -80,6 +81,7 @@ class CampaignDialog(QDialog):
         self._tabs = QTabWidget()
         self._tabs.addTab(self._build_local_tab(), "On this computer")
         self._tabs.addTab(self._build_online_tab(), "Join a session")
+        self._tabs.addTab(self._build_template_tab(), "Start a one-shot")
         self._tabs.currentChanged.connect(self._update_buttons)
         layout.addWidget(self._tabs, 1)
 
@@ -123,6 +125,88 @@ class CampaignDialog(QDialog):
         layout.addWidget(self._autostart_local)
         self._local_list.itemSelectionChanged.connect(self._sync_local_autostart)
         return page
+
+    # ------------------------------------------------------------ one-shots
+
+    def _build_template_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(
+            QLabel(
+                "An evening that begins somewhere specific. Starting one builds "
+                "a normal campaign, with the characters and logins already in it."
+            )
+        )
+
+        self._template_list = QListWidget()
+        self._template_list.currentItemChanged.connect(
+            lambda *_a: self._describe_template()
+        )
+        layout.addWidget(self._template_list, 1)
+
+        self._template_about = QLabel("")
+        self._template_about.setWordWrap(True)
+        self._template_about.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self._template_about)
+
+        start = QPushButton("Start this one-shot")
+        start.clicked.connect(self._start_template)
+        layout.addWidget(start)
+
+        self._reload_templates()
+        return page
+
+    def _reload_templates(self) -> None:
+        self._template_list.clear()
+        for template in templates.available():
+            label = template.name
+            if template.for_testing:
+                label += "   (for testing)"
+            item = QListWidgetItem(f"{label}\n{template.summary}")
+            item.setData(_DATA_ROLE, template.id)
+            self._template_list.addItem(item)
+        if self._template_list.count():
+            self._template_list.setCurrentRow(0)
+
+    def _selected_template(self):
+        item = self._template_list.currentItem()
+        return templates.get(item.data(_DATA_ROLE)) if item else None
+
+    def _describe_template(self) -> None:
+        template = self._selected_template()
+        if template is None:
+            self._template_about.setText("")
+            return
+        players = template.player_count
+        ending = template.ending
+        lines = [template.about] if template.about else []
+        lines.append(
+            f"{players} character{'s' if players != 1 else ''} and their logins "
+            f"are already made."
+        )
+        if ending:
+            lines.append(f"It ends when: {ending.done_when or ending.title}")
+        self._template_about.setText("\n\n".join(lines))
+
+    def _start_template(self) -> None:
+        template = self._selected_template()
+        if template is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Start a one-shot", "Call this run:", text=template.name
+        )
+        if not ok or not name.strip():
+            return
+        try:
+            campaign = build.start(template, name.strip())
+        except Exception as exc:  # noqa: BLE001 - reported, never fatal
+            QMessageBox.warning(self, "Could not start it", str(exc))
+            return
+
+        self._launch = Launch(kind="local", path=str(campaign.path))
+        self.accept()
 
     def _sync_local_autostart(self) -> None:
         """Show whether the highlighted campaign is the one that opens on launch."""

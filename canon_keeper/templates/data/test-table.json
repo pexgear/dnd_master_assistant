@@ -1,0 +1,153 @@
+{
+  "id": "test-table",
+  "name": "Test Table",
+  "for_testing": true,
+  "summary": "Four logins, three characters and a goblin. For exercising the app.",
+  "about": "Not an adventure. A campaign with enough in it to try sharing, sheets, proposals and autopilot without typing anything first.\n\nLogins: marco / elsa / dana, password 'goblin-teeth'. The DM login is 'gm' with 'run-the-game'.",
+
+  "entities": [
+    {
+      "key": "elara",
+      "kind": "pc",
+      "name": "Elara Nightwind",
+      "summary": "A wizard who reads too much.",
+      "data": {
+        "status": "well",
+        "hp": 8, "max_hp": 8,
+        "sheet": {
+          "schema": 1,
+          "species": "Elf", "class": "Wizard", "level": 1,
+          "abilities": {"str": 8, "dex": 14, "con": 12, "int": 16, "wis": 13, "cha": 10},
+          "hp": 8, "max_hp": 8,
+          "skills": ["Arcana", "Investigation"]
+        }
+      }
+    },
+    {
+      "key": "brok",
+      "kind": "pc",
+      "name": "Brok Ironfoot",
+      "summary": "A fighter who does not.",
+      "data": {
+        "status": "well",
+        "hp": 12, "max_hp": 12,
+        "sheet": {
+          "schema": 1,
+          "species": "Dwarf", "class": "Fighter", "level": 1,
+          "abilities": {"str": 16, "dex": 12, "con": 15, "int": 8, "wis": 12, "cha": 10},
+          "hp": 12, "max_hp": 12,
+          "skills": ["Athletics", "Perception"]
+        }
+      }
+    },
+    {
+      "key": "sable",
+      "kind": "pc",
+      "name": "Sable",
+      "summary": "A rogue nobody remembers hiring.",
+      "data": {
+        "status": "well",
+        "hp": 9, "max_hp": 9,
+        "sheet": {
+          "schema": 1,
+          "species": "Halfling", "class": "Rogue", "level": 1,
+          "abilities": {"str": 10, "dex": 16, "con": 12, "int": 12, "wis": 13, "cha": 14},
+          "hp": 9, "max_hp": 9,
+          "skills": ["Stealth", "Sleight of Hand"]
+        }
+      }
+    },
+    {
+      "key": "toblen",
+      "kind": "npc",
+      "name": "Toblen Stonehill",
+      "summary": "Runs the inn. Nervous lately.",
+      "data": {
+        "status": "well",
+        "voice": "quick, apologetic",
+        "motive": "keep the inn open",
+        "secrets": "He is hiding a deserter in the cellar.",
+        "party_knows": "The innkeeper. Friendly enough."
+      }
+    },
+    {
+      "key": "goblin",
+      "kind": "npc",
+      "name": "Grishnak",
+      "summary": "A goblin with a grievance.",
+      "data": {
+        "status": "well",
+        "motive": "revenge, ideally on someone else",
+        "secrets": "He knows the road is watched."
+      }
+    },
+    {
+      "key": "phandalin",
+      "kind": "location",
+      "name": "Phandalin",
+      "summary": "A frontier town rebuilding itself.",
+      "data": {
+        "place_type": "town",
+        "shared_notes": "Muddy streets, new timber, a great many opinions."
+      }
+    },
+    {
+      "key": "inn",
+      "kind": "location",
+      "parent": "phandalin",
+      "name": "The Stonehill Inn",
+      "summary": "Two floors, one fire, no privacy.",
+      "data": {
+        "place_type": "building",
+        "shared_notes": "Warm, loud, and the only bed in town."
+      }
+    },
+    {
+      "key": "cellar",
+      "kind": "location",
+      "parent": "inn",
+      "name": "The Cellar",
+      "summary": "Barrels, and something behind them.",
+      "data": {"place_type": "room"}
+    }
+  ],
+
+  "facts": [
+    {"subject": "toblen", "predicate": "is hiding", "object": "a Redbrand deserter in the cellar"},
+    {"subject": "goblin", "predicate": "knows", "object": "the east road is watched"},
+    {"subject": "phandalin", "predicate": "has no", "object": "standing guard"}
+  ],
+
+  "accounts": [
+    {"username": "gm", "password": "run-the-game", "role": "dm", "display_name": "The DM"},
+    {"username": "marco", "password": "goblin-teeth", "display_name": "Marco", "plays": "elara"},
+    {"username": "elsa", "password": "goblin-teeth", "display_name": "Elsa", "plays": "brok"},
+    {"username": "dana", "password": "goblin-teeth", "display_name": "Dana", "plays": "sable"}
+  ],
+
+  "shares": [
+    {"entity": "toblen"},
+    {"entity": "phandalin"},
+    {"entity": "inn"}
+  ],
+
+  "storyline": [
+    {
+      "id": "arrive",
+      "title": "The party is in the inn",
+      "read_aloud": "It is late, the fire is down to embers, and Toblen keeps looking at the cellar door.",
+      "done_when": "Someone asks about the cellar."
+    },
+    {
+      "id": "cellar",
+      "title": "What is in the cellar",
+      "done_when": "The party finds the deserter, or Toblen admits to him."
+    },
+    {
+      "id": "done",
+      "title": "The deserter is dealt with",
+      "done_when": "He is handed over, hidden better, or killed.",
+      "ends_it": true
+    }
+  ]
+}

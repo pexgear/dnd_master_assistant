@@ -1,0 +1,195 @@
+{
+  "id": "the-last-coach",
+  "name": "The Last Coach",
+  "summary": "A three-hour one-shot. The coach out of town leaves at dawn, and someone on it should not be.",
+  "about": "For three or four players at level 1, in an evening.\n\nThe party are strangers sharing the last coach before the pass closes for winter. One of the other passengers is being hunted; one of them is doing the hunting; the driver knows and has been paid not to. It ends when the coach reaches the pass -- whoever is still on it.\n\nOriginal material, so it ships with the app. Logins are 'one', 'two', 'three' with the password 'the-pass-closes'.",
+
+  "entities": [
+    {
+      "key": "wren",
+      "kind": "pc",
+      "name": "Wren Calloway",
+      "summary": "A courier who has made this run before, and is nervous about this one.",
+      "data": {
+        "status": "well",
+        "hp": 10, "max_hp": 10,
+        "party_knows": "Knows the road. Keeps checking behind.",
+        "sheet": {
+          "schema": 1,
+          "species": "Human", "class": "Rogue", "level": 1,
+          "abilities": {"str": 10, "dex": 16, "con": 13, "int": 12, "wis": 14, "cha": 12},
+          "hp": 10, "max_hp": 10,
+          "skills": ["Perception", "Stealth"]
+        }
+      }
+    },
+    {
+      "key": "matthias",
+      "kind": "pc",
+      "name": "Brother Matthias",
+      "summary": "A travelling priest, going wherever he is sent.",
+      "data": {
+        "status": "well",
+        "hp": 11, "max_hp": 11,
+        "party_knows": "Kind, and asks a great many questions.",
+        "sheet": {
+          "schema": 1,
+          "species": "Human", "class": "Cleric", "level": 1,
+          "abilities": {"str": 12, "dex": 10, "con": 14, "int": 11, "wis": 16, "cha": 13},
+          "hp": 11, "max_hp": 11,
+          "skills": ["Insight", "Religion"]
+        }
+      }
+    },
+    {
+      "key": "hana",
+      "kind": "pc",
+      "name": "Hana of the Reach",
+      "summary": "A hired sword between employers.",
+      "data": {
+        "status": "well",
+        "hp": 13, "max_hp": 13,
+        "party_knows": "Armed, and not hiding it.",
+        "sheet": {
+          "schema": 1,
+          "species": "Half-Orc", "class": "Fighter", "level": 1,
+          "abilities": {"str": 16, "dex": 13, "con": 15, "int": 9, "wis": 12, "cha": 10},
+          "hp": 13, "max_hp": 13,
+          "skills": ["Athletics", "Intimidation"]
+        }
+      }
+    },
+    {
+      "key": "driver",
+      "kind": "npc",
+      "name": "Old Pell",
+      "summary": "Drives the coach. Has driven it thirty years.",
+      "data": {
+        "status": "well",
+        "voice": "slow, flat, never turns round",
+        "motive": "get through the pass and be paid",
+        "secrets": "Took forty gold to make one extra stop tonight, and not to mention it.",
+        "party_knows": "The driver. Not talkative."
+      }
+    },
+    {
+      "key": "quarry",
+      "kind": "npc",
+      "name": "Miren Ashe",
+      "summary": "A quiet passenger with a good coat and no luggage.",
+      "data": {
+        "status": "well",
+        "voice": "careful, over-polite",
+        "motive": "reach the far side of the pass alive",
+        "secrets": "Witnessed a killing in the town behind them and is the only one who can name who did it.",
+        "party_knows": "A passenger. Says little."
+      }
+    },
+    {
+      "key": "hunter",
+      "kind": "npc",
+      "name": "Sera Vance",
+      "summary": "A passenger who boarded late and travels light.",
+      "data": {
+        "status": "well",
+        "voice": "warm, easy, asks about you",
+        "motive": "make sure Miren Ashe does not reach the far side",
+        "secrets": "Paid the driver for the extra stop. Intends to use it.",
+        "party_knows": "A passenger. Good company."
+      }
+    },
+    {
+      "key": "road",
+      "kind": "location",
+      "name": "The North Road",
+      "summary": "Six hours of dark between the town and the pass.",
+      "data": {
+        "place_type": "region",
+        "shared_notes": "Frozen ruts, black trees, and no lights between here and the pass."
+      }
+    },
+    {
+      "key": "coach",
+      "kind": "location",
+      "parent": "road",
+      "name": "The Coach",
+      "summary": "Six seats, one lamp, and nowhere to go.",
+      "data": {
+        "place_type": "building",
+        "shared_notes": "Cramped, cold, and everyone can hear everything."
+      }
+    },
+    {
+      "key": "stop",
+      "kind": "location",
+      "parent": "road",
+      "name": "The Water Stop",
+      "summary": "A trough, a lean-to, and no reason to stop tonight.",
+      "data": {"place_type": "building"}
+    },
+    {
+      "key": "pass",
+      "kind": "location",
+      "parent": "road",
+      "name": "The Pass",
+      "summary": "Where the road ends and the evening does.",
+      "data": {"place_type": "region"}
+    }
+  ],
+
+  "facts": [
+    {"subject": "quarry", "predicate": "witnessed", "object": "a killing in the town behind them"},
+    {"subject": "hunter", "predicate": "is hunting", "object": "Miren Ashe"},
+    {"subject": "hunter", "predicate": "paid", "object": "Old Pell for one unscheduled stop"},
+    {"subject": "driver", "predicate": "will stop", "object": "at the water stop, about three hours in"},
+    {"subject": "pass", "predicate": "closes", "object": "at first snow, which is tonight or tomorrow"}
+  ],
+
+  "accounts": [
+    {"username": "gm", "password": "the-pass-closes", "role": "dm", "display_name": "The DM"},
+    {"username": "one", "password": "the-pass-closes", "display_name": "Player One", "plays": "wren"},
+    {"username": "two", "password": "the-pass-closes", "display_name": "Player Two", "plays": "matthias"},
+    {"username": "three", "password": "the-pass-closes", "display_name": "Player Three", "plays": "hana"}
+  ],
+
+  "shares": [
+    {"entity": "road"},
+    {"entity": "coach"},
+    {"entity": "driver"},
+    {"entity": "quarry"},
+    {"entity": "hunter"}
+  ],
+
+  "storyline": [
+    {
+      "id": "boarding",
+      "title": "Boarding",
+      "read_aloud": "Six seats, five passengers, and a driver who wants to leave. The pass closes with the first snow, and the sky has that low grey look. This is the last coach.",
+      "done_when": "Everyone has spoken once and the coach is moving."
+    },
+    {
+      "id": "hours",
+      "title": "Three hours of dark",
+      "read_aloud": "Nobody sleeps. The lamp swings. Sera asks good questions; Miren answers as few as politeness allows.",
+      "done_when": "The party has formed an opinion about at least one of the two."
+    },
+    {
+      "id": "the-stop",
+      "title": "The stop that should not happen",
+      "read_aloud": "The coach slows. There is nothing here but a trough and a lean-to, and Old Pell does not explain.",
+      "done_when": "The party works out the stop was bought, or fails to and it is used."
+    },
+    {
+      "id": "the-turn",
+      "title": "Whoever moves first",
+      "done_when": "Sera acts, or is stopped before she can."
+    },
+    {
+      "id": "the-pass",
+      "title": "The pass, and who is still on the coach",
+      "read_aloud": "The snow starts as the road tips downward. Behind you, the pass is already closing.",
+      "done_when": "The coach reaches the pass. Whoever is on it, that is the ending.",
+      "ends_it": true
+    }
+  ]
+}

@@ -28,6 +28,7 @@ from canon_keeper.content import ATTRIBUTION as SRD_ATTRIBUTION
 from canon_keeper.plugin import API_VERSION, AppContext
 from canon_keeper.repo.layouts import AUTOSAVE_NAME
 from canon_keeper.shell.attention import Attention
+from canon_keeper.templates import build
 from canon_keeper.shell.loader import LoadedPanel, LoadError
 from canon_keeper.shell.rename_panels import RenamePanelsDialog
 from canon_keeper.shell.theme import Theme, ThemeController
@@ -131,6 +132,54 @@ class MainWindow(QMainWindow):
             self._docks[plugin.id] = dock
             self._panels[plugin.id] = entry
 
+    # -------------------------------------------------------------- one-shots
+
+    def _sync_one_shot_actions(self) -> None:
+        """These only mean anything for a campaign built from a template."""
+        from canon_keeper.shell.storyline import has_storyline
+
+        from_template = bool(build.source(self._ctx.repos))
+        self._act_storyline.setVisible(has_storyline(self._ctx))
+        self._act_start_again.setVisible(from_template)
+        self._act_keep.setVisible(from_template)
+
+    def _show_storyline(self) -> None:
+        from canon_keeper.shell.storyline import StorylineDialog
+
+        StorylineDialog(self._ctx, self).exec()
+
+    def _start_again(self) -> None:
+        """Put it back to the template's starting point.
+
+        Asked plainly rather than softened. Everything from the last run goes,
+        which is the point, and a confirmation that undersold that would be the
+        wrong kind of kind.
+        """
+        answer = QMessageBox.question(
+            self,
+            "Start again?",
+            "Everything from this run goes: the characters as they now stand, "
+            "what was said, what was written down.\n\n"
+            "It goes back to exactly how the one-shot begins.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            build.restart(self._ctx.repos, self._ctx.campaign_id)
+        except Exception as exc:  # noqa: BLE001 - reported, never fatal
+            QMessageBox.warning(self, "Could not start again", str(exc))
+            return
+        # Every panel is now showing rows that no longer exist.
+        self._ctx.bus.campaign_changed.emit(self._ctx.campaign_id)
+        self.statusBar().showMessage("Back to the beginning.", 5000)
+
+    def _keep_one_shot(self) -> None:
+        build.release(self._ctx.repos)
+        self.statusBar().showMessage(
+            "This is your campaign now. It will not offer to start again.", 8000
+        )
+
     def _recolour_attention(self) -> None:
         self._attention.set_colour(self.palette().highlight().color())
 
@@ -159,6 +208,25 @@ class MainWindow(QMainWindow):
         self._act_no_auto = QAction("Stop Opening This Automatically", self)
         self._act_no_auto.triggered.connect(self._clear_autostart)
         file_menu.addAction(self._act_no_auto)
+
+        # --- one-shots, only when this campaign is one ----------------------
+        file_menu.addSeparator()
+        self._act_storyline = QAction("&Storyline...", self)
+        self._act_storyline.triggered.connect(self._show_storyline)
+        file_menu.addAction(self._act_storyline)
+
+        self._act_start_again = QAction("Start &Again from the Beginning...", self)
+        self._act_start_again.triggered.connect(self._start_again)
+        file_menu.addAction(self._act_start_again)
+
+        self._act_keep = QAction("&Keep This One", self)
+        self._act_keep.setToolTip(
+            "Stop treating this as a one-shot and keep it as a campaign of "
+            "your own."
+        )
+        self._act_keep.triggered.connect(self._keep_one_shot)
+        file_menu.addAction(self._act_keep)
+        file_menu.aboutToShow.connect(self._sync_one_shot_actions)
 
         file_menu.addSeparator()
         act_folder = QAction("Open &Data Folder", self)

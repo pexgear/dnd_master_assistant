@@ -111,14 +111,18 @@ class FactRepo:
         if subject_entity is not None:
             sql += " AND subject_entity = ?"
             params.append(subject_entity)
-        sql += " ORDER BY asserted_at"
+        # By id as well as time: several facts asserted in the same
+        # millisecond -- which is what building a campaign from a template
+        # does -- would otherwise come back in whatever order SQLite felt
+        # like, and the canon log would reorder itself between reads.
+        sql += " ORDER BY asserted_at, id"
         return [Fact.from_row(r) for r in self._conn.execute(sql, params).fetchall()]
 
     def history(self, campaign_id: int, subject_entity: int) -> list[Fact]:
         """Every fact ever asserted about an entity, superseded ones included."""
         rows = self._conn.execute(
             "SELECT * FROM fact WHERE campaign_id = ? AND subject_entity = ?"
-            " ORDER BY asserted_at",
+            " ORDER BY asserted_at, id",
             (campaign_id, subject_entity),
         ).fetchall()
         return [Fact.from_row(r) for r in rows]

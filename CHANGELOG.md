@@ -10,10 +10,21 @@ What changed, from the point of view of someone running a game. See
   host now sends the character as it actually stands, and the panel reloads --
   including over a form still being edited, because the host's copy is the true
   one.
-- **Joins and leaves are out of the way.** The chat hid the game under
-  housekeeping. Arrivals, departures and autopilot notices are now hidden
-  behind **Show joins and leaves**; anything addressed to you -- a refusal, a
-  roll, an agent that could not answer -- is never filtered.
+- **The log is out of the way.** The chat hid the game under the app talking
+  about itself. Arrivals, departures, autopilot switching and the rest are now
+  behind **Show log**; anything addressed to you -- a refusal, a roll, an agent
+  that could not answer -- is never filtered.
+- **Errors are in the log, and say so.** Something going wrong is the app
+  talking about itself, so it goes in the log with everything else -- but
+  **Show log** turns red when one arrives, and the message appears in the
+  status bar immediately. Hidden and unannounced would be the worst of both.
+- **One-shots.** **Start a one-shot** in the campaign chooser builds a real
+  campaign from a template: characters, places, facts, shares and logins
+  already in it, the same every time. Two ship -- *The Last Coach*, an evening
+  for three, and *Test Table*, for exercising the app without typing anything
+  first. **File ▸ Storyline...** holds the beats and where it ends,
+  **Start Again** puts it back to the beginning, and **Keep This One** turns it
+  into a campaign of your own.
 - **A panel with something new is highlighted** until you look at it, then the
   colour fades. An update in a panel behind another tab may as well not have
   arrived.

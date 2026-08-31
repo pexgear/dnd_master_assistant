@@ -335,7 +335,10 @@ def test_sharing_needs_a_session_to_share(table):
     table._start_funnel()
 
     assert table._funnel_button.isChecked() is False
-    assert "Go online first" in table._log.toPlainText()
+    # An error is a diagnostic: it goes in the log, and marks the filter so
+    # it is not both hidden and unannounced.
+    assert any("Go online first" in text for _k, text, _w in table._entries)
+    assert table._show_chatter.styleSheet(), "the filter should be marked"
 
 
 def test_a_published_address_is_shown_and_copyable(table, qtbot):
@@ -361,7 +364,7 @@ def test_a_refusal_leaves_the_button_off(table, monkeypatch):
 
     assert table._funnel_button.isChecked() is False
     assert table._funnel_url == ""
-    assert "Could not publish" in table._log.toPlainText()
+    assert any("Could not publish" in text for _k, text, _w in table._entries)
 
 
 def test_the_enable_link_is_offered_as_a_button(table, monkeypatch):

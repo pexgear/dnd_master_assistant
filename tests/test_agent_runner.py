@@ -432,7 +432,7 @@ def test_the_watchdog_reports_a_dead_agent(table, monkeypatch):
 
     table._check_agent()
 
-    assert "stopped" in table._log.toPlainText().lower()
+    assert any("stopped" in text.lower() for _k, text, _w in table._entries)
     assert table._agent_process is None
 
 

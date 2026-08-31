@@ -125,7 +125,7 @@ def table(ctx, qtbot) -> TableWidget:
     return widget
 
 
-def test_joins_and_leaves_are_hidden_by_default(table):
+def test_the_log_is_hidden_by_default(table):
     table._append_system("Marco joined", SystemKind.CHATTER.value)
     assert "Marco joined" not in table._log.toPlainText()
 
@@ -153,14 +153,13 @@ def test_a_notice_is_never_hidden(table):
 
 
 def test_nor_is_anything_said_at_the_table(table):
+    """The game itself is never filtered. Diagnostics are -- see below."""
     table._append("said", "Elara: I check the door.")
     table._append("roll", "Elara rolled 17")
-    table._append("error", "The agent stopped.")
 
     shown = table._log.toPlainText()
     assert "I check the door." in shown
     assert "rolled 17" in shown
-    assert "The agent stopped." in shown
 
 
 def test_the_filter_keeps_the_order(table):
@@ -266,3 +265,69 @@ def test_the_tint_is_visible_but_not_a_shout():
 def test_the_message_types_exist():
     assert MessageType.REFUSED == "refused"
     assert SystemKind.CHATTER != SystemKind.NOTICE
+
+
+# ---------------------------------------------------------- errors in the log
+#
+# An error is the app talking about itself, so it belongs in the log. But a
+# problem hidden *and* unannounced is the worst of both: the reader neither
+# sees it nor knows to look.
+
+
+def test_an_error_goes_in_the_log(table):
+    table._append("error", "The agent stopped.")
+    assert "The agent stopped." not in table._log.toPlainText()
+
+
+def test_but_the_checkbox_says_so(table):
+    table._append("error", "The agent stopped.")
+
+    assert "went wrong" in table._show_chatter.text()
+    assert table._show_chatter.styleSheet(), "the mark should be visible"
+
+
+def test_showing_the_log_clears_the_mark(table):
+    table._append("error", "The agent stopped.")
+
+    table._show_chatter.setChecked(True)
+
+    assert table._show_chatter.text() == "Show log"
+    assert table._show_chatter.styleSheet() == ""
+    assert "The agent stopped." in table._log.toPlainText()
+
+
+def test_an_error_while_the_log_is_open_needs_no_mark(table):
+    """It is already on screen; marking it would be telling them twice."""
+    table._show_chatter.setChecked(True)
+
+    table._append("error", "The agent stopped.")
+
+    assert table._show_chatter.styleSheet() == ""
+    assert "The agent stopped." in table._log.toPlainText()
+
+
+def test_chatter_alone_does_not_raise_the_mark(table):
+    """Someone leaving is not something going wrong."""
+    table._append_system("Marco left", SystemKind.CHATTER.value)
+    assert table._show_chatter.styleSheet() == ""
+
+
+def test_errors_are_red_and_follow_the_theme(table):
+    """A red that ignores dark mode is unreadable in one of the two."""
+    light = table._colours["error"]
+    assert light.isValid()
+
+    # The colour is chosen from the palette, so a repaint under another
+    # appearance produces a different one.
+    table._refresh_colours()
+    assert table._colours["error"].isValid()
+
+
+def test_the_mark_is_repainted_when_the_theme_changes(table):
+    table._append("error", "The agent stopped.")
+    before = table._show_chatter.styleSheet()
+
+    table._refresh_colours()
+
+    assert table._show_chatter.styleSheet(), "the mark should survive a repaint"
+    assert before

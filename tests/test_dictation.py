@@ -86,9 +86,12 @@ def test_a_dictated_command_still_works_as_a_command(table):
     assert rolled == ["2d6+3"]
 
 
-def test_a_failure_is_reported_in_the_log(table):
+def test_a_failure_is_reported(table):
+    """Errors are diagnostics: recorded in the log, and marked on the filter."""
     table._dictation.failed.emit("the microphone is busy")
-    assert "the microphone is busy" in table._log.toPlainText()
+
+    assert any("microphone is busy" in text for _k, text, _w in table._entries)
+    assert table._show_chatter.styleSheet(), "the filter should be marked"
 
 
 # ---------------------------------------------------------------- the glossary

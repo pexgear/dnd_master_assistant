@@ -88,6 +88,11 @@ packages = [
   "canon_keeper_mcp",
 ]
 
+# The SRD data and the one-shot templates are data files inside the package;
+# hatchling includes them, but say so rather than rely on it.
+[tool.hatch.build.targets.sdist]
+include = ["canon_keeper*", "tests", "*.md", "pyproject.toml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

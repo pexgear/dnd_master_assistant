@@ -366,7 +366,31 @@ canon_keeper/
   content/          SRD 5.1 + homebrew merge
   audio/            capture, transcription, dictation
   panels/           characters, cities, transcript, table
+  templates/        one-shots: the format, the builder, and the bundled JSON
 ```
+
+---
+
+## One-shots
+
+A **template** is a JSON description of a starting point. Starting one builds an
+ordinary campaign from it — entities, facts, logins, shares and a storyline —
+and the only trace is a settings key naming the template it came from.
+
+That key is the whole mechanism. Its presence is what makes **Start Again**
+offerable; clearing it is what turns a one-shot into a campaign you keep.
+Nothing about the content is special, which is why "keep it" costs one write.
+
+The property that matters is **determinism**: the same template started twice
+produces the same campaign. Nothing in the builder generates anything — no
+random passwords, no timestamps in content, no assumed ids. Entities are created
+in file order and referred to by the template's own keys, so a share can point
+at "the innkeeper" without knowing which row that became. A test asserts two
+runs are identical; it is how the unstable ordering in `facts.current()` was
+found.
+
+Templates serve two purposes that want the same thing: an evening that begins
+somewhere specific, and a test fixture with four logins that already exist.
 
 ---
 

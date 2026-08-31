@@ -279,12 +279,13 @@ class TableWidget(QWidget):
         self._entry.returnPressed.connect(self._send)
         entry.addWidget(self._entry, 1)
 
-        self._show_chatter = QCheckBox("Show joins and leaves")
+        self._show_chatter = QCheckBox("Show log")
         self._show_chatter.setToolTip(
-            "Who arrived, who left, and when autopilot was switched. Hidden by "
-            "default -- it is housekeeping, not the game."
+            "The app talking about itself: who arrived and left, autopilot "
+            "switching, and anything else that is not the game. Hidden by "
+            "default. Things addressed to you are always shown."
         )
-        self._show_chatter.toggled.connect(lambda _on: self._redraw())
+        self._show_chatter.toggled.connect(self._on_log_toggled)
         outer.addWidget(self._show_chatter)
 
         self._say_button = QPushButton("Speak")
@@ -315,6 +316,8 @@ class TableWidget(QWidget):
             "player": QColor("#7fd1a0" if dark else "#1c7048"),
             "error": QColor("#ff6b6b" if dark else "#b00020"),
         }
+        if getattr(self, "_show_chatter", None) is not None and self._show_chatter.styleSheet():
+            self._flag_log()
 
     # -------------------------------------------------------------- dictation
 
@@ -886,18 +889,42 @@ class TableWidget(QWidget):
     def _append(self, kind: str, text: str, when: float | None = None) -> None:
         """Record a line, and show it if it is not being filtered out."""
         self._entries.append((kind, text, when or datetime.now().timestamp()))
+        if kind == "error":
+            # Some errors answer a button the reader just pressed, and the log
+            # is the wrong place to learn that: it is filtered, and they are
+            # looking at the button. The status bar is immediate and transient,
+            # which is exactly the right weight for it.
+            self._ctx.bus.status_message.emit(text)
         if self._is_hidden(kind):
+            if kind == "error":
+                # And a mark on the filter, so a problem is not both hidden and
+                # unannounced.
+                self._flag_log()
             return
         self._draw(kind, text, when)
 
-    def _is_hidden(self, kind: str) -> bool:
-        """Chatter is hidden unless asked for. Nothing else ever is.
+    def _flag_log(self) -> None:
+        colour = self._colours.get("error", QColor("#b00020")).name()
+        self._show_chatter.setStyleSheet(f"color: {colour}; font-weight: 600;")
+        self._show_chatter.setText("Show log  (something went wrong)")
 
-        A refusal, a dice roll, an agent that could not answer: those are the
-        reason someone is reading, and no filter should be able to swallow
-        them.
-        """
-        return kind == "chatter" and not self._show_chatter.isChecked()
+    def _unflag_log(self) -> None:
+        self._show_chatter.setStyleSheet("")
+        self._show_chatter.setText("Show log")
+
+    def _on_log_toggled(self, shown: bool) -> None:
+        if shown:
+            # Seen. The mark has done its job.
+            self._unflag_log()
+        self._redraw()
+
+    #: What lives in the log rather than in the game: the app talking about
+    #: itself. A refusal, a roll, an agent that could not answer are *notices*
+    #: and are never in here -- they are the reason someone is reading.
+    LOG_KINDS = ("chatter", "error")
+
+    def _is_hidden(self, kind: str) -> bool:
+        return kind in self.LOG_KINDS and not self._show_chatter.isChecked()
 
     def _redraw(self) -> None:
         """Rebuild the whole log, which is what makes the filter reversible."""
@@ -914,7 +941,7 @@ class TableWidget(QWidget):
         stamp.setForeground(self._colours["system"])
         body = QTextCharFormat()
         body.setForeground(self._colours.get(kind, self._colours["system"]))
-        if kind == "roll":
+        if kind in ("roll", "error"):
             body.setFontWeight(600)
 
         if not self._log.document().isEmpty():
