@@ -27,7 +27,12 @@ __version__ = "0.3.0"
 [`CHANGELOG.md`](CHANGELOG.md) describing what changed for someone using the
 app, not what changed in the code.
 
-**3. Commit, tag, push:**
+**3. Check the map still fits.** If the release changed the shape of things --
+a new package, a migration, a version constant -- update
+[`ARCHITECTURE.md`](ARCHITECTURE.md). The suite catches the structural claims,
+but not whether the reasoning is still true.
+
+**4. Commit, tag, push:**
 
 ```bash
 git commit -am "Release 0.3.0"
