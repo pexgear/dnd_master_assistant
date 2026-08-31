@@ -5,60 +5,64 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
-- **Autopilot.** Hand the table to an agent when you want a break, and take it
-  back by pressing the button again -- mid-sentence if that is when you pressed
-  it. The agent is on the roster as an agent, the switch is announced in the
-  chat, and it is never remembered between sessions. While it is off the host
-  refuses the agent's messages outright, so "off" is enforced at the table
-  rather than trusted to the agent. Give a campaign an agent login with
-  Pressing it while hosting does everything: it makes the agent's login, keeps
-  the password in your credential store, and starts the agent against your own
-  session. An agent you started yourself, on this machine or a spare box, is
-  left alone. **Agent...** in the Table panel is where the key and model live,
-  and it stays reachable so a mistyped key can be corrected.
-- **It waits for a pause before answering.** A turn is a lull, not a message:
-  three players talking to each other is answered once, when they stop, rather
-  than interrupted three times. If the DM answers first, the queued reply is
-  dropped. `--pause` tunes how long it waits.
-- **You can see it thinking.** *Autopilot is writing...* appears under the chat
-  while it composes, because several seconds of silence looks exactly like a
-  broken agent. Anyone at the table can report it, not just the agent.
-- **What it has cost, on the DM's screen.** Answers, tokens and dollars for the
-  session, updated after each turn. Only the DM is shown it -- it is their bill
-  -- and only the agent may report it.
-- **When the agent stops, you are told.** It used to fail in silence: the
-  process exited, the button stayed on, and the table waited for a machine that
-  was not there. Its output is now kept and shown, autopilot switches itself
-  off, and a missing `anthropic` package is caught before anything is started.
-- **Fixed: two campaigns shared one agent password.** The credential store was
-  keyed by `campaign.id`, which is 1 for almost every campaign there has ever
-  been -- so opening a second campaign quietly overwrote the first's password,
-  and its agent could no longer log in. Keyed by the campaign's own id now, and
-  a saved password that the host would refuse is replaced rather than handed
-  over to fail at the door.
-- **A lone DM gets answered.** The agent answered players only, so switching
-  autopilot on with nobody else at the table did nothing at all -- which is
-  exactly what a broken agent looks like. With players present the DM speaking
-  still means "I have answered"; with nobody else there, they are the table.
-- **When it cannot answer, you are told why.** A failed model call used to be
-  silent: the indicator flashed and nothing followed. The reason -- usually an
-  expired or mistyped key -- now reaches the DM privately, and only the DM.
-- **Workspace id, for keys that need one.** An identity-linked key is refused
-  outright until it names its workspace. **Agent...** has a field for it, and
-  it is sent as `anthropic-workspace-id`. Nothing can detect this in advance;
-  the API says so, and now you see what it said.
-- **Fixed: Haiku refused every request.** The agent asked for a fast answer
-  using a parameter Haiku 4.5 does not accept, and the model rejected the whole
-  turn over it. It is now sent only to models known to take it -- and if that
-  list is ever wrong, the turn is retried without it rather than failed.
-- **Say what you mean.** `canonkeeper-mcp` exposes one seat at the table to an
-  MCP client, so a player can talk instead of typing. It holds one login and has
-  exactly that login's authority: dice are rolled on the host, and a change to a
-  character is a request the DM answers.
+## 0.4.0
+
+Autopilot: hand the table to an agent, and take it back.
+
+### Autopilot
+
+- **Press it and an agent answers for you** -- for a break, a second voice, or a
+  shopkeeper haggled with while you read ahead. Press it again and the table is
+  yours, mid-sentence if that is when you pressed it.
+- **It cannot speak while the switch is off.** Not by good behaviour: the host
+  refuses its messages. It stays connected and listening, so switching back on
+  is instant, but nothing it says reaches the table.
+- **It is named on the roster as an agent**, and switching autopilot on or off
+  is announced in the chat and kept in the log. A table deserves to know when it
+  is being answered by a machine.
+- **It has no path to your campaign.** It holds a socket and a login, exactly
+  like a player's app, even when the app started it for you.
+- **It never rolls.** Dice are the host's; it asks for a roll like anyone else.
+- **A turn is a lull, not a message.** Three players talking to each other gets
+  one answer when they stop, not three interruptions. Answer them yourself and
+  its queued reply is dropped. `--pause` tunes the wait.
+- **Autopilot is never remembered between sessions.** Opening a campaign to find
+  a machine already running your table is not a state to arrive in by accident.
+
+### Setting it up
+
+- **The button does the work.** It creates the agent's login, keeps its password
+  in your credential store, and starts the agent against your own session. An
+  agent you started yourself, on this machine or a spare box, is left alone.
+- **Agent...** holds the key, the model and -- for keys that need one -- a
+  workspace id. It stays reachable, so a mistyped key can be corrected.
+
+### Knowing what it is doing
+
+- ***Autopilot is writing...*** appears under the chat while it composes, since
+  several seconds of silence looks exactly like a broken agent.
+- **What it has cost** -- answers, tokens, dollars -- on the DM's screen only,
+  updated after every turn rather than at the end.
+- **When it cannot answer, you are told why**, privately. An expired key, a
+  refused parameter, a stopped process: all of it used to be silence.
+
+### Saying what you mean
+
+- **`canonkeeper-mcp`** exposes one seat at the table to an MCP client, so a
+  player can talk instead of typing. It holds one login and has exactly that
+  login's authority: dice are rolled on the host, and a change to a character is
+  a request the DM answers.
+
+### Underneath
+
 - **The wire contract is its own package.** `canon_keeper_protocol` depends on
   nothing but the standard library, so anything headless can speak to a session
-  without installing Qt. Nothing outside the app imports the app, which is
+  without installing Qt. Nothing outside the app imports the app, and that is
   checked by tests rather than remembered.
+- **Fixed: two campaigns could share one saved password.** Credentials were
+  keyed by `campaign.id`, which is 1 for almost every campaign there has ever
+  been. Keyed by the campaign's own id now, and a saved password the host would
+  refuse is replaced rather than handed over to fail at the door.
 
 ## 0.3.1
 
