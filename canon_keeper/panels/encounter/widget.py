@@ -33,7 +33,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from canon_keeper.panels.encounter.dialogs import AddCombatantsDialog, FightDialog
+from canon_keeper.panels.encounter.dialogs import (
+    AddCombatantsDialog,
+    AttackDialog,
+    FightDialog,
+)
 from canon_keeper.panels.encounter.grid import COMBATANT_MIME, GridMap, Token
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.encounters import MAX_SIZE, MIN_SIZE, Encounter
@@ -86,6 +90,9 @@ class EncounterWidget(QWidget):
         ctx.bus.share_changed.connect(lambda _id: self._refresh())
         ctx.bus.campaign_changed.connect(lambda _id: self._refresh())
         ctx.bus.theme_changed.connect(lambda _dark: self._map.update())
+        # The DM's own map watches the same events the players' do, so what
+        # they are all looking at is the same fight at the same moment.
+        ctx.bus.play.connect(self._map.play)
 
         self._refresh()
 
@@ -135,6 +142,22 @@ class EncounterWidget(QWidget):
         self._turn_button = QPushButton("Start")
         self._turn_button.clicked.connect(self._start_or_next)
         bar.addWidget(self._turn_button)
+
+        self._simulate_button = QPushButton("Simulate turn")
+        self._simulate_button.setToolTip(
+            "Hand the selected character to autopilot for this fight -- an "
+            "empty chair, or a player who has asked for it. Press again to "
+            "give them back. Everyone is told."
+        )
+        self._simulate_button.clicked.connect(self._simulate_selected)
+        bar.addWidget(self._simulate_button)
+
+        self._attack_button = QPushButton("Attack...")
+        self._attack_button.setToolTip(
+            "Whoever is up swings at somebody. The host rolls it."
+        )
+        self._attack_button.clicked.connect(self._attack)
+        bar.addWidget(self._attack_button)
 
         self._end_button = QPushButton("End fight")
         self._end_button.setToolTip(
@@ -291,6 +314,8 @@ class EncounterWidget(QWidget):
                 parts.append(f"({hp})")
             if not combatant.on_map:
                 parts.append("- off the map")
+            if combatant.simulated:
+                parts.append("- autopilot")
             if self._unseen(combatant):
                 parts.append("- unshared")
 
@@ -379,6 +404,10 @@ class EncounterWidget(QWidget):
         self._fight_button.setEnabled(has_fight)
         self._roll_button.setEnabled(has_fight and anyone)
         self._turn_button.setEnabled(has_fight and anyone)
+        self._attack_button.setEnabled(
+            has_fight and self._encounter.has_begun and len(self._combatants) > 1
+        )
+        self._simulate_button.setEnabled(has_fight and anyone)
         self._end_button.setEnabled(
             has_fight and (self._encounter.has_begun or self._encounter.running)
         )
@@ -500,6 +529,47 @@ class EncounterWidget(QWidget):
             return
         self._ctx.repos.encounters.end(self._encounter.id)
         self._changed()
+
+    def _attack(self) -> None:
+        """Whoever is up swings at somebody the DM picks.
+
+        The move half of a turn is dragging, which the map already does. This
+        is the other half, and it goes to the host because the dice and the hit
+        points coming off the other creature are the host's.
+        """
+        acting = self._current_combatant()
+        if acting is None:
+            self._ctx.bus.status_message.emit("Nobody is up. Press Start.")
+            return
+
+        others = [c for c in self._combatants if c.id != acting.id]
+        if not others:
+            self._ctx.bus.status_message.emit("There is nobody else in the fight.")
+            return
+
+        weapons = self._weapons_of(acting)
+        target, weapon = AttackDialog(
+            self._name_of(acting),
+            [(c.id, self._name_of(c)) for c in others],
+            weapons,
+            self,
+        ).ask()
+        if target is None:
+            return
+
+        self._ctx.bus.turn_taken.emit(
+            {"combatant": acting.id, "target": target, "weapon": weapon}
+        )
+
+    def _weapons_of(self, combatant) -> list[str]:
+        entity = self._entities.get(combatant.entity_id)
+        sheet = (getattr(entity, "data", None) or {}).get("sheet") or {}
+        from canon_keeper.rules import attack
+
+        try:
+            return [w.name for w in attack.weapons_of(sheet, self._content_for_rules())]
+        except Exception:  # noqa: BLE001 - a broken sheet is not worth a crash
+            return []
 
     def _dex_modifier(self, entity_id: int | None) -> int:
         """Their Dexterity bonus, or nothing if there is no sheet to read."""
@@ -655,10 +725,42 @@ class EncounterWidget(QWidget):
         if combatant.entity_id is not None and combatant.entity_id not in self._shared:
             share = menu.addAction("Share with the party")
             share.triggered.connect(lambda: self._share(combatant.entity_id))
+        if self._is_pc(combatant):
+            simulate = menu.addAction(
+                "Play them myself again" if combatant.simulated
+                else "Let autopilot play them"
+            )
+            simulate.triggered.connect(
+                lambda: self._simulate(combatant.id, not combatant.simulated)
+            )
         menu.addSeparator()
         remove = menu.addAction(f"Take {name} out of the fight")
         remove.triggered.connect(lambda: self._remove(combatant.id, name))
         menu.exec(position)
+
+    def _simulate_selected(self) -> None:
+        combatant = self._by_id(self._map.selected) if self._map.selected else None
+        if combatant is None:
+            self._ctx.bus.status_message.emit(
+                "Pick a character first -- this hands one of them to autopilot."
+            )
+            return
+        if not self._is_pc(combatant):
+            self._ctx.bus.status_message.emit(
+                f"{self._name_of(combatant)} has no player, so autopilot already "
+                "runs them."
+            )
+            return
+        self._simulate(combatant.id, not combatant.simulated)
+
+    def _simulate(self, combatant_id: int, on: bool) -> None:
+        """Hand a character to autopilot for this fight, or take it back.
+
+        Written straight to the database and announced: the DM's app is the
+        host, and this is the DM's decision about their own table.
+        """
+        self._ctx.repos.encounters.set_simulated(combatant_id, on)
+        self._changed()
 
     def _take_off(self, combatant_id: int) -> None:
         self._ctx.repos.encounters.place(combatant_id, None, None)

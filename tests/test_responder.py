@@ -57,7 +57,8 @@ def responder(spoken, turns) -> Responder:
     async def say(text: str) -> None:
         spoken.append(text)
 
-    return Responder(answer, say, quiet_for=PAUSE)
+    # The monster pause is the same short one, so the suite stays quick.
+    return Responder(answer, say, quiet_for=PAUSE, monster_pause=PAUSE)
 
 
 async def _settle(multiple: float = 6.0) -> None:
@@ -192,6 +193,87 @@ async def test_the_dm_joins_the_turn_rather_than_cancelling_it(responder, turns)
 
     assert len(turns) == 1
     assert len(turns[0]) == 2, "both lines, one answer"
+
+
+# ------------------------------------------------------- the monsters' turns
+#
+# Nobody says "it is the goblin's turn" out loud. Without the map arriving,
+# the agent would sit through its own turn waiting to be spoken to.
+
+
+def _fight(turn=11, entity=3):
+    return {
+        "id": 1, "name": "x", "width": 10, "height": 10, "round": 1,
+        "turn": turn,
+        "combatants": [{"id": turn, "entity": entity, "x": 0, "y": 0}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_monsters_turn_is_taken(responder, turns):
+    session = _Session(players=1)
+    session.table.entities = {3: {"id": 3, "name": "Yeemik", "owner_account_id": None}}
+    session.table.encounter = _fight()
+
+    await responder.turn_came_round(session)
+    await _settle()
+
+    assert len(turns) == 1
+    assert "Yeemik" in turns[0][0][1]
+
+
+@pytest.mark.asyncio
+async def test_a_players_turn_is_not(responder, turns):
+    """Theirs is proposed and confirmed. Taking it would be playing for them."""
+    session = _Session(players=1)
+    session.table.entities = {3: {"id": 3, "name": "Brok", "owner_account_id": 7}}
+    session.table.encounter = _fight()
+
+    await responder.turn_came_round(session)
+    await _settle()
+
+    assert turns == []
+
+
+@pytest.mark.asyncio
+async def test_the_same_turn_twice_is_one_turn(responder, turns):
+    """A map redrawn because somebody else moved is not a second turn."""
+    session = _Session(players=1)
+    session.table.entities = {3: {"id": 3, "name": "Yeemik", "owner_account_id": None}}
+    session.table.encounter = _fight()
+
+    await responder.turn_came_round(session)
+    await responder.turn_came_round(session)
+    await _settle()
+
+    assert len(turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_it_stays_out_of_it_with_autopilot_off(responder, turns):
+    session = _Session(players=1)
+    session.table.autopilot = False
+    session.table.entities = {3: {"id": 3, "name": "Yeemik", "owner_account_id": None}}
+    session.table.encounter = _fight()
+
+    await responder.turn_came_round(session)
+    await _settle()
+
+    assert turns == []
+
+
+@pytest.mark.asyncio
+async def test_the_turn_moving_on_first_cancels_it(responder, turns):
+    """Four seconds is long enough for the DM to press Next turn themselves."""
+    session = _Session(players=1)
+    session.table.entities = {3: {"id": 3, "name": "Yeemik", "owner_account_id": None}}
+    session.table.encounter = _fight()
+
+    await responder.turn_came_round(session)
+    session.table.encounter = _fight(turn=99, entity=3)
+    await _settle()
+
+    assert turns == []
 
 
 @pytest.mark.asyncio

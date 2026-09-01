@@ -319,6 +319,17 @@ Someone off the map is still in the fight — the one who fled down the corridor
 or has not come through the door yet — so *off the map* and *out of the fight*
 are two different right-click actions.
 
+**Things happen where people can see them.** A token walks square by square
+rather than jumping; an attacker leans in and the damage floats off whoever
+took it, or the word *miss* does; a creature dropping to zero fades off the map
+rather than vanishing between two frames. Everyone at the table sees the same
+thing at the same moment, because the host says what happened and every screen
+draws that — rather than each working its own version out.
+
+A creature at zero comes off the map but stays in the initiative order, so you
+can bring them round. Taking them out of the fight is still the deliberate
+thing it was.
+
 Your players see the fight as it happens and cannot touch it. They see exactly
 the creatures you have **shared** with them: putting a monster on the map does
 not reveal it, so you can lay an ambush out in front of them. Tokens the party
@@ -439,6 +450,15 @@ Everything goes over the wire and through the same checks your own buttons go
 through, so it cannot build a fight the app could not have built itself, and
 the moment you press the switch it can do none of it.
 
+It rolls its own attacks rather than describing them — the host rolls, and it
+narrates what came back — and it records what characters pick up onto their own
+sheets as it hands it over.
+
+**Simulate turn** hands a character to autopilot for the fight: an empty chair,
+or a player who has stepped out. Either of you can do it from the Combat panel,
+and either can take them back. Everyone is told, and the initiative order shows
+which of them is being played by a machine.
+
 Start it with `--talk-only` if you would rather it kept its hands off the map.
 
 **While autopilot is on, what you type does not reach the party.** There is one
@@ -467,8 +487,31 @@ Nothing happens until you accept. Then the host moves you and rolls the attack:
 the d20, your bonus off your sheet, the target's armour class, and the damage.
 Melee reaches one square, diagonals included.
 
+**How far you can go is your speed** — six squares for most people, read off
+your sheet. The panel keeps the count while the turn is yours: *"Your turn: 15
+feet of 30 left, 15 used · attack still to come."*
+
+**Acting does not end your turn.** Say what else you do, press **Done**, or let
+it pass on its own after fifteen seconds — anything you type stops that clock.
+The clock runs on the host, so it is a promise to the whole table rather than to
+whoever's laptop happens to be awake.
+
 It is deliberately the simple case — a weapon on your sheet, one attack, no
 spells. Everything else is still a DM's ruling, which is where it belongs.
+
+### Turns you take yourself
+
+You do not need autopilot to run a fight. **Attack…** in the Combat panel asks
+who is up, who they are hitting and which of their weapons — and the host rolls
+it, the same roll it would have rolled for anybody else. **Simulate turn** goes
+the other way: it hands a character to autopilot for this fight, for an empty
+chair or a player who has stepped out, and either of you can take them back.
+
+**The rules bend when you say so.** Ask autopilot for something the rules refuse
+— a creature moving out of turn, or further than its speed — and it comes back
+to you naming the rule it would break, to allow or not. Squares off the map, and
+ones somebody is already standing in, are not rules; those are still refused
+outright.
 - **Autopilot is never remembered.** Opening a campaign to find a machine already
   running your table is not a state to arrive in by accident.
 - **It answers players.** While you are at the table, your own lines are yours
@@ -511,10 +554,11 @@ model.
 
 ## Still to come
 
-**Simulated players.** A character run by the app — filling an empty chair, or
-giving a party of two enough bodies for a fight built for four. It joins as a
-player, asks as a player, and you approve as you would for anyone. The seat
-already exists; nothing new has to be invented for it to be safe.
+**Simulated players, off the battlefield.** **Simulate turn** already fills an
+empty chair for a fight. What is missing is the rest of the evening: a character
+the app runs when there is no map — one that talks to the party, asks you
+things, and is approved as anyone else would be. The seat already exists;
+nothing new has to be invented for it to be safe.
 
 **A simulated master** that invents rather than stands in: prep by playing your
 own scenario against something that argues back. Further off, and the harder of

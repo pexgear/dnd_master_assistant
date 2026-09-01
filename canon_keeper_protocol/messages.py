@@ -21,7 +21,7 @@ from typing import Any
 #: Bumped when the contract grows, not only when it breaks. A build that does
 #: not know about encounters would connect happily and show a table no map --
 #: half-working, which is the state this number exists to prevent.
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 #: No O/0 or I/1 -- these get read aloud across a table.
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -88,6 +88,11 @@ class MessageType(StrEnum):
     #: writes it, the host checks it, and nothing happens until they say yes.
     PROPOSE = "propose"    # {combatant, move, target, weapon, text}
     ACTED = "acted"        # {id, accept, note} -- the player's answer
+    DONE = "done"          # {} -- I have finished my turn, pass it on
+    ALLOW = "allow"        # {id, allow} -- the DM answering a rule bend
+    SWING = "swing"        # {combatant, target, weapon} -- roll an attack
+    SIMULATE = "simulate"  # {combatant, on} -- let autopilot play this one
+    GIVE = "give"          # {entity, item} -- into somebody's inventory
 
     # server -> client
     CHALLENGE = "challenge"  # {salt, nonce}
@@ -102,6 +107,18 @@ class MessageType(StrEnum):
     ENCOUNTER = "encounter"  # {encounter} -- the fight, or null for none
     ACTION = "action"        # a turn waiting on the player whose turn it is
     ACTION_GONE = "action_gone"  # {id} -- answered, withdrawn, or overtaken
+    #: {combatant, who, seconds, waiting} -- you have acted and the turn is
+    #: still yours. ``waiting`` false means stop asking.
+    YOUR_TURN = "your_turn"
+    #: {id, what, why} -- the agent has been asked to do something the rules
+    #: do not allow. Put to the DM, who may say the rules bend today.
+    BEND = "bend"
+    BEND_GONE = "bend_gone"  # {id} -- answered, or overtaken
+    #: Something to *show* on the map: a walk, a swing, a hit, a creature
+    #: going down. Sent because everyone should see the same thing happen --
+    #: a client working it out from two states it was sent would draw its own
+    #: version, at its own moment.
+    PLAY = "play"          # {kind, combatant, path, target, hit, damage}
     AUTOPILOT = "autopilot"  # {on, by} -- whether the agent is answering
     BUSY_NOW = "busy_now"    # {member, on} -- who is composing, for everyone
     SPEND = "spend"          # what the agent has cost. DM viewers only.
@@ -111,6 +128,25 @@ class MessageType(StrEnum):
     SAID = "said"
     ROLLED = "rolled"
     SYSTEM = "system"        # {text, kind} -- see SystemKind
+
+
+class Played(StrEnum):
+    """What kind of thing to show on the map. See :data:`MessageType.PLAY`.
+
+    The host says what happened and every client draws the same thing. Left to
+    work it out from two states it was sent, each one would invent its own
+    version of the walk and start it at its own moment, and four people would
+    watch four different fights.
+    """
+
+    #: Walking, square by square, along ``path``.
+    MOVE = "move"
+    #: A swing at ``target``: ``hit`` says whether it landed, ``damage`` how
+    #: much. A miss is still worth showing -- it is half of what happened.
+    ATTACK = "attack"
+    #: Out of the fight. Drawn leaving rather than simply gone, because a token
+    #: that vanishes between two frames is a token nobody saw die.
+    DOWN = "down"
 
 
 @dataclass(slots=True)

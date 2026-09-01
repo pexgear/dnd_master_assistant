@@ -82,6 +82,16 @@ class SessionClient(QObject):
     action_proposed = Signal(dict)
     #: (id) -- that turn is no longer waiting: answered, or overtaken.
     action_withdrawn = Signal(str)
+    #: (waiting, seconds) -- you have acted and the turn is still yours. The
+    #: host is counting; when it runs out the turn moves on without you.
+    still_your_turn = Signal(bool, int)
+    #: The agent was asked to do something the rules refuse, and it is the DM's
+    #: to allow or not. DM connections only.
+    bend_requested = Signal(dict)
+    bend_withdrawn = Signal(str)
+    #: Something to show on the map: a walk, a swing, a creature going down.
+    #: The host describes it so every screen shows the same thing.
+    play = Signal(dict)
 
     def __init__(self, parent: QObject | None = None, state: SharedState | None = None) -> None:
         super().__init__(parent)
@@ -235,6 +245,20 @@ class SessionClient(QObject):
             MessageType.ACTED, id=action_id, accept=bool(accept), note=note
         )
 
+    def send_allow(self, bend_id: str, allow: bool) -> bool:
+        """The DM waiving a rule for the agent, or declining to."""
+        return self._send(MessageType.ALLOW, id=bend_id, allow=bool(allow))
+
+    def send_simulate(self, combatant_id: int, on: bool) -> bool:
+        """Hand your character to autopilot for this fight, or take it back."""
+        return self._send(
+            MessageType.SIMULATE, combatant=combatant_id, on=bool(on)
+        )
+
+    def send_done(self) -> bool:
+        """End your turn now rather than waiting for the clock to do it."""
+        return self._send(MessageType.DONE)
+
     def send_turn(self, action: str) -> bool:
         """Start the fight, pass the turn, or end it. ``begin``/``next``/``end``."""
         return self._send(MessageType.TURN, action=action)
@@ -374,6 +398,20 @@ class SessionClient(QObject):
 
         elif message.type == MessageType.ACTION_GONE:
             self.action_withdrawn.emit(str(message.get("id", "")))
+
+        elif message.type == MessageType.PLAY:
+            self.play.emit(dict(message.payload))
+
+        elif message.type == MessageType.BEND:
+            self.bend_requested.emit(dict(message.payload))
+
+        elif message.type == MessageType.BEND_GONE:
+            self.bend_withdrawn.emit(str(message.get("id", "")))
+
+        elif message.type == MessageType.YOUR_TURN:
+            self.still_your_turn.emit(
+                bool(message.get("waiting")), int(message.get("seconds") or 0)
+            )
 
         elif message.type == MessageType.FACTS:
             facts = message.get("facts")

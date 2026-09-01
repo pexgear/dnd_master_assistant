@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import logging
 
-from canon_keeper_protocol import grid
+from canon_keeper_protocol import MessageType, grid
+
+_SIMULATE = MessageType.SIMULATE
+_GIVE = MessageType.GIVE
 
 log = logging.getLogger("canonkeeper.agent.tools")
 
@@ -169,6 +172,79 @@ TOOLS = [
         },
     },
     {
+        "name": "attack",
+        "description": (
+            "Roll an attack. Use it every time something you are running "
+            "swings at somebody -- a goblin at a player, a wolf at a horse.\n\n"
+            "**Do not describe the outcome yourself.** You do not know it: the "
+            "host rolls the d20, compares it to the target's armour class, "
+            "rolls the damage and takes the hit points off. What comes back is "
+            "what happened, and you narrate that. Saying "
+            "\"the goblin's blade bites deep\" before this is inventing a hit.\n\n"
+            "Melee reaches one square, diagonals included, so move next to them "
+            "first. The weapon has to be on the attacker's sheet."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "attacker": {"type": "string", "description": "Who is swinging."},
+                "target": {"type": "string", "description": "Who they are hitting."},
+                "weapon": {
+                    "type": "string",
+                    "description": "Which weapon, from the attacker's sheet.",
+                },
+            },
+            "required": ["attacker", "target"],
+        },
+    },
+    {
+        "name": "give_item",
+        "description": (
+            "Put something in a character's inventory. Call it whenever they "
+            "pick anything up: loot off a body, a key from a drawer, the coin "
+            "the innkeeper hands over.\n\n"
+            "Describing the find is not recording it. Without this the sword "
+            "exists in the scene and nowhere else, and the player has to type "
+            "it in themselves -- which is exactly the clerical job they are not "
+            "here to do.\n\n"
+            "Write it as a person would on their own sheet: 'a longsword', "
+            "'3 torches', 'the bent iron key'. One call per thing found."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "character": {
+                    "type": "string",
+                    "description": "Who picks it up, by name.",
+                },
+                "item": {
+                    "type": "string",
+                    "description": "What they now have, in their own words.",
+                },
+            },
+            "required": ["character", "item"],
+        },
+    },
+    {
+        "name": "simulate_character",
+        "description": (
+            "Take a player's character over for this fight, or hand it back. "
+            "Only when a person has asked you to -- an empty chair, or a player "
+            "who says to play theirs. Never on your own initiative."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "character": {"type": "string"},
+                "on": {
+                    "type": "boolean",
+                    "description": "True to play them, false to hand them back.",
+                },
+            },
+            "required": ["character"],
+        },
+    },
+    {
         "name": "propose_turn",
         "description": (
             "Turn what a player just said into the move and attack they meant, "
@@ -184,7 +260,11 @@ TOOLS = [
             "nothing happens until they accept, and then the host rolls it.\n\n"
             "Weapons must be on that character's sheet. Melee reaches one "
             "square, diagonals included, so move them next to the target "
-            "first.\n\n" + WHERE
+            "first.\n\n"
+            "A turn's movement is limited by speed -- six squares for most "
+            "people, thirty feet. Diagonals count as one square. Ask for more "
+            "and the host refuses it and says how far they could actually "
+            "get.\n\n" + WHERE
         ),
         "input_schema": {
             "type": "object",
@@ -363,6 +443,53 @@ class Tools:
                 "somebody is standing in it."
             )
         return ("Something is in the way at " if present else "Cleared ") + f"{x},{y}."
+
+    async def _attack(self, arguments: dict) -> str:
+        attacker, problem = self._find(str(arguments.get("attacker", "")))
+        if problem:
+            return problem
+        target, trouble = self._find(str(arguments.get("target", "")))
+        if trouble:
+            return trouble
+
+        await self._session.swing(
+            attacker["id"], target["id"], str(arguments.get("weapon", ""))
+        )
+        await self._session.wait_for_the_fight()
+        # Deliberately not a report of what happened. The roll arrives in the
+        # chat like everyone else's, and narrating from a guess here is the
+        # exact failure this tool exists to prevent.
+        return (
+            "Rolled. The result is in the chat -- narrate what it says, not "
+            "what you expected."
+        )
+
+    async def _give_item(self, arguments: dict) -> str:
+        """Into somebody's inventory. Works outside a fight as well as in one."""
+        name = str(arguments.get("character", ""))
+        item = str(arguments.get("item", "")).strip()
+        if not item:
+            return "Say what they picked up."
+
+        entity = self.table.entity_named(name)
+        if entity is None:
+            return f"There is nobody called {name!r} in this campaign."
+
+        await self._session.ask(_GIVE, entity=entity["id"], item=item)
+        return f"{entity.get('name')} has it now, on their own sheet."
+
+    async def _simulate_character(self, arguments: dict) -> str:
+        combatant, problem = self._find(str(arguments.get("character", "")))
+        if problem:
+            return problem
+        on = bool(arguments.get("on", True))
+        await self._session.ask(
+            _SIMULATE, combatant=combatant["id"], on=on
+        )
+        await self._session.wait_for_the_fight()
+        return (
+            "You are playing them now." if on else "Handed back to their player."
+        )
 
     async def _propose_turn(self, arguments: dict) -> str:
         """Formalise a player's turn and hand it back to them to confirm."""

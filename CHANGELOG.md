@@ -5,6 +5,69 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.5.1
+
+0.5.0's combat, finished: the rules it was missing, turns that end by
+themselves, and enough of it happening on screen to follow without reading the
+chat.
+
+**Everyone at a table needs this version.** The wire moved to 4 — a turn ending,
+a rule bending, and everything you now watch happen are all new things said over
+it — and a mixed table is refused at the door with a readable reason rather than
+half-working. Campaign files are upgraded when you open them, and nothing needs
+converting by hand.
+
+### Combat, continued
+
+- **A speed limit.** A turn's movement is what the character's speed allows --
+  six squares for most people, read off the sheet, with `overrides.speed` for a
+  monster that differs. Checked when a turn is proposed *and* again when it is
+  accepted, since the map moves while somebody is deciding.
+- **What you have left.** The Combat panel shows the turn in progress: *"Your
+  turn: 15 feet of 30 left, 15 used · attack still to come."*
+- **Anything else, or done?** After you act, the turn is still yours -- say what
+  else you do, press **Done**, or the turn passes on its own after fifteen
+  seconds. The clock runs on the host, so it is a promise to the whole table
+  rather than to whoever's laptop is awake. Anything you type stops it.
+- **Taking a turn without autopilot.** **Attack...** in the Combat panel: who is
+  up, a target, a weapon off their sheet. The host still rolls it.
+- **Autopilot takes the monsters' turns.** It waits a few seconds in case
+  somebody objects, then acts. Player characters are never taken this way --
+  theirs are proposed and confirmed, as before.
+- **The DM can overrule the rules.** Ask autopilot for something the rules
+  refuse -- a creature moving out of turn, or further than its speed -- and it
+  comes back to you naming the rule it breaks: *allow it, or not*. Squares off
+  the map, or ones somebody is standing in, are not rules and are still refused
+  outright.
+
+- **Autopilot rolls its attacks.** It could move a goblin and talk about it
+  hitting somebody, and had no way to actually swing -- so it described
+  outcomes instead of asking for them. Now it swings, the host rolls, and it
+  narrates what came back.
+- **Simulate turn.** Hand a character to autopilot for this fight -- an empty
+  chair, or a player who has stepped out. Either of you can do it, from the
+  Combat panel, and either can take them back. Everyone is told, and the
+  initiative order says which of them is being played by a machine.
+- **A machine-played turn ends by itself.** Monsters and handed-over characters
+  acted and then held the table: the only thing that ever ended a turn was a
+  person pressing **Done**, and there is no person. The turn now passes a few
+  seconds after autopilot stops acting -- each thing it does restarts the wait,
+  and it does not run while autopilot is still thinking.
+- **Things you pick up go on your sheet.** Autopilot records loot as it hands
+  it over, instead of describing a sword that then exists nowhere. With
+  autopilot off the DM still types it into the Inventory field.
+
+### You can see it happen
+
+- Tokens **walk square by square** instead of jumping.
+- An attacker **leans in**, and the damage floats off whoever took it -- or the
+  word *miss*, which is half of what happened.
+- A creature at zero **fades off the map**, and stays in the initiative order so
+  you can bring them round.
+- Everyone sees the same thing at the same moment: the host says what happened
+  and every screen draws that, rather than each inventing its own version. A
+  creature you have not been shown does not animate on your map.
+
 ## 0.5.0
 
 Combat: a map, an initiative order, and a way for a player to take their turn

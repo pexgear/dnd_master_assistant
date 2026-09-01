@@ -291,7 +291,8 @@ def apply_player_edit(
 
 def project_encounter(encounter, combatants: list, viewer: Viewer,
                       visible_ids: set[int] | None = None,
-                      obstacles: set | None = None) -> dict:
+                      obstacles: set | None = None,
+                      budget: dict | None = None) -> dict:
     """One fight, reduced to what ``viewer`` may see of it.
 
     The same allowlist as everything else, applied to tokens: a combatant
@@ -344,6 +345,10 @@ def project_encounter(encounter, combatants: list, viewer: Viewer,
         # Sorted so the same fight produces the same frame twice, which is what
         # makes two clients comparable when one of them is wrong.
         "obstacles": sorted([int(x), int(y)] for x, y in (obstacles or ())),
+        # What the turn in progress has left. Goes to everyone: whose turn it
+        # is, and how much of it is gone, is not a secret -- it is the thing
+        # the whole table is waiting on.
+        "budget": dict(budget or {}),
     }
 
 
@@ -360,6 +365,9 @@ def _combatant(combatant, viewer: Viewer) -> dict:
         "initiative": combatant.initiative,
         "x": combatant.x,
         "y": combatant.y,
+        # Sent to everyone. A table deserves to know which of them is being
+        # played by a machine, the same way the roster names the agent.
+        "simulated": bool(combatant.simulated),
     }
     if viewer.is_dm:
         projected["name"] = combatant.name

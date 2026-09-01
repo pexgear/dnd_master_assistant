@@ -125,6 +125,13 @@ class TableWidget(QWidget):
         #: A turn worked out for us and waiting on our word. While it is set,
         #: the entry answers it instead of saying something new.
         self._offered: dict | None = None
+        #: A rule autopilot wants waived, waiting on this DM.
+        self._bending: dict | None = None
+        #: The display half of the host's "anything else?" clock.
+        self._seconds_left = 0
+        self._countdown = QTimer(self)
+        self._countdown.setInterval(1000)
+        self._countdown.timeout.connect(self._tick)
         # An agent that dies a millisecond after starting used to do so in
         # silence, leaving the button on and the table waiting for a machine
         # that was not there.
@@ -171,6 +178,10 @@ class TableWidget(QWidget):
         self._client.action_withdrawn.connect(ctx.bus.action_withdrawn)
         self._client.action_proposed.connect(self._on_turn_offered)
         self._client.action_withdrawn.connect(self._on_turn_withdrawn)
+        self._client.still_your_turn.connect(self._on_still_your_turn)
+        self._client.play.connect(ctx.bus.play)
+        self._client.bend_requested.connect(self._on_bend_asked)
+        self._client.bend_withdrawn.connect(self._on_bend_withdrawn)
         self._client.encounter_received.connect(self._on_encounter_received)
         ctx.bus.action_answered.connect(self._client.send_answer)
 
@@ -193,6 +204,12 @@ class TableWidget(QWidget):
         # client fills -- so there is no path from receiving a fight back to
         # publishing one.
         ctx.bus.encounter_changed.connect(self._on_encounter_changed)
+        # The DM taking a turn by hand. It needs the host, and the host lives
+        # here; the Combat panel has no socket, exactly like every other panel.
+        ctx.bus.turn_taken.connect(self._on_turn_taken)
+        # A player handing their own character over. It goes to the host, which
+        # decides whether it is theirs to hand.
+        ctx.bus.simulate_requested.connect(self._client.send_simulate)
         ctx.bus.theme_changed.connect(lambda _dark: self._refresh_colours())
         # Our own character arriving is what turns "Perception check" from text
         # into something clickable, and it arrives after the first lines do.
@@ -351,6 +368,42 @@ class TableWidget(QWidget):
 
         self._offer_bar.setVisible(False)
         outer.addWidget(self._offer_bar)
+
+        # You have acted, and the turn is still yours. Asked rather than cut
+        # off -- but with a clock, because "asked" must not mean everybody else
+        # waits indefinitely on somebody who has stopped reading.
+        self._turn_bar = QWidget()
+        still = QHBoxLayout(self._turn_bar)
+        still.setContentsMargins(0, 0, 0, 0)
+        self._turn_label = QLabel("")
+        self._turn_label.setWordWrap(True)
+        still.addWidget(self._turn_label, 1)
+        self._done_button = QPushButton("Done")
+        self._done_button.setToolTip("End your turn now")
+        self._done_button.clicked.connect(self._finish_turn)
+        still.addWidget(self._done_button)
+        self._turn_bar.setVisible(False)
+        outer.addWidget(self._turn_bar)
+
+        # Autopilot has been asked to do something the rules refuse. A DM can
+        # always overrule the rules -- that is most of what being a DM is -- so
+        # the answer is not a flat no, and it is certainly not the machine
+        # quietly doing it. It is this.
+        self._bend_bar = QWidget()
+        bend = QHBoxLayout(self._bend_bar)
+        bend.setContentsMargins(0, 0, 0, 0)
+        self._bend_label = QLabel("")
+        self._bend_label.setWordWrap(True)
+        bend.addWidget(self._bend_label, 1)
+        self._allow_button = QPushButton("Allow it")
+        self._allow_button.setToolTip("The rules bend tonight")
+        self._allow_button.clicked.connect(lambda: self._answer_bend(True))
+        bend.addWidget(self._allow_button)
+        self._forbid_button = QPushButton("No")
+        self._forbid_button.clicked.connect(lambda: self._answer_bend(False))
+        bend.addWidget(self._forbid_button)
+        self._bend_bar.setVisible(False)
+        outer.addWidget(self._bend_bar)
 
         entry = QHBoxLayout()
         self._entry = QLineEdit()
@@ -729,6 +782,21 @@ class TableWidget(QWidget):
         if self._server is not None and self._server.is_running:
             self._server.publish_encounter()
 
+    def _on_turn_taken(self, turn: dict) -> None:
+        if self._server is None or not self._server.is_running:
+            self._ctx.bus.status_message.emit(
+                "Go online first -- the dice and the hit points are the host's."
+            )
+            return
+        problem = self._server.take_turn(
+            int(turn.get("combatant") or 0),
+            move=turn.get("move"),
+            target=turn.get("target"),
+            weapon=str(turn.get("weapon", "")),
+        )
+        if problem:
+            self._ctx.bus.status_message.emit(problem)
+
     def _on_agent_moved(self) -> None:
         """A token moved on someone else's say-so. Tell the DM's own panels."""
         self._relaying_agent_move = True
@@ -987,6 +1055,69 @@ class TableWidget(QWidget):
         self._offer_bar.setVisible(False)
         self._entry.setPlaceholderText("Say something, or /roll 2d6+3")
         self._update_state()
+
+    def _on_still_your_turn(self, waiting: bool, seconds: int) -> None:
+        """Acted, and the turn is still yours: anything else, or done?
+
+        The countdown shown here is only a display of the host's. It is the
+        host that decides when the turn moves on, because a promise made to
+        four other people cannot depend on one person's laptop staying awake.
+        """
+        self._countdown.stop()
+        if not waiting:
+            self._turn_bar.setVisible(False)
+            return
+        self._seconds_left = max(0, int(seconds))
+        self._show_countdown()
+        self._turn_bar.setVisible(True)
+        self._countdown.start()
+
+    def _show_countdown(self) -> None:
+        self._turn_label.setText(
+            "<b>Still your turn.</b> Say what else you do, or "
+            f"<b>Done</b> -- moving on in {self._seconds_left}s."
+        )
+
+    def _tick(self) -> None:
+        self._seconds_left -= 1
+        if self._seconds_left <= 0:
+            # The host has the real clock; this only stops the number going
+            # negative while its word arrives.
+            self._countdown.stop()
+            self._turn_label.setText("<b>Still your turn.</b> Moving on...")
+            return
+        self._show_countdown()
+
+    # --------------------------------------------------- bending the rules
+
+    def _on_bend_asked(self, bend: dict) -> None:
+        """Autopilot wants to do something the rules refuse. Your call."""
+        self._bending = bend
+        self._bend_label.setText(
+            f"<b>Autopilot wants to {bend.get('what', 'do that')}.</b> "
+            f"{bend.get('why', '')} Allow it?"
+        )
+        self._bend_bar.setVisible(True)
+        # Said in the log as well, because the bar goes away and the decision
+        # is part of what happened at that table.
+        self._append("system", f"Autopilot asks: {bend.get('what', '')}")
+
+    def _on_bend_withdrawn(self, bend_id: str) -> None:
+        if self._bending is not None and self._bending.get("id") == bend_id:
+            self._bending = None
+            self._bend_bar.setVisible(False)
+
+    def _answer_bend(self, allow: bool) -> None:
+        if self._bending is None:
+            return
+        self._client.send_allow(self._bending["id"], allow)
+        self._bending = None
+        self._bend_bar.setVisible(False)
+
+    def _finish_turn(self) -> None:
+        self._countdown.stop()
+        self._turn_bar.setVisible(False)
+        self._client.send_done()
 
     def _accept_turn(self) -> None:
         if self._offered is None:

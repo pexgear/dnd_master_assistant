@@ -49,6 +49,27 @@ def clamp(width: int, height: int, x: int, y: int) -> tuple[int, int]:
     return max(left, min(right, int(x))), max(top, min(bottom, int(y)))
 
 
+def steps_between(start: tuple[int, int], end: tuple[int, int]) -> list[tuple[int, int]]:
+    """Every square walked through, starting where they were.
+
+    One square at a time, diagonals included -- the same way the distance is
+    measured, so a walk of six squares is six steps. The host works this out
+    once and sends it, rather than every client inventing its own line and
+    drawing a slightly different walk.
+    """
+    x, y = int(start[0]), int(start[1])
+    target_x, target_y = int(end[0]), int(end[1])
+    walked = [(x, y)]
+    # Bounded by the largest map, so a bad pair cannot loop forever.
+    for _step in range(120):
+        if (x, y) == (target_x, target_y):
+            break
+        x += (target_x > x) - (target_x < x)
+        y += (target_y > y) - (target_y < y)
+        walked.append((x, y))
+    return walked
+
+
 def label(x, y) -> str:
     """How a square is written and said: ``3,-2``."""
     if x is None or y is None:

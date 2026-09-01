@@ -27,7 +27,8 @@ from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 from canon_keeper import campaigns
 from canon_keeper.content import Content
 from canon_keeper.net import discovery
-from canon_keeper_protocol import auth
+from canon_keeper_protocol import auth, grid
+from canon_keeper_protocol.messages import Played
 from canon_keeper.repo.chat import (
     DEFAULT_LIMIT,
     DM_ONLY,
@@ -52,7 +53,7 @@ from canon_keeper.net.projection import (
     visible_entity_ids,
 )
 from canon_keeper.repo.encounters import DEFAULT_HEIGHT, DEFAULT_WIDTH
-from canon_keeper.rules import attack
+from canon_keeper.rules import attack, derive
 from canon_keeper_protocol.messages import (
     MAX_CHAT_LENGTH,
     MAX_NAME_LENGTH,
@@ -75,6 +76,19 @@ DEFAULT_PORT = 8765
 #: A socket that has not finished logging in by then is closed. Stops a port
 #: scanner or a stalled client from occupying a slot indefinitely.
 LOGIN_TIMEOUT_MS = 20_000
+
+#: How long a player has, after acting, to do something else before the turn
+#: moves on without them. Short on purpose: they have already had their say,
+#: and everybody else is watching a map that is not moving. Anything they type
+#: stops the clock, so it only ever runs out on somebody who has stopped
+#: reading.
+STILL_YOUR_TURN_MS = 15_000
+
+#: The same, for a monster or a character somebody has handed to autopilot.
+#: Much shorter, because there is nobody to ask and nothing to read: it is the
+#: gap after the machine stops acting. Each thing it does restarts it, and it
+#: does not run at all while the agent is still thinking.
+MACHINE_TURN_MS = 6_000
 
 
 @dataclass
@@ -179,6 +193,18 @@ class SessionServer(QObject):
         #: Runtime only: a proposal nobody answered before the session closed
         #: is a proposal about a moment that has passed.
         self._proposed: dict[str, dict] = {}
+        #: Whose turn we have asked "anything else?", and the clock that
+        #: answers for them if nobody does. Combat is the one part of an
+        #: evening where everybody waits on one person, and the commonest
+        #: reason for that wait is somebody who has stopped reading.
+        self._waiting_on: int | None = None
+        #: Things the agent was asked to do that the rules refuse, waiting on
+        #: the human DM. Runtime only: a bend nobody answered is about a moment
+        #: that has passed.
+        self._bends: dict[str, dict] = {}
+        self._turn_clock = QTimer(self)
+        self._turn_clock.setSingleShot(True)
+        self._turn_clock.timeout.connect(self._nobody_answered)
         self._pending: dict[QWebSocket, _Pending] = {}
         self._beacon = discovery.Beacon(self)
 
@@ -267,6 +293,9 @@ class SessionServer(QObject):
 
     def stop(self) -> None:
         self._beacon.stop()
+        # Nothing to wait for once there is nobody to wait on.
+        self._waiting_on = None
+        self._turn_clock.stop()
 
         # Detach before closing. QWebSocketServer owns the sockets it handed us,
         # so closing it destroys them -- and a queued `disconnected` would then
@@ -380,6 +409,16 @@ class SessionServer(QObject):
             self._handle_propose(socket, session, message)
         elif message.type == MessageType.ACTED:
             self._handle_acted(socket, session, message)
+        elif message.type == MessageType.DONE:
+            self._handle_done(socket, session, message)
+        elif message.type == MessageType.ALLOW:
+            self._handle_allow(socket, session, message)
+        elif message.type == MessageType.SWING:
+            self._handle_swing(socket, session, message)
+        elif message.type == MessageType.SIMULATE:
+            self._handle_simulate(socket, session, message)
+        elif message.type == MessageType.GIVE:
+            self._handle_give(socket, session, message)
         elif message.type == MessageType.BUSY:
             self._handle_busy(session, message)
         elif message.type == MessageType.TROUBLE:
@@ -698,6 +737,22 @@ class SessionServer(QObject):
             self._say_aside(session, text)
             return
 
+        # Somebody who is talking is somebody who has not stopped reading, so
+        # the clock waiting on them stops. Saying what you do next is doing
+        # something, even before it has been worked out into a turn.
+        #
+        # Not when a machine is playing them, though: nothing would restart it,
+        # and a player chatting through their own handed-over turn would hold
+        # the table indefinitely.
+        if (
+            self._waiting_on is not None
+            and self._is_theirs(session, self._waiting_on)
+            and not self._machine_plays(
+                self.repos.encounters.combatant(self._waiting_on)
+            )
+        ):
+            self._stop_the_clock()
+
         self._record(SAID, text, speaker=session.member.label, role=session.member.role)
         self._broadcast(MessageType.SAID, member=session.member.to_dict(), text=text)
 
@@ -951,6 +1006,57 @@ class SessionServer(QObject):
             session.viewer,
             visible_entity_ids(self.repos, self.campaign_id, session.viewer),
             self.repos.encounters.obstacles(encounter.id),
+            self._turn_budget(encounter),
+        )
+
+    def _turn_budget(self, encounter) -> dict:
+        """What the creature whose turn it is has left, in squares and feet."""
+        if not encounter.has_begun or encounter.turn_combatant_id is None:
+            return {}
+        combatant = self.repos.encounters.combatant(encounter.turn_combatant_id)
+        entity = self._entity_of(encounter.turn_combatant_id)
+        if combatant is None or entity is None:
+            return {}
+        sheet = (entity.data or {}).get("sheet") or {}
+        speed = derive.speed_in_squares(sheet, self.content)
+        return {
+            "combatant": combatant.id,
+            "speed": speed,
+            "moved": int(encounter.moved_squares or 0),
+            "left": max(0, speed - int(encounter.moved_squares or 0)),
+            "acted": bool(encounter.action_used),
+        }
+
+    def _show(self, kind: str, combatant, target=None, **detail) -> None:
+        """Tell everyone to show the same thing, at the same moment.
+
+        Sent as an event rather than left to be worked out from two states: a
+        client diffing "it was there, now it is here" would draw its own idea
+        of the walk, at its own moment, and four people would watch four
+        different fights.
+
+        Filtered like the map itself. A token you were never sent does not
+        acquire an animation -- that would be the one thing projection exists
+        to prevent, arriving as a moving dot.
+        """
+        if combatant is None:
+            return
+        for socket, session in self._sessions.items():
+            visible = visible_entity_ids(self.repos, self.campaign_id, session.viewer)
+            if not self._can_see(combatant, session, visible):
+                continue
+            payload = dict(detail)
+            payload["kind"] = kind
+            payload["combatant"] = combatant.id
+            if target is not None and self._can_see(target, session, visible):
+                payload["target"] = target.id
+            self._send(socket, MessageType.PLAY, **payload)
+
+    def _can_see(self, combatant, session: _Session, visible: set[int]) -> bool:
+        if session.viewer.is_dm:
+            return True
+        return combatant.entity_id is not None and (
+            combatant.entity_id in visible or session.viewer.owns(combatant.entity_id)
         )
 
     def publish_encounter(self) -> None:
@@ -964,7 +1070,7 @@ class SessionServer(QObject):
                 socket, MessageType.ENCOUNTER, encounter=self._encounter_for(session)
             )
 
-    def _may_run_the_fight(self, session: _Session) -> bool:
+    def _may_run_the_table(self, session: _Session) -> bool:
         """Who may move a token, pass the turn, or set an initiative.
 
         One question for all three, because they are one authority: whoever is
@@ -996,7 +1102,7 @@ class SessionServer(QObject):
         an agent running a combat is doing the thing the DM does rather than a
         parallel thing that happens to look like it.
         """
-        if not self._may_run_the_fight(session):
+        if not self._may_run_the_table(session):
             self._refuse_the_fight(socket)
             return
 
@@ -1009,6 +1115,9 @@ class SessionServer(QObject):
                 message="There is no fight being run.",
             )
             return
+
+        # The turn is moving whatever we were waiting for.
+        self._stop_the_clock()
 
         action = str(message.get("action", "")).lower()
         if action == "begin":
@@ -1067,7 +1176,7 @@ class SessionServer(QObject):
         not be able to produce an encounter the app could not have produced
         itself.
         """
-        if not self._may_run_the_fight(session):
+        if not self._may_run_the_table(session):
             self._refuse_the_fight(socket)
             return
 
@@ -1083,7 +1192,7 @@ class SessionServer(QObject):
 
     def _handle_enlist(self, socket: QWebSocket, session: _Session, message) -> None:
         """Put a creature into the fight being run, optionally on a square."""
-        if not self._may_run_the_fight(session):
+        if not self._may_run_the_table(session):
             self._refuse_the_fight(socket)
             return
 
@@ -1124,7 +1233,7 @@ class SessionServer(QObject):
 
     def _handle_terrain(self, socket: QWebSocket, session: _Session, message) -> None:
         """Put something in the way, or take it out."""
-        if not self._may_run_the_fight(session):
+        if not self._may_run_the_table(session):
             self._refuse_the_fight(socket)
             return
 
@@ -1143,7 +1252,7 @@ class SessionServer(QObject):
 
     def _handle_initiative(self, socket: QWebSocket, session: _Session, message) -> None:
         """Set one combatant's initiative, or clear it with a null."""
-        if not self._may_run_the_fight(session):
+        if not self._may_run_the_table(session):
             self._refuse_the_fight(socket)
             return
 
@@ -1170,7 +1279,7 @@ class SessionServer(QObject):
 
     def _handle_move(self, socket: QWebSocket, session: _Session, message) -> None:
         """A request to move a token. ``x``/``y`` of null takes it off the map."""
-        if not self._may_run_the_fight(session):
+        if not self._may_run_the_table(session):
             self._refuse_the_fight(socket)
             return
 
@@ -1193,7 +1302,35 @@ class SessionServer(QObject):
             )
             return
 
-        if not self.repos.encounters.place(combatant_id, x, y):
+        if x is not None and y is not None and not encounter.holds(x, y):
+            # Checked before the speed rule, because a square off the edge of
+            # the map is not a rule anybody can waive -- there is no such
+            # square -- and it must not be put to the DM as though it were.
+            self._send_refusal(socket, f"{x},{y} is off the map.")
+            return
+
+        # An agent moving a creature is taking its turn, so its speed applies.
+        # A DM dragging a token is arranging the board, which is not a turn and
+        # has never had a rule about it.
+        entity = self._entity_of(combatant_id)
+        if session.is_agent and entity is not None:
+            reason = self._breaks_a_rule(
+                encounter, combatant, entity, [x, y] if x is not None else None
+            )
+            if reason:
+                self._ask_the_dm_to_bend(
+                    {"kind": "move", "combatant": combatant_id, "x": x, "y": y,
+                     "what": f"move {entity.name} to {x},{y}"},
+                    what=f"move {entity.name} to {x},{y}",
+                    why=reason,
+                )
+                self._tell_the_agent(
+                    f"{reason} It is with your DM, who may allow it. Do not "
+                    "narrate it as though it happened."
+                )
+                return
+
+        if not self._do_move(combatant_id, x, y, spending=session.is_agent):
             self._send(
                 socket,
                 MessageType.ERROR,
@@ -1201,11 +1338,52 @@ class SessionServer(QObject):
                 message="That square is off the grid, or someone is standing in it.",
             )
             return
-
         log.info("%s moved combatant %s to %s,%s", session.member.label, combatant_id, x, y)
+        if session.is_agent:
+            # Something happened, so the clock that ends the turn restarts. A
+            # move then a swing is one turn, not two turns and a gap.
+            self._ask_if_done(combatant_id)
+
+    def _do_move(
+        self,
+        combatant_id: int,
+        x: int | None,
+        y: int | None,
+        spending: bool = False,
+    ) -> bool:
+        """Move a token, and count it against the turn if it *is* a turn.
+
+        ``spending`` is the difference between a creature walking and a DM
+        arranging the board. Both end with a token on a different square; only
+        one of them uses up somebody's movement.
+        """
+        before = self.repos.encounters.combatant(combatant_id)
+        if not self.repos.encounters.place(combatant_id, x, y):
+            return False
+
+        encounter = self._the_running_fight()
+        if x is not None and before is not None and before.on_map:
+            # Shown as a walk rather than a jump, and worked out here so every
+            # screen walks the same line.
+            self._show(
+                Played.MOVE.value,
+                before,
+                path=[list(square) for square in
+                      grid.steps_between((before.x, before.y), (x, y))],
+            )
+            if (
+                spending
+                and encounter is not None
+                and encounter.turn_combatant_id == combatant_id
+            ):
+                self.repos.encounters.spend_movement(
+                    encounter.id, attack.squares_between((before.x, before.y), (x, y))
+                )
+
         self.publish_encounter()
         # The DM's own map reads the database, so it does not know yet.
         self.encounter_applied.emit()
+        return True
 
     # ------------------------------------------------------------ taking a turn
     #
@@ -1225,7 +1403,7 @@ class SessionServer(QObject):
     # product from one that offers to.
 
     def _handle_propose(self, socket: QWebSocket, session: _Session, message) -> None:
-        if not self._may_run_the_fight(session):
+        if not self._may_run_the_table(session):
             self._refuse_the_fight(socket)
             return
 
@@ -1256,16 +1434,59 @@ class SessionServer(QObject):
             )
             return
 
-        problem, action = self._shape_the_action(encounter, combatant, entity, message)
+        fields = {
+            "move": message.get("move"),
+            "target": message.get("target"),
+            "weapon": message.get("weapon", ""),
+            "text": message.get("text", ""),
+        }
+        problem, action, bendable = self._shape_the_action(
+            encounter, combatant, entity, fields
+        )
+        if problem and bendable and session.is_agent:
+            # A rule, and the DM is the one who decides whether it applies
+            # tonight. Parked rather than refused.
+            self._ask_the_dm_to_bend(
+                {"kind": "propose", "combatant": combatant.id, "fields": fields,
+                 "what": str(fields["text"] or "that")},
+                what=str(fields["text"] or f"a turn for {entity.name}"),
+                why=problem,
+            )
+            self._tell_the_agent(
+                f"{problem} It is with your DM, who may allow it. Do not "
+                "narrate it as though it happened."
+            )
+            return
         if problem:
             self._send_refusal(socket, problem)
             return
 
+        self._offer(action, entity)
+
+    def _do_propose(self, combatant_id: int, fields: dict, bending: bool = False) -> None:
+        """Build and offer a turn, skipping the rules the DM has waived."""
+        encounter = self._the_running_fight()
+        combatant = self.repos.encounters.combatant(combatant_id)
+        entity = self._entity_of(combatant_id)
+        if encounter is None or combatant is None or entity is None:
+            return
+        problem, action, _bendable = self._shape_the_action(
+            encounter, combatant, entity, fields, bending=bending
+        )
+        if problem:
+            self._tell_dms(f"That still will not work: {problem}")
+            return
+        self._offer(action, entity)
+
+    def _offer(self, action: dict, entity) -> None:
         # One at a time per character. A second proposal replaces the first
         # rather than queueing: the table has moved on, and a player answering
         # a stale one would act on a map that no longer looks like that.
-        self._withdraw_for(combatant.id)
+        self._withdraw_for(action["combatant"])
         self._proposed[action["id"]] = action
+        # Something is being put to them, so they are not being waited on.
+        if self._waiting_on == action["combatant"]:
+            self._stop_the_clock()
 
         log.info("proposed for %s: %s", entity.name, action["text"])
         self._send_to_account(entity.owner_account_id, MessageType.ACTION, **action)
@@ -1276,38 +1497,51 @@ class SessionServer(QObject):
             if other.viewer.is_dm and other.account_id != entity.owner_account_id:
                 other_socket.sendTextMessage(frame)
 
-    def _shape_the_action(self, encounter, combatant, entity, message):
+    def _shape_the_action(self, encounter, combatant, entity, fields, bending=False):
         """Turn a proposal into something legal, or say what is wrong with it.
 
         Checked here rather than trusted, because the thing that wrote it is a
         language model and the thing that reads it is a person about to press
         Accept.
+
+        Returns ``(problem, action, bendable)``. **Bendable** marks a refusal
+        that is a *rule* rather than an impossibility -- speed, not a square off
+        the edge of the map. Only those are worth putting to the DM, because
+        only those are theirs to waive.
         """
-        move = message.get("move")
+        move = fields.get("move")
         square = None
         if isinstance(move, (list, tuple)) and len(move) == 2:
             x, y = move
             if not isinstance(x, int) or not isinstance(y, int):
-                return "That is not a square.", None
+                return "That is not a square.", None, False
             if not encounter.holds(x, y):
-                return f"{x},{y} is off the map.", None
+                return f"{x},{y} is off the map.", None, False
             standing = self.repos.encounters.at(encounter.id, x, y)
             if standing is not None and standing.id != combatant.id:
-                return f"Somebody is already at {x},{y}.", None
+                return f"Somebody is already at {x},{y}.", None, False
             if (x, y) in self.repos.encounters.obstacles(encounter.id):
-                return f"There is something in the way at {x},{y}.", None
+                return f"There is something in the way at {x},{y}.", None, False
             square = [x, y]
 
-        target_id = message.get("target")
+        # After the impossibilities, because a rule is only worth putting to
+        # somebody once the thing being asked for actually exists.
+        broken = (
+            "" if bending else self._breaks_a_rule(encounter, combatant, entity, square)
+        )
+        if broken:
+            return broken, None, True
+
+        target_id = fields.get("target")
         target_name = ""
         if target_id is not None:
             if not isinstance(target_id, int):
-                return "That is not a target.", None
+                return "That is not a target.", None, False
             target = self.repos.encounters.combatant(target_id)
             if target is None or target.encounter_id != encounter.id:
-                return "That target is not in the fight.", None
+                return "That target is not in the fight.", None, False
             if target.id == combatant.id:
-                return "Nobody attacks themselves.", None
+                return "Nobody attacks themselves.", None, False
             hit = (
                 self.repos.entities.get(target.entity_id)
                 if target.entity_id is not None
@@ -1322,9 +1556,73 @@ class SessionServer(QObject):
             "move": square,
             "target": target_id if isinstance(target_id, int) else None,
             "target_name": target_name,
-            "weapon": str(message.get("weapon", ""))[:MAX_NAME_LENGTH],
-            "text": str(message.get("text", ""))[:MAX_CHAT_LENGTH],
-        }
+            "weapon": str(fields.get("weapon", ""))[:MAX_NAME_LENGTH],
+            "text": str(fields.get("text", ""))[:MAX_CHAT_LENGTH],
+            # Carried with it, so accepting a waived turn does not run into the
+            # same rule a second time on the way out.
+            "bending": bool(bending),
+        }, False
+
+    def _breaks_a_rule(self, encounter, combatant, entity, square) -> str:
+        """A rule the DM could waive tonight, or empty if nothing is broken.
+
+        Only *rules* belong here. A square off the edge of the map, or one
+        somebody is standing in, is not a rule -- it is a square that does not
+        exist or is already taken -- and no amount of authority makes it
+        otherwise. Those are refused outright, and never put to anybody.
+        """
+        if encounter.has_begun and encounter.turn_combatant_id != combatant.id:
+            return f"It is not {entity.name}'s turn."
+        if square is not None:
+            return self._too_far(combatant, entity, square[0], square[1])
+        return ""
+
+    def _too_far(self, combatant, entity, x: int, y: int) -> str:
+        """Whether one turn's movement reaches that square, or why it does not.
+
+        A turn is a move up to your speed, so the app has to know what your
+        speed is -- without this a proposal could walk somebody from one corner
+        of the room to the other and the host would carry it out. Diagonals
+        count as one square, which is the Player's Handbook's own
+        simplification and how every table plays it.
+
+        Coming *onto* the map is not moving across it: a creature with no
+        square yet is arriving, and there is nowhere to measure from.
+        """
+        if not combatant.on_map:
+            return ""
+
+        steps = attack.squares_between((combatant.x, combatant.y), (x, y))
+        left = self.movement_left(entity, combatant)
+        if steps <= left:
+            return ""
+        spent = self._spent_this_turn(combatant)
+        already = f" -- {spent} already used" if spent else ""
+        return (
+            f"{entity.name} has {left} squares left this turn "
+            f"({left * 5} feet{already}), and {x},{y} is {steps} away."
+        )
+
+    def _spent_this_turn(self, combatant) -> int:
+        encounter = self._the_running_fight()
+        if encounter is None or encounter.turn_combatant_id != combatant.id:
+            return 0
+        return int(encounter.moved_squares or 0)
+
+    def movement_left(self, entity, combatant=None) -> int:
+        """Squares this creature can still cover before the turn passes."""
+        sheet = (entity.data or {}).get("sheet") or {}
+        speed = derive.speed_in_squares(sheet, self.content)
+        encounter = self._the_running_fight()
+        if encounter is None or not encounter.has_begun:
+            return speed
+        if combatant is None:
+            combatant = self.repos.encounters.combatant(
+                encounter.turn_combatant_id or -1
+            )
+        if combatant is None or combatant.entity_id != entity.id:
+            return speed
+        return max(0, speed - int(encounter.moved_squares or 0))
 
     def _send_refusal(self, socket: QWebSocket, message: str) -> None:
         self._send(socket, MessageType.ERROR, code="refused", message=message)
@@ -1382,22 +1680,400 @@ class SessionServer(QObject):
 
         self._carry_out(action, session)
 
+    def _handle_give(self, socket: QWebSocket, session: _Session, message) -> None:
+        """Put something in somebody's inventory.
+
+        Nothing did this before. A DM would say "there is a longsword in the
+        chest", and the item existed in the fiction and nowhere else -- a player
+        who wanted it recorded had to type it in themselves, which is the sort
+        of clerical job the app is meant to be doing.
+        """
+        if not self._may_run_the_table(session):
+            self._refuse_the_fight(socket)
+            return
+
+        entity_id = message.get("entity")
+        item = str(message.get("item", "")).strip()[:MAX_CHAT_LENGTH]
+        entity = self.repos.entities.get(entity_id) if isinstance(entity_id, int) else None
+        if entity is None or not item:
+            self._send_refusal(socket, "Say what, and to whom.")
+            return
+
+        self.give(entity, item)
+
+    def give(self, entity, item: str) -> None:
+        """Add a line to an entity's inventory, and say so.
+
+        Appended rather than parsed: inventory is free text somebody writes
+        their own way -- "3 torches", "the innkeeper's key (bent)" -- and a
+        structured list would be this app deciding how their kit is written
+        down. A line is the smallest thing that is still theirs.
+        """
+        data = dict(entity.data or {})
+        held = str(data.get("inventory") or "").rstrip()
+        data["inventory"] = f"{held}\n{item}" if held else item
+        entity.data = data
+        self.repos.entities.update(entity)
+
+        log.info("gave %s to %s", item, entity.name)
+        self._broadcast_system(f"{entity.name} picks up: {item}")
+        self.publish_entity(entity.id)
+        self.entity_applied.emit(entity.id)
+
+    def _handle_simulate(self, socket: QWebSocket, session: _Session, message) -> None:
+        """Hand a player's character to autopilot for this fight, or take it back.
+
+        The DM's to decide, and the player's for their own character: somebody
+        stepping out should be able to say "play mine" without finding the DM,
+        and a DM should be able to fill an empty chair without waiting for
+        somebody who is not there.
+
+        Not the agent's. It does not get to decide which characters it plays.
+        """
+        combatant_id = message.get("combatant")
+        entity = self._entity_of(combatant_id) if isinstance(combatant_id, int) else None
+        if entity is None:
+            return
+
+        theirs = entity.owner_account_id == session.account_id
+        if session.is_agent or not (theirs or session.viewer.is_dm):
+            self._send_refusal(socket, "That is not yours to hand over.")
+            return
+
+        on = bool(message.get("on"))
+        self.repos.encounters.set_simulated(combatant_id, on)
+        self._broadcast_system(
+            f"Autopilot is playing {entity.name}." if on
+            else f"{entity.name} is back with their player."
+        )
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def _handle_swing(self, socket: QWebSocket, session: _Session, message) -> None:
+        """Roll an attack. The half of a monster's turn that was missing.
+
+        The agent could move a goblin and could talk about it hitting somebody,
+        and had no way to actually swing -- so it narrated outcomes instead of
+        asking for them, which is the one thing it is told never to do. This is
+        the door.
+        """
+        if not self._may_run_the_table(session):
+            self._refuse_the_fight(socket)
+            return
+
+        encounter = self._the_running_fight()
+        combatant = self.repos.encounters.combatant(message.get("combatant"))
+        target = self.repos.encounters.combatant(message.get("target"))
+        entity = self._entity_of(message.get("combatant"))
+        if (
+            encounter is None
+            or combatant is None
+            or target is None
+            or entity is None
+            or combatant.encounter_id != encounter.id
+            or target.encounter_id != encounter.id
+        ):
+            self._send_refusal(socket, "That is not in the fight being run.")
+            return
+        if target.id == combatant.id:
+            self._send_refusal(socket, "Nobody attacks themselves.")
+            return
+
+        wanted = str(message.get("weapon", ""))[:MAX_NAME_LENGTH]
+        reason = self._breaks_a_rule(encounter, combatant, entity, None)
+        if not reason:
+            sheet = (entity.data or {}).get("sheet") or {}
+            try:
+                weapon = attack.find_weapon(sheet, self.content, wanted)
+            except attack.NoAttack as exc:
+                # Not a rule anybody can waive: it is not on the sheet.
+                self._send_refusal(socket, str(exc))
+                return
+            reason = self.out_of_reach(combatant, target, weapon)
+
+        if reason and session.is_agent:
+            self._ask_the_dm_to_bend(
+                {"kind": "swing", "combatant": combatant.id, "target": target.id,
+                 "weapon": wanted},
+                what=f"have {entity.name} attack",
+                why=reason[0].upper() + reason[1:] + ".",
+            )
+            self._tell_the_agent(
+                f"{reason}. It is with your DM, who may allow it. Do not narrate "
+                "the outcome."
+            )
+            return
+        if reason:
+            self._send_refusal(socket, reason)
+            return
+
+        self._do_swing(combatant.id, target.id, wanted)
+        if session.is_agent:
+            self._ask_if_done(combatant.id)
+
+    def _do_swing(self, combatant_id: int, target_id: int, weapon: str) -> None:
+        self._swing(
+            {"combatant": combatant_id, "target": target_id, "weapon": weapon},
+            checked=True,
+        )
+        encounter = self._the_running_fight()
+        if encounter is not None and encounter.turn_combatant_id == combatant_id:
+            self.repos.encounters.use_action(encounter.id)
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    # ------------------------------------------------------ bending the rules
+    #
+    # A DM can always overrule the rules -- that is most of what being a DM is.
+    # So when they tell autopilot to do something the rules refuse ("have the
+    # goblin charge the wizard", from nine squares away), the answer is not a
+    # flat no and it is certainly not the agent quietly doing it. It is put
+    # back to the DM: this is what you asked for, here is the rule it breaks,
+    # shall I?
+    #
+    # Only *rules* bend. A square off the edge of the map or one somebody is
+    # standing in is not a rule, it is a square that does not exist or is
+    # taken, and no amount of authority makes it otherwise.
+
+    def _ask_the_dm_to_bend(self, request: dict, what: str, why: str) -> str:
+        """Park an agent's request and put it to the DM. Returns its id."""
+        bend_id = secrets.token_hex(6)
+        self._bends[bend_id] = request
+        log.info("asking the DM to allow: %s (%s)", what, why)
+        frame = encode(MessageType.BEND, id=bend_id, what=what, why=why)
+        for socket, session in self._sessions.items():
+            if session.viewer.is_dm and not session.is_agent:
+                socket.sendTextMessage(frame)
+        return bend_id
+
+    def _handle_allow(self, socket: QWebSocket, session: _Session, message) -> None:
+        """The DM's answer. Theirs alone -- the agent cannot bless its own ask."""
+        if not session.viewer.is_dm or session.is_agent:
+            self._send_refusal(socket, "Only the DM decides that.")
+            return
+
+        request = self._bends.pop(str(message.get("id", "")), None)
+        if request is None:
+            return
+        self._broadcast(MessageType.BEND_GONE, id=str(message.get("id", "")))
+
+        if not bool(message.get("allow")):
+            self._tell_the_agent(
+                f"Your DM said no to that: {request.get('what', 'it')}. "
+                "Do something the rules allow instead."
+            )
+            return
+
+        log.info("the DM allowed %s", request.get("what"))
+        self._broadcast_system(f"The DM allows it: {request.get('what')}.")
+        if request.get("kind") == "move":
+            self._do_move(request["combatant"], request["x"], request["y"])
+        elif request.get("kind") == "propose":
+            self._do_propose(request["combatant"], request["fields"], bending=True)
+        elif request.get("kind") == "swing":
+            self._do_swing(
+                request["combatant"], request["target"], request.get("weapon", "")
+            )
+
+    def _tell_the_agent(self, text: str) -> None:
+        """Say something to the agent, and to nobody else.
+
+        It arrives as an ordinary system line, which is what the agent's own
+        transcript is built from -- so the next thing it writes knows about it.
+        """
+        frame = encode(MessageType.SYSTEM, text=text, kind=SystemKind.NOTICE.value)
+        for socket, session in self._sessions.items():
+            if session.is_agent:
+                socket.sendTextMessage(frame)
+
+    # ------------------------------------------------- anything else, or done?
+    #
+    # A turn is a move and an action, and this app only models one action -- so
+    # once it is taken there is usually nothing left to decide. Usually is not
+    # always, though, so the player is asked rather than cut off, and the clock
+    # is what stops "asked" from meaning "everybody waits indefinitely".
+    #
+    # It runs on the host. A client-side timer would be a promise the app makes
+    # to four other people and keeps only while one person's laptop is awake.
+
+    def _machine_plays(self, combatant) -> bool:
+        """Whether nobody is going to press anything for this one.
+
+        Every monster, and any character somebody has handed over. It is the
+        difference between a turn that is waiting on a person and one that is
+        waiting on nothing at all.
+        """
+        if combatant is None:
+            return False
+        if combatant.simulated:
+            return True
+        entity = self._entity_of(combatant.id)
+        return entity is not None and entity.owner_account_id is None
+
+    def _an_agent_is_thinking(self) -> bool:
+        return any(
+            session.is_agent and session.busy for session in self._sessions.values()
+        )
+
+    def _ask_if_done(self, combatant_id: int) -> None:
+        entity = self._entity_of(combatant_id)
+        encounter = self._the_running_fight()
+        combatant = self.repos.encounters.combatant(combatant_id)
+        if entity is None or combatant is None:
+            return
+        # Only while it is still theirs. An action resolved after the DM moved
+        # the turn on is not an invitation to take another one.
+        if encounter is None or encounter.turn_combatant_id != combatant_id:
+            return
+
+        self._waiting_on = combatant_id
+        if self._machine_plays(combatant):
+            # There is nobody to ask, so nothing is asked -- the turn simply
+            # passes once whatever is playing them goes quiet. Without this a
+            # character handed to autopilot took its turn and then held the
+            # whole table, because the only thing that ever ended a turn was a
+            # person pressing Done.
+            self._turn_clock.start(MACHINE_TURN_MS)
+            return
+
+        self._turn_clock.start(STILL_YOUR_TURN_MS)
+        self._send_to_account(
+            entity.owner_account_id,
+            MessageType.YOUR_TURN,
+            combatant=combatant_id,
+            who=entity.name,
+            seconds=STILL_YOUR_TURN_MS // 1000,
+            waiting=True,
+        )
+
+    def _stop_the_clock(self) -> None:
+        """Somebody answered, or the turn moved on. Stop asking."""
+        if self._waiting_on is None:
+            return
+        combatant_id, self._waiting_on = self._waiting_on, None
+        self._turn_clock.stop()
+        entity = self._entity_of(combatant_id)
+        if entity is not None and entity.owner_account_id is not None:
+            self._send_to_account(
+                entity.owner_account_id,
+                MessageType.YOUR_TURN,
+                combatant=combatant_id,
+                who=entity.name,
+                seconds=0,
+                waiting=False,
+            )
+
+    def _nobody_answered(self) -> None:
+        """Nothing happened for long enough. Move on, and say so."""
+        combatant_id, self._waiting_on = self._waiting_on, None
+        encounter = self._the_running_fight()
+        if combatant_id is None or encounter is None:
+            return
+        if encounter.turn_combatant_id != combatant_id:
+            return  # the turn moved on by itself; nothing to do
+
+        combatant = self.repos.encounters.combatant(combatant_id)
+        if self._machine_plays(combatant) and self._an_agent_is_thinking():
+            # A model call takes seconds, and a turn taken away mid-thought
+            # comes back as an action on somebody else's. Thinking counts as
+            # something happening.
+            self._waiting_on = combatant_id
+            self._turn_clock.start(MACHINE_TURN_MS)
+            return
+
+        entity = self._entity_of(combatant_id)
+        who = entity.name if entity is not None else "somebody"
+        log.info("nobody answered for %s; passing the turn on", who)
+        self._stop_the_clock()
+        self.repos.encounters.advance(encounter.id)
+        self._broadcast_system(f"{who} takes no further action.")
+        self._announce_turn("next")
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def _handle_done(self, socket: QWebSocket, session: _Session, message) -> None:
+        """"That is my turn." Only for the character whose turn it is."""
+        encounter = self._the_running_fight()
+        if encounter is None or encounter.turn_combatant_id is None:
+            return
+        entity = self._entity_of(encounter.turn_combatant_id)
+        if entity is None or entity.owner_account_id != session.account_id:
+            self._send_refusal(socket, "It is not your turn to end.")
+            return
+
+        self._stop_the_clock()
+        self.repos.encounters.advance(encounter.id)
+        self._announce_turn("next")
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+    def take_turn(self, combatant_id: int, move=None, target=None, weapon: str = "") -> str:
+        """The DM taking a turn by hand, with no agent anywhere near it.
+
+        Called by their own panel rather than sent over the wire, because the
+        DM's app *is* the host. It still goes through here rather than writing
+        to the database, for the half that is not a database write: the dice,
+        the armour class, and the hit points that come off the other creature.
+
+        Returns a reason it could not happen, or empty. No confirmation step --
+        the DM asking themselves whether they meant it would be a dialog with
+        nobody on the other side.
+        """
+        encounter = self._the_running_fight()
+        combatant = self.repos.encounters.combatant(combatant_id)
+        entity = self._entity_of(combatant_id)
+        if encounter is None or combatant is None or entity is None:
+            return "That is not in the fight being run."
+
+        if move:
+            x, y = int(move[0]), int(move[1])
+            if not encounter.holds(x, y):
+                return f"{x},{y} is off the map."
+            if not self._do_move(combatant_id, x, y, spending=True):
+                return f"{x},{y} is taken, or something is in the way."
+
+        if target is not None:
+            self._swing(
+                {"combatant": combatant_id, "target": int(target), "weapon": weapon}
+            )
+        self.publish_encounter()
+        self.encounter_applied.emit()
+        return ""
+
     def _entity_of(self, combatant_id: int):
         combatant = self.repos.encounters.combatant(combatant_id)
         if combatant is None or combatant.entity_id is None:
             return None
         return self.repos.entities.get(combatant.entity_id)
 
+    def _is_theirs(self, session: _Session, combatant_id: int) -> bool:
+        entity = self._entity_of(combatant_id)
+        return entity is not None and entity.owner_account_id == session.account_id
+
     def _carry_out(self, action: dict, session: _Session) -> None:
         """Do it. The move first, then the swing, then say what happened."""
         moved = False
         if action.get("move"):
             x, y = action["move"]
-            moved = self.repos.encounters.place(action["combatant"], x, y)
+            # Checked again on the way out, not only when it was proposed: the
+            # map moves while a player is deciding, and the square they are
+            # measuring from may not be the one they were standing on.
+            standing = self.repos.encounters.combatant(action["combatant"])
+            entity = self._entity_of(action["combatant"])
+            reason = (
+                self._too_far(standing, entity, x, y)
+                if standing is not None and entity is not None
+                and not action.get("bending")
+                else ""
+            )
+            moved = not reason and self._do_move(
+                action["combatant"], x, y, spending=True
+            )
             if not moved:
                 self._tell(
                     session.account_id,
-                    f"{action['who']} could not get to {x},{y} -- somebody or "
+                    reason
+                    or f"{action['who']} could not get to {x},{y} -- somebody or "
                     "something is there now.",
                 )
 
@@ -1411,8 +2087,28 @@ class SessionServer(QObject):
 
         self.publish_encounter()
         self.encounter_applied.emit()
+        # They have acted. Anything else, or shall we move on?
+        self._ask_if_done(action["combatant"])
 
-    def _swing(self, action: dict) -> None:
+    def out_of_reach(self, combatant, target_combatant, weapon) -> str:
+        """Whether the swing lands short, and by how much.
+
+        A rule like any other, so it is worth a sentence rather than a shrug --
+        and worth putting to the DM when an agent runs into it, since "just let
+        him reach" is a thing a DM says.
+        """
+        if combatant is None or target_combatant is None:
+            return ""
+        if not combatant.on_map or not target_combatant.on_map:
+            return ""
+        gap = attack.squares_between(
+            (combatant.x, combatant.y), (target_combatant.x, target_combatant.y)
+        )
+        if attack.within_reach(weapon, gap):
+            return ""
+        return f"that is {gap * 5} feet away -- too far for a {weapon.name}"
+
+    def _swing(self, action: dict, checked: bool = False) -> None:
         """One weapon attack, rolled on the host and applied to the target."""
         attacker = self._entity_of(action["combatant"])
         target_combatant = self.repos.encounters.combatant(action["target"])
@@ -1432,15 +2128,10 @@ class SessionServer(QObject):
             return
 
         mine = self.repos.encounters.combatant(action["combatant"])
-        if mine is not None and mine.on_map and target_combatant.on_map:
-            gap = attack.squares_between(
-                (mine.x, mine.y), (target_combatant.x, target_combatant.y)
-            )
-            if not attack.within_reach(weapon, gap):
-                self._broadcast_system(
-                    f"{target.name} is {gap * 5} feet away -- too far for "
-                    f"{weapon.name}."
-                )
+        if not checked:
+            short = self.out_of_reach(mine, target_combatant, weapon)
+            if short:
+                self._broadcast_system(f"{attacker.name} swings at {target.name}: {short}.")
                 return
 
         result = attack.resolve(
@@ -1450,7 +2141,19 @@ class SessionServer(QObject):
             attack.armour_class(target.data or {}, self.content),
             roll,
         )
+        encounter = self._the_running_fight()
+        if encounter is not None and encounter.turn_combatant_id == action["combatant"]:
+            self.repos.encounters.use_action(encounter.id)
         said = result.describe(attacker.name, target.name)
+        # Shown before it is said, so the number floating off the target and
+        # the line in the chat are the same event rather than two.
+        self._show(
+            Played.ATTACK.value,
+            mine if mine is not None else self.repos.encounters.combatant(action["combatant"]),
+            target=target_combatant,
+            hit=result.hit,
+            damage=result.damage,
+        )
         self._record(ROLLED, said, speaker=attacker.name, role=Role.DM.value)
         self._broadcast(
             MessageType.ROLLED,
@@ -1497,8 +2200,28 @@ class SessionServer(QObject):
                  + (f"/{maximum}" if isinstance(maximum, int) else "")
                  + " hit points."
         )
+        if after == 0:
+            self._goes_down(target)
         self.publish_entity(target.id)
         self.entity_applied.emit(target.id)
+
+    def _goes_down(self, entity) -> None:
+        """Off the map, and seen to go.
+
+        Off the map rather than out of the fight: they keep their place in the
+        order, so a DM can bring them round, and taking them out altogether
+        stays the deliberate thing it was. The animation goes first -- a token
+        that vanishes between two frames is a token nobody saw die.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None:
+            return
+        for combatant in self.repos.encounters.combatants(encounter.id):
+            if combatant.entity_id == entity.id and combatant.on_map:
+                self._show(Played.DOWN.value, combatant)
+                self.repos.encounters.place(combatant.id, None, None)
+                self.publish_encounter()
+                return
 
     # ---------------------------------------------------------------- proposals
 

@@ -169,8 +169,21 @@ def initiative(sheet: dict, content) -> int:
 
 
 def speed(sheet: dict, content) -> int:
+    override = (sheet.get("overrides") or {}).get("speed")
+    if override is not None:
+        return int(override)
     species = content.get("races", sheet.get("species")) or {}
     return int(species.get("speed", 30))
+
+
+def speed_in_squares(sheet: dict, content) -> int:
+    """How far this creature gets in one turn, on a five-foot grid.
+
+    A creature with no species -- every monster -- falls back to thirty feet,
+    which is what most of them have. ``overrides.speed`` is there for the ones
+    that do not, and is the same escape hatch armour class and hit points use.
+    """
+    return max(1, speed(sheet, content) // 5)
 
 
 # ------------------------------------------------------- saves and skill checks

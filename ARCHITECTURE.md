@@ -121,6 +121,8 @@ Migrations are numbered `.sql` files driven by `PRAGMA user_version`:
 | `006_agent_accounts.sql` | the `agent` role |
 | `007_encounters.sql` | fights: the initiative order and the grid |
 | `008_private_lines.sql` | who a line in the log was for |
+| `009_turn_budget.sql` | what the turn in progress has spent |
+| `010_simulated.sql` | a player character autopilot is playing |
 
 `entity.data_json` is how "start small, then evolve" is paid for: new fields
 cost a form change, not a migration. The price is that nothing validates them,
@@ -130,7 +132,7 @@ so anything load-bearing belongs in a column.
 
 ## The wire
 
-Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 3`; a
+Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 4`; a
 mismatch is refused at the door with a readable reason rather than
 half-working.
 
@@ -258,7 +260,7 @@ reaches nobody. So a DM can lay out an ambush in front of the party. The price
 is a DM wondering why the party cannot see the goblin, which the panel answers
 by drawing unshared tokens dotted and offering to share them.
 
-**Running the fight is one authority.** `_may_run_the_fight` answers for moving
+**Running the fight is one authority.** `_may_run_the_table` answers for moving
 a token, passing the turn, setting an initiative and building a fight alike.
 The DM always has it. An agent has it exactly while autopilot is on — the same
 gate its chat goes through, enforced on the host. A player has it never.
@@ -302,6 +304,105 @@ d20, reach of one square. No spells, no advantage, no opportunity attacks.
 Those are rulings a DM makes, and a machine that made half of them would be
 worse than one that makes none — the table would have to check every result to
 find out which half.
+
+### What a turn has left
+
+A turn is a move up to your speed and one action, so the encounter records what
+the turn in progress has spent — `moved_squares` and `action_used`, cleared
+wherever the turn passes. It lives on the **encounter**, not the combatant,
+because it belongs to the turn: whoever is up is the only one spending
+anything, and the alternative leaves sixteen stale counters lying about, one of
+which is eventually read.
+
+That is what makes the remainder showable. Players see *"Your turn: 15 feet of
+30 left, 15 used · attack still to come"* — feet as well as squares, because a
+rule is written in feet and a map is drawn in squares, and the translation is
+exactly the arithmetic worth doing for somebody.
+
+**Moving is not always a turn.** A DM dragging a token is arranging the board
+and spends nothing; an agent moving a creature is taking its turn and does.
+`_do_move(spending=…)` is where that distinction lives.
+
+### Watching it happen
+
+A map that only ever showed the latest state would be correct and unreadable:
+tokens teleport, hit points change, and nobody sees anything happen. So the
+host sends a `PLAY` describing what it did — the whole walk square by square,
+whether the swing landed and what it cost, a creature going down — and every
+client draws that.
+
+**Described, not inferred.** A client working the same thing out from two
+states it was sent would invent its own line and start it at its own moment,
+and four people would watch four different fights. One description, sent to
+everyone at once, is as near to simultaneous as is honest; the timings are
+constants rather than payload, because the protocol version already guarantees
+everybody is running the same build.
+
+Two consequences worth knowing before changing it:
+
+- **An animation is projected like everything else.** A token you were never
+  sent does not acquire one — that would be the thing projection exists to
+  prevent, arriving as a moving dot.
+- **The animation owns the drawing while it runs.** The state underneath has
+  already moved on, so `_where_to_draw` overrides it; and a creature going down
+  is kept in `_leaving` for a moment after the state drops it, because a token
+  that vanishes between two frames is a token nobody saw die.
+
+Effects are timed against the clock, not counted in frames: a laptop that drops
+frames should show a shorter animation rather than a slower one, or two screens
+fall out of step within a round.
+
+### Bending the rules
+
+A DM can always overrule the rules; that is most of what being a DM is. So when
+they tell autopilot to do something the rules refuse — move a creature out of
+turn, or further than its speed — the answer is not a flat no, and is certainly
+not the machine doing it anyway. The host parks the request, sends the DM a
+`BEND` naming what was asked and which rule it breaks, and carries it out only
+if they say yes.
+
+`_breaks_a_rule` is the whole list, and what is *not* in it matters more: a
+square off the edge of the map, or one somebody is standing in, is not a rule.
+It is a square that does not exist or is already taken, and no amount of
+authority makes it otherwise. Those are refused outright and never put to
+anybody. The agent cannot bless its own request either — it holds a DM's view,
+and this is one of the places that stops being enough.
+
+### Whose turn the agent takes
+
+Monsters, and any character somebody has handed over. Nobody says "it is the
+goblin's turn" out loud, so the agent learns it from the map arriving, waits a
+few seconds in case somebody objects, and takes it.
+
+A **player's** character is otherwise never taken this way: theirs is proposed
+and confirmed, because the difference between an app that offers to move your
+character into a fire and one that does it is the whole point. `combatant.
+simulated` is the exception, and it is a decision a *person* makes — the player
+whose character it is, or the DM filling an empty chair. Never the agent: it
+does not get to choose which characters it plays. The flag goes out on the
+wire and is shown, because a table deserves to know which of them is a machine,
+the same way the roster names the agent.
+
+**It rolls its own attacks.** For a while it could move a goblin and talk about
+it hitting somebody, and had no way to actually swing — so it narrated outcomes,
+which is the one thing it is told never to do. `SWING` is that door: the host
+rolls, applies the damage, and the agent narrates what came back.
+
+Once a turn has been acted on, the host asks whoever is up whether there is
+more, and passes the turn on if nothing comes back within fifteen seconds. That
+clock runs on the **host**: it is a promise made to four other people, and it
+must not depend on one person's laptop staying awake. Anything they type stops
+it, so it only ever runs out on somebody who has stopped reading.
+
+**A machine-played turn ends the same way, on a shorter clock and with nobody
+asked** — there is nobody to ask. Each thing the agent does restarts it, so a
+move and then a swing are one turn rather than two with a gap; and it does not
+run at all while the agent is busy, because a model call takes seconds and a
+turn taken away mid-thought comes back as an action on somebody else's.
+
+That clock was originally only started for a person, which meant a monster or a
+handed-over character acted and then held the table until the DM pressed
+something. The only thing that ever ended a turn was somebody pressing Done.
 
 ---
 
@@ -586,6 +687,17 @@ Written down so they are choices rather than surprises.
 - **Attacks are the simple case only.** A weapon on the sheet, a d20, and
   reach. No spells, no advantage, no opportunity attacks, no sneak attack, and
   everyone is assumed proficient with what they are carrying.
+- **One action, and no bonus actions or reactions.** A turn here is a move and
+  one attack. Dash, Dodge, Disengage, Hide, Help and Ready do not exist, and
+  neither does Extra Attack — a fighter at level five still gets one swing.
+- **Movement is not split around the action** in the interface, though the
+  budget would allow it: a proposal carries one move and one attack, in that
+  order.
+- **Inventory is free text, and only the DM's side fills it.** `GIVE` appends a
+  line to `entity.data.inventory`, which is what a person writes their own way
+  — "3 torches", "the bent iron key". Autopilot calls it when somebody picks
+  something up; with autopilot off the DM still types into the field, because
+  there is no quick "give" in the Characters panel yet.
 - **A monster's statblock is a character sheet with overrides.** It works, and
   a goblin is not a level-one nobody with a class; `overrides.ac` and
   `overrides.hp_max` are doing the load-bearing part, and its traits are prose

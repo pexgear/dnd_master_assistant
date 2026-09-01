@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -68,6 +69,56 @@ class FightDialog(QDialog):
 
     def values(self) -> tuple[str, int, int]:
         return self._name.text().strip(), self._width.value(), self._height.value()
+
+
+class AttackDialog(QDialog):
+    """Who is being hit, and with what.
+
+    Two questions and no more. Advantage, cover and the rest are the DM's to
+    rule on out loud -- putting them here would mean the app deciding half of
+    them, and a table then checking every result to find out which half.
+    """
+
+    def __init__(self, attacker: str, targets: list[tuple[int, str]],
+                 weapons: list[str], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"{attacker} attacks")
+
+        self._targets = QComboBox()
+        for combatant_id, name in targets:
+            self._targets.addItem(name, combatant_id)
+
+        self._weapons = QComboBox()
+        self._weapons.setEditable(True)
+        for name in weapons:
+            self._weapons.addItem(name)
+        if not weapons:
+            self._weapons.setPlaceholderText("nothing on their sheet")
+
+        form = QFormLayout(self)
+        form.addRow("Attacks", self._targets)
+        form.addRow("With", self._weapons)
+
+        note = QLabel(
+            "The host rolls it: a d20 and their bonus against the target's "
+            "armour class, then damage off the weapon. Melee reaches one "
+            "square."
+        )
+        note.setWordWrap(True)
+        form.addRow(note)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def ask(self) -> tuple[int | None, str]:
+        """``(target id, weapon)``, or ``(None, "")`` if they thought better."""
+        if not self.exec():
+            return None, ""
+        return self._targets.currentData(), self._weapons.currentText().strip()
 
 
 class AddCombatantsDialog(QDialog):

@@ -53,6 +53,10 @@ class Combatant:
     x: int | None = None
     y: int | None = None
     added_at: float = 0.0
+    #: A player character autopilot is playing, for this fight. The empty
+    #: chair -- somebody could not make it, and their character should still
+    #: take its turns rather than being walked around the room.
+    simulated: bool = False
 
     @property
     def on_map(self) -> bool:
@@ -80,6 +84,7 @@ class Combatant:
             x=row["x"],
             y=row["y"],
             added_at=row["added_at"],
+            simulated=bool(_column(row, "simulated", 0)),
         )
 
 
@@ -94,6 +99,10 @@ class Encounter:
     round: int = 0
     turn_combatant_id: int | None = None
     running: bool = False
+    #: What the turn in progress has spent. Reset whenever the turn passes,
+    #: because it belongs to the turn and not to the creature taking it.
+    moved_squares: int = 0
+    action_used: bool = False
     created_at: float = 0.0
     updated_at: float = 0.0
     version: int = 1
@@ -121,6 +130,8 @@ class Encounter:
             round=row["round"],
             turn_combatant_id=row["turn_combatant_id"],
             running=bool(row["running"]),
+            moved_squares=_column(row, "moved_squares", 0),
+            action_used=bool(_column(row, "action_used", 0)),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             version=row["version"],
@@ -362,6 +373,18 @@ class EncounterRepo:
         self._touch(combatant.encounter_id)
         return True
 
+    def set_simulated(self, combatant_id: int, on: bool) -> None:
+        """Hand a character to autopilot for this fight, or take it back."""
+        combatant = self.combatant(combatant_id)
+        if combatant is None:
+            return
+        with self._conn:
+            self._conn.execute(
+                "UPDATE combatant SET simulated = ? WHERE id = ?",
+                (int(bool(on)), combatant_id),
+            )
+        self._touch(combatant.encounter_id)
+
     def set_initiative(self, combatant_id: int, initiative: int | None) -> None:
         combatant = self.combatant(combatant_id)
         if combatant is None:
@@ -418,6 +441,11 @@ class EncounterRepo:
 
     # ------------------------------------------------------------------ turns
 
+    #: Cleared every time the turn passes. Written out once here rather than at
+    #: each of the four places the turn can move, because a turn that inherits
+    #: the last one's spent movement is a bug nobody would look for.
+    _FRESH_TURN = "moved_squares = 0, action_used = 0"
+
     def begin(self, encounter_id: int) -> None:
         """Round one, and the highest initiative is up."""
         order = self.combatants(encounter_id)
@@ -425,9 +453,20 @@ class EncounterRepo:
             return
         self._write(
             encounter_id,
-            "round = 1, turn_combatant_id = ?, running = 1",
+            f"round = 1, turn_combatant_id = ?, running = 1, {self._FRESH_TURN}",
             (order[0].id,),
         )
+
+    def spend_movement(self, encounter_id: int, squares: int) -> None:
+        """Count squares against this turn's allowance."""
+        self._write(
+            encounter_id,
+            "moved_squares = moved_squares + ?",
+            (max(0, int(squares)),),
+        )
+
+    def use_action(self, encounter_id: int) -> None:
+        self._write(encounter_id, "action_used = 1", ())
 
     def advance(self, encounter_id: int, skipping: int | None = None) -> None:
         """Next turn, and next round when the order wraps.
@@ -457,7 +496,7 @@ class EncounterRepo:
             # does not advance on a correction.
             self._write(
                 encounter_id,
-                "turn_combatant_id = ?",
+                f"turn_combatant_id = ?, {self._FRESH_TURN}",
                 (next(c.id for c in full if c.id != skipping),),
             )
             return
@@ -474,16 +513,22 @@ class EncounterRepo:
         if wrapped:
             self._write(
                 encounter_id,
-                "round = round + 1, turn_combatant_id = ?",
+                f"round = round + 1, turn_combatant_id = ?, {self._FRESH_TURN}",
                 (ids[position],),
             )
         else:
-            self._write(encounter_id, "turn_combatant_id = ?", (ids[position],))
+            self._write(
+                encounter_id,
+                f"turn_combatant_id = ?, {self._FRESH_TURN}",
+                (ids[position],),
+            )
 
     def end(self, encounter_id: int) -> None:
         """The fight is over. Everything stays; only the clock stops."""
         self._write(
-            encounter_id, "running = 0, round = 0, turn_combatant_id = NULL", ()
+            encounter_id,
+            f"running = 0, round = 0, turn_combatant_id = NULL, {self._FRESH_TURN}",
+            (),
         )
 
     def clear(self, encounter_id: int) -> None:
@@ -549,3 +594,12 @@ class EncounterRepo:
 
 def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, int(value)))
+
+
+def _column(row: sqlite3.Row, name: str, fallback):
+    """A column a migration may not have added yet, for a half-migrated read."""
+    try:
+        value = row[name]
+    except (IndexError, KeyError):
+        return fallback
+    return fallback if value is None else value

@@ -17,9 +17,10 @@ can find, and it is still that square after the map grows.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QToolButton, QWidget
 
@@ -59,6 +60,20 @@ _STONE = QColor(120, 120, 124)
 #: colours, because the whole point of it is that it has not happened.
 _PLAN = QColor(150, 150, 160)
 _BLADE = QColor(210, 90, 60)
+
+#: How long each part of an action takes to show. Constants rather than numbers
+#: on the wire: every client at a table runs the same build -- the protocol
+#: version says so at the door -- so they agree without being told.
+STEP_MS = 130      #: one square of walking
+LUNGE_MS = 300     #: leaning in for a swing, and back
+FLOAT_MS = 1100    #: the damage rising off a token
+DOWN_MS = 650      #: a creature leaving the map
+FRAME_MS = 33      #: about thirty a second, which is enough for a token
+
+#: Damage, and the word for when there is none. Red for what it costs; grey for
+#: a miss, which is still worth showing -- it is half of what happened.
+_HURT = QColor(215, 75, 65)
+_MISSED = QColor(150, 150, 155)
 
 
 @dataclass(frozen=True)
@@ -105,6 +120,33 @@ class Preview:
     to: tuple[int, int] | None = None
     #: The square of whoever they would attack.
     target: tuple[int, int] | None = None
+
+
+@dataclass
+class _Effect:
+    """One thing being shown, and how far through it is.
+
+    Time-based rather than frame-based: a laptop that drops frames should show
+    a shorter animation, not a slower one, or four people watching the same
+    fight fall out of step within a round.
+    """
+
+    kind: str
+    combatant: int
+    duration: float
+    started: float = 0.0
+    path: list[tuple[int, int]] = field(default_factory=list)
+    toward: tuple[int, int] | None = None
+    text: str = ""
+    colour: QColor = field(default_factory=lambda: QColor(_HURT))
+
+    def progress(self, now: float) -> float:
+        if self.duration <= 0:
+            return 1.0
+        return min(1.0, max(0.0, (now - self.started) / self.duration))
+
+    def done(self, now: float) -> bool:
+        return self.progress(now) >= 1.0
 
 
 class GridMap(QWidget):
@@ -159,6 +201,16 @@ class GridMap(QWidget):
         self.setMouseTracking(False)
         self.setAcceptDrops(True)
 
+        #: What is being shown right now. Empty almost always, and the timer
+        #: only runs while it is not.
+        self._effects: list[_Effect] = []
+        #: Tokens the state has already dropped but that are still being shown
+        #: leaving. Cleared when their effect ends.
+        self._leaving: dict[int, Token] = {}
+        self._frames = QTimer(self)
+        self._frames.setInterval(FRAME_MS)
+        self._frames.timeout.connect(self._next_frame)
+
         self._wider = self._edge_button("+", "One more column", 1, 0)
         self._narrower = self._edge_button("-", "One column fewer", -1, 0)
         self._taller = self._edge_button("+", "One more row", 0, 1)
@@ -209,6 +261,116 @@ class GridMap(QWidget):
     def set_preview(self, preview: Preview | None) -> None:
         self._preview = preview
         self.update()
+
+    # ------------------------------------------------------------- showing it
+
+    def play(self, event: dict) -> None:
+        """Show what the host says happened.
+
+        The host describes it -- the whole walk, whether the swing landed, how
+        much it cost -- so this only has to draw it. Working the same thing out
+        from two states would give every screen its own version of the fight,
+        started at its own moment.
+        """
+        kind = str(event.get("kind", ""))
+        combatant = event.get("combatant")
+        if not isinstance(combatant, int):
+            return
+
+        if kind == "move":
+            path = [
+                (int(square[0]), int(square[1]))
+                for square in event.get("path") or ()
+                if isinstance(square, (list, tuple)) and len(square) == 2
+            ]
+            if len(path) > 1:
+                self._begin(
+                    _Effect(
+                        kind="move",
+                        combatant=combatant,
+                        duration=STEP_MS * (len(path) - 1) / 1000,
+                        path=path,
+                    )
+                )
+        elif kind == "attack":
+            hit = bool(event.get("hit"))
+            damage = int(event.get("damage") or 0)
+            target = event.get("target")
+            self._begin(
+                _Effect(
+                    kind="lunge",
+                    combatant=combatant,
+                    duration=LUNGE_MS / 1000,
+                    toward=self._square_of(target),
+                )
+            )
+            if isinstance(target, int):
+                self._begin(
+                    _Effect(
+                        kind="float",
+                        combatant=target,
+                        duration=FLOAT_MS / 1000,
+                        text=f"-{damage}" if hit and damage else "miss",
+                        colour=QColor(_HURT if hit and damage else _MISSED),
+                    )
+                )
+        elif kind == "down":
+            # Kept a moment longer than the state does. The host takes them off
+            # the map at once, so without this the token would be gone by the
+            # next frame and nobody would see it go.
+            for token in self._tokens:
+                if token.id == combatant:
+                    self._leaving[combatant] = token
+                    break
+            self._begin(
+                _Effect(kind="down", combatant=combatant, duration=DOWN_MS / 1000)
+            )
+
+    def _begin(self, effect: _Effect) -> None:
+        effect.started = time.monotonic()
+        # One of each kind per token: a second walk replaces the first rather
+        # than drawing the token in two places at once.
+        self._effects = [
+            other
+            for other in self._effects
+            if not (other.kind == effect.kind and other.combatant == effect.combatant)
+        ]
+        self._effects.append(effect)
+        if not self._frames.isActive():
+            self._frames.start()
+        self.update()
+
+    def _next_frame(self) -> None:
+        now = time.monotonic()
+        self._effects = [effect for effect in self._effects if not effect.done(now)]
+        still_going = {effect.combatant for effect in self._effects}
+        self._leaving = {
+            combatant: token
+            for combatant, token in self._leaving.items()
+            if combatant in still_going
+        }
+        if not self._effects:
+            self._frames.stop()
+        self.update()
+
+    def _drawable(self) -> list[Token]:
+        """What to draw: what is there, plus what is still on its way out."""
+        showing = {token.id for token in self._tokens}
+        return self._tokens + [
+            token for combatant, token in self._leaving.items() if combatant not in showing
+        ]
+
+    def _effect_on(self, combatant_id: int, kind: str) -> _Effect | None:
+        for effect in self._effects:
+            if effect.combatant == combatant_id and effect.kind == kind:
+                return effect
+        return None
+
+    def _square_of(self, combatant_id) -> tuple[int, int] | None:
+        for token in self._drawable():
+            if token.id == combatant_id:
+                return token.x, token.y
+        return None
 
     def select(self, combatant_id: int | None) -> None:
         self._selected = combatant_id
@@ -359,12 +521,46 @@ class GridMap(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(self._at(self._hover[0], self._hover[1], cell, origin))
 
-        for token in self._tokens:
-            at = self._drag_to if token.id == self._dragging and self._drag_to else (token.x, token.y)
-            self._draw_token(painter, token, at[0], at[1], cell, origin)
+        now = time.monotonic()
+        for token in self._drawable():
+            at = self._drag_to if token.id == self._dragging and self._drag_to else None
+            self._draw_token(painter, token, at, cell, origin, now)
 
         self._draw_preview(painter, cell, origin)
+        self._draw_numbers(painter, cell, origin, now)
         painter.end()
+
+    def _draw_numbers(
+        self, painter: QPainter, cell: int, origin: QPoint, now: float
+    ) -> None:
+        """Damage rising off whoever took it, and fading.
+
+        Drawn last, over everything: it is the one thing on the map that is
+        about a moment rather than a state, and it has a second to be read.
+        """
+        font = QFont(painter.font())
+        font.setPixelSize(max(11, cell // 2))
+        font.setBold(True)
+        painter.setFont(font)
+
+        for effect in self._effects:
+            if effect.kind != "float":
+                continue
+            square = self._square_of(effect.combatant) or effect.toward
+            if square is None:
+                continue
+            done = effect.progress(now)
+            box = self._at(square[0], square[1], cell, origin)
+            colour = QColor(effect.colour)
+            # Rises a square's height over its life, and fades over the last
+            # third, so it is readable before it starts going.
+            colour.setAlpha(int(255 * min(1.0, (1.0 - done) * 3)))
+            painter.setPen(QPen(colour))
+            painter.drawText(
+                box.translated(0, int(-cell * done)),
+                Qt.AlignmentFlag.AlignCenter,
+                effect.text,
+            )
 
     def _draw_preview(self, painter: QPainter, cell: int, origin: QPoint) -> None:
         """The turn on offer: where they would go, and who they would hit."""
@@ -462,13 +658,73 @@ class GridMap(QWidget):
                 str(here),
             )
 
+    def _where_to_draw(
+        self, token: Token, cell: int, origin: QPoint, now: float
+    ) -> tuple[QRect, float]:
+        """The token's square right now, and how solid it is.
+
+        While something is being shown for a token, the animation owns where it
+        is drawn -- the state underneath has already moved on, and drawing from
+        that would put it at its destination before it has walked there.
+        """
+        square = self._at(token.x, token.y, cell, origin)
+        opacity = 1.0
+
+        walking = self._effect_on(token.id, "move")
+        if walking and len(walking.path) > 1:
+            done = walking.progress(now)
+            steps = len(walking.path) - 1
+            exact = done * steps
+            index = min(steps - 1, int(exact))
+            start = self._at(*walking.path[index], cell, origin)
+            end = self._at(*walking.path[index + 1], cell, origin)
+            between = exact - index
+            square = QRect(
+                int(start.x() + (end.x() - start.x()) * between),
+                int(start.y() + (end.y() - start.y()) * between),
+                cell,
+                cell,
+            )
+
+        lunging = self._effect_on(token.id, "lunge")
+        if lunging and lunging.toward is not None:
+            done = lunging.progress(now)
+            # Out and back, so it reads as a swing rather than a step.
+            reach = (1.0 - abs(done * 2 - 1.0)) * 0.4
+            target = self._at(*lunging.toward, cell, origin)
+            square = square.translated(
+                int((target.x() - square.x()) * reach),
+                int((target.y() - square.y()) * reach),
+            )
+
+        falling = self._effect_on(token.id, "down")
+        if falling:
+            done = falling.progress(now)
+            opacity = 1.0 - done
+            shrink = int(cell * done * 0.4)
+            square = square.adjusted(shrink, shrink, -shrink, -shrink)
+
+        return square, opacity
+
     def _draw_token(
-        self, painter: QPainter, token: Token, x: int, y: int, cell: int, origin: QPoint
+        self,
+        painter: QPainter,
+        token: Token,
+        dragged_to: tuple[int, int] | None,
+        cell: int,
+        origin: QPoint,
+        now: float,
     ) -> None:
+        if dragged_to is not None:
+            square = self._at(dragged_to[0], dragged_to[1], cell, origin)
+            opacity = 1.0
+        else:
+            square, opacity = self._where_to_draw(token, cell, origin, now)
+
         margin = max(2, cell // 10)
-        square = self._at(x, y, cell, origin)
         box = square.adjusted(margin, margin, -margin, -margin)
         fill = QColor(_OURS if token.ours else _THEIRS)
+        fill.setAlphaF(fill.alphaF() * opacity)
         if token.id == self._dragging:
             fill.setAlpha(150)
 
@@ -496,7 +752,9 @@ class GridMap(QWidget):
             font.setPixelSize(max(8, cell // 3))
             font.setBold(True)
             painter.setFont(font)
-            painter.setPen(QPen(QColor(255, 255, 255)))
+            initials = QColor(255, 255, 255)
+            initials.setAlphaF(opacity)
+            painter.setPen(QPen(initials))
             painter.drawText(box, Qt.AlignmentFlag.AlignCenter, token.initials)
 
     # ------------------------------------------------------------------ mouse

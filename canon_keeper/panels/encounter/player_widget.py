@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -62,6 +63,15 @@ class PlayerEncounterWidget(QWidget):
         # No buttons: answering happens where the player already is, in the
         # chat box they typed the turn into. Two places to press yes is one
         # place too many.
+        # What is left of the turn in progress. Shown to everyone rather than
+        # only to whoever is up: at a table this is said out loud, and it is
+        # the answer to "can I get there" that a player would otherwise be
+        # counting squares on a screen to work out.
+        self._budget = QLabel("")
+        self._budget.setWordWrap(True)
+        self._budget.setVisible(False)
+        outer.addWidget(self._budget)
+
         self._offer_text = QLabel("")
         self._offer_text.setWordWrap(True)
         self._offer_text.setVisible(False)
@@ -71,6 +81,18 @@ class PlayerEncounterWidget(QWidget):
         self._note = QLabel("")
         self._note.setWordWrap(True)
         row.addWidget(self._note, 1)
+
+        # Stepping out, or just wanting the fight to move. Yours to give and
+        # yours to take back -- you should not have to find the DM to do
+        # either.
+        self._hand_over = QPushButton("Simulate turn")
+        self._hand_over.setToolTip(
+            "Let autopilot play your character for this fight. Press again to "
+            "take them back. Everyone is told either way."
+        )
+        self._hand_over.clicked.connect(self._toggle_simulated)
+        self._hand_over.setVisible(False)
+        row.addWidget(self._hand_over)
         outer.addLayout(row)
 
         #: The turn we are being asked about, if any.
@@ -84,6 +106,8 @@ class PlayerEncounterWidget(QWidget):
             # changes what this shows too.
             ctx.shared.changed.connect(self._refresh)
         ctx.bus.theme_changed.connect(lambda _dark: self._map.update())
+        # Walks, swings and creatures going down, as the host described them.
+        ctx.bus.play.connect(self._map.play)
 
         self._refresh()
 
@@ -93,6 +117,8 @@ class PlayerEncounterWidget(QWidget):
             self._heading.setText("No fight right now.")
             self._note.setText("")
             self._order.clear()
+            self._budget.setVisible(False)
+            self._hand_over.setVisible(False)
             self._map.set_grid(1, 1)
             self._map.set_obstacles(())
             self._map.set_tokens([])
@@ -146,6 +172,9 @@ class PlayerEncounterWidget(QWidget):
                 item.setFont(font)
             self._order.addItem(item)
 
+        self._show_budget(encounter, combatants)
+        self._show_hand_over(combatants)
+
         name = encounter.get("name") or "The fight"
         round_number = int(encounter.get("round") or 0)
         if round_number:
@@ -161,6 +190,65 @@ class PlayerEncounterWidget(QWidget):
             "You see what your DM has shared with you. There may be more in the "
             "room than is on this map."
         )
+
+    def _show_budget(self, encounter: dict, combatants: list[dict]) -> None:
+        """Movement left and whether the action is gone.
+
+        In feet as well as squares, because a rule is written in feet and a map
+        is drawn in squares, and the translation between them is exactly the
+        arithmetic worth doing for somebody.
+        """
+        budget = encounter.get("budget") or {}
+        if not budget:
+            self._budget.setVisible(False)
+            return
+
+        acting = next(
+            (c for c in combatants if c.get("id") == budget.get("combatant")), None
+        )
+        who = self._name_of(acting) if acting else "Whoever is up"
+        mine = acting is not None and self._is_mine(acting)
+
+        left = int(budget.get("left") or 0)
+        speed = int(budget.get("speed") or 0)
+        moved = int(budget.get("moved") or 0)
+        walked = f", {moved * 5} used" if moved else ""
+        action = "attack used" if budget.get("acted") else "attack still to come"
+
+        label = (
+            f"{'Your turn' if mine else who}: "
+            f"<b>{left * 5} feet</b> of {speed * 5} left{walked} &middot; {action}."
+        )
+        self._budget.setText(label)
+        self._budget.setVisible(True)
+
+    def _mine_in_the_fight(self, combatants: list[dict]) -> dict | None:
+        for combatant in combatants:
+            if self._is_mine(combatant):
+                return combatant
+        return None
+
+    def _show_hand_over(self, combatants: list[dict]) -> None:
+        mine = self._mine_in_the_fight(combatants)
+        self._hand_over.setVisible(mine is not None)
+        if mine is None:
+            return
+        self._hand_over.setText(
+            "Take them back" if mine.get("simulated") else "Simulate turn"
+        )
+
+    def _toggle_simulated(self) -> None:
+        fight = self._ctx.shared.encounter if self._ctx.shared is not None else None
+        mine = self._mine_in_the_fight((fight or {}).get("combatants") or [])
+        if mine is None:
+            return
+        self._ctx.bus.simulate_requested.emit(
+            int(mine["id"]), not bool(mine.get("simulated"))
+        )
+
+    def _is_mine(self, combatant: dict) -> bool:
+        own = self._ctx.shared.own_character() if self._ctx.shared is not None else None
+        return own is not None and combatant.get("entity") == own.get("id")
 
     # ------------------------------------------------------------- your turn
 

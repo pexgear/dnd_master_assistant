@@ -37,6 +37,12 @@ log = logging.getLogger("canonkeeper.agent.responder")
 #: is worse than answering slowly.
 QUIET_FOR = 2.5
 
+#: How long the table gets before the agent takes a monster's turn. Long
+#: enough for somebody to say "wait" and short enough that a fight does not
+#: stall on a machine being polite. Anything said in that window is folded into
+#: the same turn rather than racing it.
+MONSTER_PAUSE = 4.0
+
 #: Whose lines are worth answering. Everyone at the table, which while
 #: autopilot is on includes the human DM: they switched it on, and a line they
 #: type is addressed to the agent as much as to the room.
@@ -56,6 +62,7 @@ class Responder:
         *,
         quiet_for: float = QUIET_FOR,
         answers_to: tuple[str, ...] = ANSWERS_TO,
+        monster_pause: float = MONSTER_PAUSE,
         on_busy=None,
         on_trouble=None,
     ) -> None:
@@ -72,9 +79,15 @@ class Responder:
         #: agent that goes quiet is indistinguishable from one that is broken.
         self._on_trouble = on_trouble
 
+        self._monster_pause = monster_pause
+
         self._pending: list[tuple[str, str]] = []
         self._timer: asyncio.Task | None = None
         self._answering = False
+        #: The monster's turn we are already handling, so a map redrawn twice
+        #: does not become two turns.
+        self._monsters_turn = None
+        self._monster_timer: asyncio.Task | None = None
 
     # -------------------------------------------------------------- listening
 
@@ -88,6 +101,48 @@ class Responder:
 
         self._pending.append((member.label, text))
         self._restart_timer(session)
+
+    async def turn_came_round(self, session) -> None:
+        """The fight moved. If it is a monster's turn, that is ours to take.
+
+        Nobody says "it is the goblin's turn" out loud, so without this the
+        agent sits through its own turn waiting to be spoken to. A player's
+        character is never taken this way -- theirs is proposed and confirmed.
+        """
+        if not session.table.autopilot:
+            return
+        acting = session.table.whose_turn()
+        if not session.table.is_mine_to_play(acting):
+            self._monsters_turn = None
+            return
+        if self._monsters_turn == acting.get("id"):
+            return  # already in hand; a redrawn map is not a second turn
+
+        self._monsters_turn = acting.get("id")
+        if self._monster_timer is not None:
+            self._monster_timer.cancel()
+        self._monster_timer = asyncio.create_task(
+            self._after_the_pause(session, acting)
+        )
+
+    async def _after_the_pause(self, session, acting: dict) -> None:
+        try:
+            await asyncio.sleep(self._monster_pause)
+        except asyncio.CancelledError:
+            return
+
+        # Re-checked, because four seconds is long enough for the DM to take
+        # the table back or move the turn on themselves.
+        if not session.table.autopilot:
+            return
+        still = session.table.whose_turn()
+        if not still or still.get("id") != acting.get("id"):
+            return
+
+        entity = session.table.entities.get(acting.get("entity")) or {}
+        name = entity.get("name") or "the creature"
+        self._pending.append(("(the fight)", f"It is {name}'s turn. Take it."))
+        await self._take_a_turn(session)
 
     def _restart_timer(self, session) -> None:
         """Wait for the lull again, because the table is still talking."""
@@ -165,9 +220,12 @@ class Responder:
 
     def _discard(self) -> None:
         self._pending.clear()
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
+        for timer in (self._timer, self._monster_timer):
+            if timer is not None:
+                timer.cancel()
+        self._timer = None
+        self._monster_timer = None
+        self._monsters_turn = None
 
     async def aclose(self) -> None:
         self._discard()

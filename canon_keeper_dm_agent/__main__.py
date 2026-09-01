@@ -150,7 +150,14 @@ async def _run(args) -> int:
         # socket keeps being read while the model is busy.
         await responder.heard(current, member, text)
 
-    session = AgentSession(args.url, args.user, password, on_said)
+    async def on_encounter(current: AgentSession) -> None:
+        # Nobody says "it is the goblin's turn" out loud, so the map arriving
+        # is the only way to find out that one is ours to take.
+        await responder.turn_came_round(current)
+
+    session = AgentSession(
+        args.url, args.user, password, on_said, on_encounter=on_encounter
+    )
     try:
         await session.run()
     except LoginFailed as exc:

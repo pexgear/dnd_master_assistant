@@ -112,6 +112,29 @@ class Table:
     def fighting(self) -> bool:
         return bool(self.encounter)
 
+    def whose_turn(self) -> dict | None:
+        """The combatant that is up, as the host sent it."""
+        turn = (self.encounter or {}).get("turn")
+        for combatant in (self.encounter or {}).get("combatants") or []:
+            if combatant.get("id") == turn:
+                return combatant
+        return None
+
+    def is_mine_to_play(self, combatant: dict | None) -> bool:
+        """Whether this one's turns are the agent's to take outright.
+
+        Everything nobody plays -- which is every monster -- and any character
+        whose player has handed it over for this fight. Anyone else's is
+        proposed to them and waits for a yes, because moving somebody's
+        character without asking is a different product.
+        """
+        if not combatant:
+            return False
+        if combatant.get("simulated"):
+            return True
+        entity = self.entities.get(combatant.get("entity"))
+        return bool(entity) and entity.get("owner_account_id") is None
+
     def entity_named(self, name: str) -> dict | None:
         """Find a creature by what it is called, the way a person would.
 
@@ -146,11 +169,16 @@ class AgentSession:
         username: str,
         password: str,
         on_said: Callable[["AgentSession", Member, str], Awaitable[None]],
+        on_encounter: Callable[["AgentSession"], Awaitable[None]] | None = None,
     ) -> None:
         self._url = url
         self._username = username
         self._password = password
         self._on_said = on_said
+        #: Called whenever the host says what the fight looks like. It is how
+        #: an agent finds out the turn has come round to something it is
+        #: running -- nobody says that out loud, so nothing would otherwise.
+        self._on_encounter = on_encounter
         self._socket: Any = None
         self.table = Table()
         #: Set every time the host tells us what the fight looks like. A tool
@@ -254,6 +282,12 @@ class AgentSession:
 
     async def turn(self, action: str) -> bool:
         return await self.ask(MessageType.TURN, action=action)
+
+    async def swing(self, combatant_id: int, target_id: int, weapon: str = "") -> bool:
+        """Attack. The host rolls it -- a result reported here would be ignored."""
+        return await self.ask(
+            MessageType.SWING, combatant=combatant_id, target=target_id, weapon=weapon
+        )
 
     async def propose(
         self,
@@ -363,6 +397,8 @@ class AgentSession:
             fight = message.get("encounter")
             table.encounter = fight if isinstance(fight, dict) else {}
             self.encounter_arrived.set()
+            if self._on_encounter is not None:
+                await self._on_encounter(self)
 
         elif message.type == MessageType.FACTS:
             facts = message.get("facts")
