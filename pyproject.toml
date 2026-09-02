@@ -45,6 +45,10 @@ dev = [
   "pytest-qt>=4.4",
   # The agent and its responder are asyncio, not Qt.
   "pytest-asyncio>=0.24",
+  # A hung test used to run until GitHub killed the whole job at its six-hour
+  # ceiling, which reads as "cancelled" and names nothing. This makes it fail,
+  # in seconds, saying which test.
+  "pytest-timeout>=2.3",
   "build>=1.0",
   "twine>=5.0",
   # The headless client and the two things built on it are tested here too.
@@ -99,3 +103,9 @@ testpaths = ["tests"]
 addopts = "-q"
 # The agent is asyncio; marking every coroutine test by hand is noise.
 asyncio_mode = "auto"
+# Generous next to the slowest real test (a socket round trip waits ten
+# seconds) and far short of anything a person would sit through. A test that
+# passes this is not slow, it is stuck.
+timeout = 120
+# Qt tests block in C++, where a signal cannot land. A thread can still kill it.
+timeout_method = "thread"

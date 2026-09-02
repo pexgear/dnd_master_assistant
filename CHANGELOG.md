@@ -5,6 +5,29 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.5.4
+
+Autopilot no longer takes your turn, and the release pipeline says something
+when it goes wrong.
+
+### Fixes
+
+- **Autopilot can no longer take your turn away.** It is meant to pass the turn
+  on once it has resolved whoever was up — but that was an instruction, not a
+  rule, and a model that called it one turn early skipped the person whose turn
+  it actually was, with nothing on screen to say why. It happened sometimes,
+  which is the worst kind. It may now end its own turns and nobody else's: a
+  person's turn ends when they press **Done**, when their own clock runs out,
+  or when the DM moves it on.
+
+### Behind the scenes
+
+- **A hung test now fails instead of disappearing.** No release has been
+  published since 0.3.1: the test job was hanging and GitHub was killing the
+  whole run at its six-hour ceiling, which is reported as *cancelled* and names
+  nothing. Every job is now capped at thirty minutes and every test at two, so
+  the next failure of this kind says which test it was.
+
 ## 0.5.3
 
 Nobody is handed a login any more. A DM invites a player to a character, that

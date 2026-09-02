@@ -1407,6 +1407,34 @@ class SessionServer(QObject):
                 message="A turn is begin, next or end.",
             )
             return
+
+        # Autopilot may end its own turns and nobody else's. It is told to call
+        # next_turn once it has resolved whoever was up, and a model that calls
+        # it one turn early took a person's turn away with nothing on screen to
+        # say why. A person's turn ends when they say Done, when their own
+        # clock runs out, or when the DM moves it on.
+        if session.is_agent and action == "next":
+            up = self._the_running_fight()
+            combatant = (
+                self.repos.encounters.combatant(up.turn_combatant_id)
+                if up is not None and up.turn_combatant_id is not None
+                else None
+            )
+            if combatant is not None and not self._machine_plays(combatant):
+                entity = self._entity_of(combatant.id)
+                whose = entity.name if entity is not None else "somebody"
+                self._send_refusal(
+                    socket,
+                    f"It is {whose}'s turn, and they play for themselves. Wait "
+                    "for them rather than passing it on.",
+                )
+                self._tell_the_agent(
+                    f"You tried to end {whose}'s turn. It is not yours to end -- "
+                    "they answer for themselves, and the turn passes when they "
+                    "are done. Carry on with what you were saying."
+                )
+                return
+
         self.run_turn(action)
         log.info("%s: turn %r", session.member.label, action)
 

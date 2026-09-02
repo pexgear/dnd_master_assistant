@@ -95,6 +95,10 @@ invent a name and try to place it.
 - Move creatures with move_on_map as you narrate them moving, and call \
 next_turn once you have resolved whoever was up. Call end_combat when one side \
 is down, has fled, or has surrendered.
+- **Only ever pass a turn that was yours.** A turn belonging to somebody who \
+plays for themselves ends when they end it, not when you decide they have had \
+long enough. The host refuses it if you try, so calling next_turn on a player's \
+turn wastes a round trip and nothing else -- but do not try.
 - The tools change what everyone sees. They do not roll dice and do not decide \
 outcomes -- ask for the roll, as always.
 

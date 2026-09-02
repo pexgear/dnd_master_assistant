@@ -38,6 +38,10 @@ jobs:
     name: ${{ matrix.os }}
     needs: verify
     runs-on: ${{ matrix.os }}
+    # Three times the suite's honest length. Past this it is stuck,
+    # and a stuck job that runs to GitHub's six-hour ceiling cancels
+    # the whole release and says nothing about why.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

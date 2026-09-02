@@ -782,7 +782,9 @@ def test_the_dm_passing_the_turn_stops_the_clock(qtbot, fight, monkeypatch):
         player.send_answer(offered[0]["id"], True)
         qtbot.wait(150)
 
-        agent.send_turn("next")
+        # The DM's path: autopilot may not pass a person's turn, and this
+        # is only moving the turn onto the goblin to set the scene.
+        server.run_turn("next")
         qtbot.waitUntil(
             lambda: repos.encounters.get(encounter.id).turn_combatant_id
             == tokens["goblin"].id,
@@ -928,7 +930,9 @@ def test_the_agent_can_roll_an_attack(qtbot, fight):
         # Next to each other, and it is the goblin's turn to swing.
         repos.encounters.place(tokens["goblin"].id, -2, 0)
         server.repos.encounters.begin(_encounter.id)
-        agent.send_turn("next")
+        # The DM's path: autopilot may not pass a person's turn, and this
+        # is only moving the turn onto the goblin to set the scene.
+        server.run_turn("next")
         qtbot.waitUntil(
             lambda: repos.encounters.get(_encounter.id).turn_combatant_id
             == tokens["goblin"].id,
@@ -1087,7 +1091,9 @@ def test_a_monsters_turn_ends_itself_too(qtbot, fight, monkeypatch):
     server, repos, encounter, tokens, _hero, _goblin = fight
     agent = _join(qtbot, server, "autopilot", "let-me-run-it")
     try:
-        agent.send_turn("next")
+        # The DM's path: autopilot may not pass a person's turn, and this
+        # is only moving the turn onto the goblin to set the scene.
+        server.run_turn("next")
         qtbot.waitUntil(
             lambda: repos.encounters.get(encounter.id).turn_combatant_id
             == tokens["goblin"].id,

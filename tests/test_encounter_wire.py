@@ -221,8 +221,13 @@ def test_the_agent_may_move_once_the_table_is_handed_over(qtbot, live, table):
         agent.leave()
 
 
-def test_the_agent_may_run_the_turns(qtbot, live, table):
-    """The API the DM's buttons use, reachable by whoever is running the fight."""
+def test_the_agent_may_run_the_turns_that_are_its_own(qtbot, live, table):
+    """The API the DM's buttons use, reachable by whoever is running the fight.
+
+    With one limit: a turn belonging to somebody who plays for themselves ends
+    when they end it. Autopilot begins and ends the fight and passes its own
+    turns; it does not get to decide a player has had long enough.
+    """
     repos = table[0]
     server, encounter = live
     agent = _join(qtbot, server, "autopilot", "let-me-run-it")
@@ -235,9 +240,20 @@ def test_the_agent_may_run_the_turns(qtbot, live, table):
         )
         first = repos.encounters.get(encounter.id).turn_combatant_id
 
+        # The first turn belongs to a person, and theirs is not the agent's to
+        # end. Being told to pass the turn on is an instruction; this is the
+        # rule, and without it a model calling next_turn early skipped them.
+        agent.send_turn("next")
+        qtbot.wait(300)
+        assert repos.encounters.get(encounter.id).turn_combatant_id == first
+
+        # Once it is a monster's turn, passing it on is exactly its job.
+        server.run_turn("next")
+        machine = repos.encounters.get(encounter.id).turn_combatant_id
+        assert machine != first
         agent.send_turn("next")
         qtbot.waitUntil(
-            lambda: repos.encounters.get(encounter.id).turn_combatant_id != first,
+            lambda: repos.encounters.get(encounter.id).turn_combatant_id != machine,
             timeout=5000,
         )
 
