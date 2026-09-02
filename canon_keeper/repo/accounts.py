@@ -104,6 +104,87 @@ class AccountRepo:
             )
         return self.get(int(cur.lastrowid))  # type: ignore[return-value]
 
+    def create_with_verifier(
+        self,
+        campaign_id: int,
+        username: str,
+        *,
+        salt: bytes,
+        verifier: bytes,
+        role: str = "player",
+        display_name: str = "",
+        character_entity_id: int | None = None,
+    ) -> Account:
+        """An account whose password this machine never saw.
+
+        Enrolment: the person joining derived the salt and verifier on their own
+        machine and sent the verifier sealed under their invite code. This host
+        opened it and is storing the result. It cannot check the password's
+        length, because it does not have the password -- that check belongs on
+        the client, and a host that could do it would be a host that had been
+        sent the password.
+        """
+        username = username.strip()
+        if not username:
+            raise ValueError("a username is required")
+        if len(salt) != auth.SALT_BYTES or len(verifier) != auth.VERIFIER_BYTES:
+            raise ValueError("that is not password material")
+        if self.by_username(campaign_id, username) is not None:
+            raise ValueError(f"{username!r} is already taken")
+
+        now = time.time()
+        with self._conn:
+            cur = self._conn.execute(
+                """
+                INSERT INTO account (campaign_id, username, display_name, role, salt,
+                                     verifier, character_entity_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    campaign_id,
+                    username,
+                    display_name.strip() or username,
+                    role if role in ("dm", "player", "agent") else "player",
+                    salt,
+                    verifier,
+                    character_entity_id,
+                    now,
+                ),
+            )
+        return self.get(int(cur.lastrowid))  # type: ignore[return-value]
+
+    def take_over(
+        self, account_id: int, username: str, *, salt: bytes, verifier: bytes
+    ) -> Account:
+        """Give an existing seat a new name and new password material.
+
+        The seat is kept rather than replaced. An account id is referenced by
+        every share made "with the rogue only" and by the ownership of their
+        character, so deleting and recreating would quietly drop the private
+        things that player had been told. A returning player whose password is
+        gone, and a new person taking a character over, are the same operation:
+        this seat is now answered by whoever holds the invite.
+        """
+        if len(salt) != auth.SALT_BYTES or len(verifier) != auth.VERIFIER_BYTES:
+            raise ValueError("that is not password material")
+        username = username.strip()
+        if not username:
+            raise ValueError("a username is required")
+        clash = self.get(account_id)
+        if clash is None:
+            raise ValueError("that account is gone")
+        taken = self.by_username(clash.campaign_id, username)
+        if taken is not None and taken.id != account_id:
+            raise ValueError(f"{username!r} is already taken")
+
+        with self._conn:
+            self._conn.execute(
+                "UPDATE account SET username = ?, display_name = ?, salt = ?,"
+                " verifier = ? WHERE id = ?",
+                (username, username, salt, verifier, account_id),
+            )
+        return self.get(account_id)  # type: ignore[return-value]
+
     def set_password(self, account_id: int, password: str) -> None:
         salt, verifier = auth.make_credentials(password)
         with self._conn:

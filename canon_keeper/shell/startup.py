@@ -5,8 +5,9 @@ of nobody, and a session has no canon to serve. So this is the first thing you
 see, and the main window is not built until it returns.
 
 Two ways in. A campaign on this computer is yours -- you hold the file, so there
-is nothing to log in to. A campaign on someone else's machine needs the username
-and password the DM gave you.
+is nothing to log in to. A campaign on someone else's machine needs a login, and
+the first time you have none: what you have is the invite your DM sent, which
+this makes an account from.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
 from canon_keeper import campaigns, credentials, templates
 from canon_keeper.templates import build
 from canon_keeper.net import discovery
+from canon_keeper_protocol import enrol
 
 LOCAL_TAB = 0
 ONLINE_TAB = 1
@@ -54,8 +56,9 @@ class Launch:
     url: str = ""
     username: str = ""
     password: str = ""
-    #: Keep the password in the OS credential store for next time.
-    remember: bool = False
+    #: An invite code, when this is somebody's first time in. The app enrols
+    #: rather than logging in, and the account is made from what they typed.
+    invite: str = ""
     #: Open this campaign on launch without asking again.
     autostart: bool = False
 
@@ -135,7 +138,8 @@ class CampaignDialog(QDialog):
         layout.addWidget(
             QLabel(
                 "An evening that begins somewhere specific. Starting one builds "
-                "a normal campaign, with the characters and logins already in it."
+                "a normal campaign, with the characters already in it and "
+                "nobody playing them yet."
             )
         )
 
@@ -185,8 +189,8 @@ class CampaignDialog(QDialog):
         ending = template.ending
         lines = [template.about] if template.about else []
         lines.append(
-            f"{players} character{'s' if players != 1 else ''} and their logins "
-            f"are already made."
+            f"{players} character{'s' if players != 1 else ''}, ready for you to "
+            "invite players to."
         )
         if ending:
             lines.append(f"It ends when: {ending.done_when or ending.title}")
@@ -287,25 +291,29 @@ class CampaignDialog(QDialog):
         self._password.setEchoMode(QLineEdit.EchoMode.Password)
         self._password.returnPressed.connect(self._accept)
         form.addRow("Password", self._password)
+
+        # The first time in there is no account yet, only the line the DM sent.
+        # This is where most people will meet the app for the first time, so it
+        # is here as well as in the Table panel's own join dialog.
+        self._code = QLineEdit()
+        self._code.setPlaceholderText("Paste the whole invite your DM sent")
+        self._code.setToolTip(
+            "Paste the whole line -- it carries the address as well, and fills "
+            "it in above. Then choose any username and password you like: the "
+            "DM never sees the password."
+        )
+        self._code.textChanged.connect(self._on_code_changed)
+        self._code.returnPressed.connect(self._accept)
+        form.addRow("Invite code", self._code)
         layout.addLayout(form)
 
-        self._remember = QCheckBox("Remember my password for this session")
-        self._remember.setEnabled(credentials.is_available())
-        if not credentials.is_available():
-            self._remember.setToolTip(
-                "This machine has no credential store, so passwords cannot be saved."
-            )
-        layout.addWidget(self._remember)
-
         self._autostart_remote = QCheckBox("Open this automatically next time")
-        self._autostart_remote.toggled.connect(
-            lambda on: on and self._remember.setChecked(True)
-        )
         layout.addWidget(self._autostart_remote)
 
         note = QLabel(
-            "Your password is never sent over the network. If saved, it goes to "
-            "this computer's credential store, never to a file."
+            "Your password is never sent over the network. Once it works it is "
+            "kept in this computer's credential store, never in a file of ours, "
+            "so you do not type it again."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -352,7 +360,6 @@ class CampaignDialog(QDialog):
                 saved = credentials.load(url, remembered.username)
                 if saved:
                     self._password.setText(saved)
-                    self._remember.setChecked(True)
                 else:
                     self._password.setFocus()
                 break
@@ -372,6 +379,13 @@ class CampaignDialog(QDialog):
             )
         )
 
+    def _on_code_changed(self, raw: str) -> None:
+        """A whole invite fills the address in; a bare code is left alone."""
+        address, code = enrol.unwrap(raw)
+        if address and code:
+            self._url.setText(address)
+            self._code.setText(code)
+
     def _accept(self) -> None:
         if self._tabs.currentIndex() == TEMPLATE_TAB:
             self._start_template()
@@ -380,11 +394,16 @@ class CampaignDialog(QDialog):
             url = self._url.text().strip()
             username = self._username.text().strip()
             password = self._password.text()
+            invite = enrol.clean_code(self._code.text())
             if not url or not username or not password:
                 QMessageBox.information(
                     self,
                     "Join a session",
-                    "An address, a username and a password are all needed.",
+                    "An address, a username and a password are all needed."
+                    + (
+                        " With an invite, the username and password are the "
+                        "ones you are choosing now." if invite else ""
+                    ),
                 )
                 return
             item = self._remote_list.currentItem()
@@ -394,8 +413,8 @@ class CampaignDialog(QDialog):
                 url=url,
                 username=username,
                 password=password,
+                invite=invite,
                 name=name,
-                remember=self._remember.isChecked(),
                 autostart=self._autostart_remote.isChecked(),
             )
         else:

@@ -96,6 +96,9 @@ class TableWidget(QWidget):
         super().__init__()
         self._ctx = ctx
         self._server: SessionServer | None = None
+        #: True while the join this app was launched with is still unresolved.
+        #: The shell is waiting on it before showing the window.
+        self._launching = False
         #: Credentials to save once the host actually accepts them. Saving
         #: before that would store a password we have no reason to believe.
         self._pending_credentials: tuple[str, str, str] | None = None
@@ -226,10 +229,21 @@ class TableWidget(QWidget):
         # Launched by joining a session: connect straight away rather than
         # asking for the same credentials a second time.
         if ctx.pending_join is not None:
-            url, username, password = ctx.pending_join
+            wanted = ctx.pending_join
             ctx.pending_join = None
-            self._append_system(f"Connecting to {url}...")
-            self._client.join(url, username, password)
+            # The shell is holding the window back until this resolves, so the
+            # answer has to come exactly once, whichever way it goes.
+            self._launching = True
+            if wanted.invite:
+                # First time in: there is no account yet, so make one from what
+                # they typed in the chooser rather than asking for it twice.
+                self._append_system(f"Making your account on {wanted.url}...")
+                self._client.enrol(
+                    wanted.url, wanted.invite, wanted.username, wanted.password
+                )
+            else:
+                self._append_system(f"Connecting to {wanted.url}...")
+                self._client.join(wanted.url, wanted.username, wanted.password)
 
     # --------------------------------------------------------------------- ui
 
@@ -934,23 +948,33 @@ class TableWidget(QWidget):
             self._append("error", result.message or "Could not stop sharing.")
         self._update_state()
 
-    def _copy_invite(self) -> None:
-        """Whatever address a player should actually be given."""
+    def current_address(self) -> str:
+        """Whatever address a player should actually be given, or empty.
+
+        The funnel's if there is one, because a session that is on the internet
+        is one somebody may be joining from outside the room.
+        """
         if self._funnel_url:
-            invite = self._funnel_url
-        elif self._server is not None and self._server.is_running:
+            return self._funnel_url
+        if self._server is not None and self._server.is_running:
             addresses = discovery.local_addresses()
             host = next(
                 (a for a in sorted(addresses) if not a.startswith("127.")), "127.0.0.1"
             )
-            invite = f"ws://{host}:{self._server.port}"
-        else:
+            return f"ws://{host}:{self._server.port}"
+        return ""
+
+    def _copy_invite(self) -> None:
+        invite = self.current_address()
+        if not invite:
             return
         QApplication.clipboard().setText(invite)
         self._ctx.bus.status_message.emit(f"Copied {invite}")
 
     def _manage_accounts(self) -> None:
-        AccountsDialog(self._ctx, self).exec()
+        # The dialog builds whole invites -- address and code in one string --
+        # so it has to be told where this session actually is.
+        AccountsDialog(self._ctx, self, address=self.current_address()).exec()
 
     def _host(self) -> None:
         campaign = self._ctx.repos.campaigns.get(self._ctx.campaign_id)
@@ -1008,16 +1032,20 @@ class TableWidget(QWidget):
             self._append("error", "A username and password are needed to join.")
             return
 
-        self._pending_credentials = (
-            (url, username, password) if dialog.should_remember() else None
-        )
-        if not dialog.should_remember():
-            credentials.forget(url, username)
+        # Held until the host accepts it: saving a password we have no reason
+        # to believe is how a bad one gets remembered.
+        self._pending_credentials = (url, username, password)
 
         self._ctx.repos.settings.set("session_last_url", url)
         self._ctx.repos.settings.set("session_username", username)
-        self._append_system(f"Connecting to {url}...")
-        self._client.join(url, username, password)
+
+        code = dialog.invite_code()
+        if code:
+            self._append_system(f"Making your account on {url}...")
+            self._client.enrol(url, code, username, password)
+        else:
+            self._append_system(f"Connecting to {url}...")
+            self._client.join(url, username, password)
         self._update_state()
 
     def _leave(self) -> None:
@@ -1193,6 +1221,9 @@ class TableWidget(QWidget):
     # ----------------------------------------------------------------- events
 
     def _on_connected(self) -> None:
+        # Emitted on WELCOME rather than on the socket opening, so this is the
+        # first moment the login is known to have been accepted.
+        self._settle_launch(True)
         # Only now do we know the credentials were good, so only now save them.
         if self._pending_credentials is not None:
             url, username, password = self._pending_credentials
@@ -1208,7 +1239,20 @@ class TableWidget(QWidget):
 
     def _on_failed(self, message: str) -> None:
         self._append("error", message)
+        self._settle_launch(False, message)
         self._update_state()
+
+    def _settle_launch(self, ok: bool, reason: str = "") -> None:
+        """Answer the shell's question about the join we were launched with.
+
+        Once only. The client retries on its own, so without the flag a session
+        that dropped an hour into the evening would look to the shell like the
+        launch having failed.
+        """
+        if not self._launching:
+            return
+        self._launching = False
+        self._ctx.bus.session_ready.emit(ok, reason)
 
     def _on_roster(self, members: list[Member]) -> None:
         self._roster.clear()
@@ -1457,6 +1501,11 @@ class TableWidget(QWidget):
     def _update_state(self) -> None:
         connected = self._client.is_connected
         hosting = self._server is not None and self._server.is_running
+        # Published for anything that has to hand somebody an address without
+        # being able to see the server -- an invite made from a right-click in
+        # another panel, most of all. Panels do not import each other, so this
+        # is how one panel's fact reaches the rest.
+        self._ctx.session_address = self.current_address()
 
         is_dm = self._ctx.role == Role.DM.value
         self._host_button.setEnabled(is_dm and not connected and not hosting)

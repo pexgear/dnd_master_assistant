@@ -39,6 +39,7 @@ from canon_keeper.panels.encounter.dialogs import (
     FightDialog,
 )
 from canon_keeper.panels.encounter.grid import COMBATANT_MIME, GridMap, Token
+from canon_keeper import entity_actions
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.encounters import MAX_SIZE, MIN_SIZE, Encounter
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC
@@ -845,6 +846,23 @@ class EncounterWidget(QWidget):
         menu.addSeparator()
         remove = menu.addAction(f"Take {name} out of the fight")
         remove.triggered.connect(lambda: self._remove(combatant.id, name))
+
+        # Everything above belongs to this panel and is why you right-clicked
+        # here, so it stays at the top. What a creature carries with it
+        # everywhere goes underneath.
+        entity = self._entities.get(combatant.entity_id)
+        if entity is not None:
+            entity_actions.fill(
+                menu,
+                self._ctx,
+                entity_actions.Target(
+                    entity_id=entity.id,
+                    kind=entity.kind,
+                    name=entity.name,
+                    panel="encounter",
+                    extra={"combatant": combatant.id},
+                ),
+            )
         menu.exec(position)
 
     def _set_team(self, combatant_id: int, team_id: int | None) -> None:

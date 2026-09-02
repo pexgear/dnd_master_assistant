@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from canon_keeper.repo.entities import KIND_PC
+
 log = logging.getLogger("canonkeeper.templates")
 
 BUNDLED = Path(__file__).parent / "data"
@@ -113,7 +115,13 @@ class Template:
 
     @property
     def player_count(self) -> int:
-        return sum(1 for account in self.accounts if account.get("role") != "dm")
+        """How many seats there are, counted in characters rather than logins.
+
+        A one-shot ships nobody's login, so counting accounts would say nought
+        players for an adventure written for three. The characters are the
+        thing that exists before anybody has been invited.
+        """
+        return sum(1 for entity in self.entities if entity.get("kind") == KIND_PC)
 
     @property
     def ending(self) -> Beat | None:

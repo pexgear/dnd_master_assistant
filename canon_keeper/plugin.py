@@ -14,6 +14,7 @@ and provides a class satisfying :class:`PanelPlugin`.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from PySide6.QtCore import Qt
@@ -26,10 +27,30 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance only
 #: Bumped only on a breaking change to :class:`AppContext` or
 #: :class:`PanelPlugin`. Panels declaring a different major version are skipped
 #: rather than loaded, so an outdated plugin degrades to "absent", not "crash".
-API_VERSION = 1
+#:
+#: 2 added :mod:`canon_keeper.entity_actions` -- the menu a creature carries
+#: with it wherever it is shown -- and ``AppContext.session_address``.
+API_VERSION = 2
 
 #: The entry-point group scanned at startup.
 ENTRY_POINT_GROUP = "canonkeeper.panels"
+
+
+@dataclass(frozen=True)
+class PendingJoin:
+    """A session the app was launched to join, carried to the Table panel.
+
+    A record rather than a tuple because it grew a fourth thing -- an invite --
+    and a four-tuple unpacked in one place and indexed in another is how the
+    fourth thing quietly becomes the third.
+    """
+
+    url: str
+    username: str
+    password: str
+    #: Set when the person is arriving on an invite rather than a login they
+    #: already have. The Table panel enrols instead of logging in.
+    invite: str = ""
 
 
 class AppContext:
@@ -60,13 +81,19 @@ class AppContext:
         self.shared = shared
         #: Set when the app was launched by joining a session: the Table panel
         #: connects with it instead of making the player log in twice.
-        self.pending_join: tuple[str, str, str] | None = None
+        self.pending_join: PendingJoin | None = None
         #: Resolves what each panel is called. A panel's `title` is only
         #: its default: the user or the DM may have renamed it.
         self.names = names
         #: Mutated by the shell when the DM opens a different campaign; the
         #: change is announced on ``bus.campaign_changed``.
         self.campaign_id = campaign_id
+        #: Where this session is reachable, while it is being hosted. Set by
+        #: the Table panel, which owns the server, and read by anything that
+        #: needs to hand somebody an address -- an invite, most of all. Empty
+        #: when nobody is hosting, which is a state callers must expect rather
+        #: than a reason to fail.
+        self.session_address = ""
 
 
 @runtime_checkable

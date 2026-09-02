@@ -221,7 +221,12 @@ def test_switching_campaign_forces_the_chooser(monkeypatch):
 # -------------------------------------------------------- applying the boxes
 
 
-def test_ticking_remember_saves_the_password(vault):
+def test_a_login_that_worked_is_saved_without_being_asked(vault):
+    """Joining your own weekly game is not a question with two answers.
+
+    This only ever runs after the host has accepted the login, so what reaches
+    the credential store is known to work rather than merely typed.
+    """
     from canon_keeper.app import _remember_choices
 
     _remember_choices(
@@ -230,26 +235,24 @@ def test_ticking_remember_saves_the_password(vault):
             url="ws://host:8765",
             username="marco",
             password="goblin-teeth",
-            remember=True,
         )
     )
     assert credentials.load("ws://host:8765", "marco") == "goblin-teeth"
 
 
-def test_unticking_remember_removes_a_previously_saved_password(vault):
+def test_a_changed_password_replaces_the_saved_one(vault):
     from canon_keeper.app import _remember_choices
 
-    credentials.save("ws://host:8765", "marco", "goblin-teeth")
+    credentials.save("ws://host:8765", "marco", "the-old-one")
     _remember_choices(
         Launch(
             kind="remote",
             url="ws://host:8765",
             username="marco",
-            password="goblin-teeth",
-            remember=False,
+            password="the-new-one",
         )
     )
-    assert credentials.load("ws://host:8765", "marco") is None
+    assert credentials.load("ws://host:8765", "marco") == "the-new-one"
 
 
 def test_unticking_autostart_clears_it_for_that_campaign(vault):
@@ -276,7 +279,7 @@ def test_opening_another_campaign_does_not_clear_someone_elses_autostart(vault):
     assert entry is not None and entry.path == str(first.path)
 
 
-def test_joining_records_the_server_even_without_remembering(vault):
+def test_joining_records_the_server_for_the_list(vault):
     from canon_keeper.app import _remember_choices
 
     _remember_choices(
@@ -286,7 +289,6 @@ def test_joining_records_the_server_even_without_remembering(vault):
             username="marco",
             password="pw",
             name="Our campaign",
-            remember=False,
         )
     )
     assert [s.url for s in campaigns.list_remote()] == ["ws://host:8765"]
@@ -295,26 +297,12 @@ def test_joining_records_the_server_even_without_remembering(vault):
 # ------------------------------------------------------------------ chooser
 
 
-def test_the_chooser_offers_to_remember(qtbot, vault):
+def test_the_chooser_asks_nothing_about_remembering(qtbot, vault):
+    """The box is gone. A login that works is kept, and that is the whole rule."""
     dialog = CampaignDialog(start_online=True)
     qtbot.addWidget(dialog)
-    dialog._url.setText("ws://host:8765")
-    dialog._username.setText("marco")
-    dialog._password.setText("goblin-teeth")
-    dialog._remember.setChecked(True)
 
-    dialog._accept()
-
-    assert dialog.launch().remember is True
-
-
-def test_asking_to_open_automatically_implies_remembering(qtbot, vault):
-    """Otherwise the next launch would stop and ask for a password anyway."""
-    dialog = CampaignDialog(start_online=True)
-    qtbot.addWidget(dialog)
-    dialog._autostart_remote.setChecked(True)
-
-    assert dialog._remember.isChecked() is True
+    assert not hasattr(dialog, "_remember")
 
 
 def test_a_saved_password_is_filled_in_when_you_pick_the_session(qtbot, vault):
@@ -327,7 +315,6 @@ def test_a_saved_password_is_filled_in_when_you_pick_the_session(qtbot, vault):
 
     assert dialog._username.text() == "marco"
     assert dialog._password.text() == "goblin-teeth"
-    assert dialog._remember.isChecked() is True
 
 
 def test_a_local_campaign_can_be_marked_to_open_automatically(qtbot):
@@ -355,9 +342,16 @@ def test_the_checkbox_shows_the_campaign_that_opens_automatically(qtbot):
     assert dialog._autostart_local.isChecked() is True
 
 
-def test_remembering_is_offered_only_where_it_can_work(qtbot, monkeypatch):
+def test_no_credential_store_is_not_an_error(qtbot, monkeypatch, vault):
+    """Nothing is stored and nothing complains; you type it each time."""
+    from canon_keeper.app import _remember_choices
+
     monkeypatch.setattr(credentials, "is_available", lambda: False)
     dialog = CampaignDialog(start_online=True)
     qtbot.addWidget(dialog)
 
-    assert dialog._remember.isEnabled() is False
+    _remember_choices(
+        Launch(
+            kind="remote", url="ws://host:8765", username="marco", password="pw"
+        )
+    )  # must not raise

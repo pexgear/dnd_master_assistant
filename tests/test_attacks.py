@@ -1439,3 +1439,44 @@ def test_swinging_from_across_the_room_is_refused(qtbot, fight):
     finally:
         agent.leave()
         player.leave()
+
+
+# ------------------------------------------------- whose character is this
+
+
+def test_a_turn_is_offered_to_whoever_plays_the_character(qtbot, fight, repos):
+    """Two facts have to agree, and they are written in different places.
+
+    An account says which character it *plays*; an entity says who *owns* it.
+    A character whose owner was never set looks, to the host, exactly like a
+    monster: no accept bar for the player, and autopilot takes the turn. This
+    is the case that broke it -- a campaign whose accounts arrived without the
+    ownership half.
+    """
+    server, repos, encounter, tokens, hero, _goblin = fight
+    marco = repos.accounts.by_username(server.campaign_id, "marco")
+    # The half that goes missing.
+    repos.entities.set_owner(hero.id, None)
+
+    agent = _join(qtbot, server, "autopilot", "let-me-run-it")
+    player = _join(qtbot, server, "marco", "goblin-teeth")
+    offered: list[dict] = []
+    player.action_proposed.connect(offered.append)
+    try:
+        _propose(agent, tokens, target=None)
+        qtbot.waitUntil(lambda: bool(offered), timeout=5000)
+        assert not offered[0].get("watching"), (
+            "the player was sent the DM's copy, which cannot be answered"
+        )
+    finally:
+        agent.leave()
+        player.leave()
+
+
+def test_a_character_with_a_player_is_not_played_by_the_machine(fight, repos):
+    """The same drift, seen from the other side: their turn taken from them."""
+    server, repos, _encounter, tokens, hero, _goblin = fight
+    repos.entities.set_owner(hero.id, None)
+
+    combatant = repos.encounters.combatant(tokens["hero"].id)
+    assert server._machine_plays(combatant) is False

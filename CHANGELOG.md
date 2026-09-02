@@ -5,6 +5,139 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.5.3
+
+Nobody is handed a login any more. A DM invites a player to a character, that
+person makes their own password, and the DM never sees it.
+
+**Everyone at a table needs this version.** The wire moved to 6 — making an
+account is a new thing said over it — and a mixed table is refused at the door
+with a readable reason rather than half-working. Campaign files are upgraded
+when you open them, and nothing needs converting by hand.
+
+**Anyone with a plugin needs to look.** The panel API is version 2: `AppContext`
+gained `session_address`, `pending_join` is a record rather than a tuple, and
+there is a new contract for right-click actions. A panel declaring version 1 is
+skipped rather than loaded, so it degrades to absent instead of crashing.
+
+### Fixes
+
+- **The accept bar is back.** Autopilot would work out your turn and put it to
+  you, and nothing would appear. Two rows say who plays a character — the
+  login names the character, the character names the login — and when the
+  second went missing the host could not tell that character from a monster:
+  no accept bar, and autopilot took the turn. It now asks the login, which is
+  the half a DM actually set, and puts the other half back when a session
+  starts. Campaigns already in that state repair themselves on the next
+  **Go online**.
+- **Autopilot knows who it has been handed.** A character given to it before
+  the switch was turned on was invisible to it, so it asked the table whether
+  it should play them — a question somebody had already answered by pressing
+  the button. The map now says *played by you*, and it is told never to ask
+  that in the chat.
+
+### A login that fails leaves you in the chooser
+
+- **The window no longer opens on a join that did not work.** A wrong password,
+  a host that is not there, or an invite already used now keeps you on **Join a
+  session** with the reason and another go at it — rather than dropping you
+  into an empty app with the explanation buried in a chat log you have no
+  session for.
+- **Nothing is remembered until it works.** The password is only saved, and
+  "open this automatically next time" only applied, once the host has accepted
+  the login. Setting a bad session to open automatically used to mean an app
+  that failed the same way every launch.
+- **A login that works is kept, without asking.** *Remember my password for
+  this session* has gone from both join screens: joining your own weekly game
+  is not a question with two answers. It still only ever stores a password the
+  host has accepted, still in the operating system's credential store, and
+  still never in a file of ours.
+
+### Right-click anybody
+
+- **Invite a player from wherever you are looking at them** — the Characters
+  panel, the initiative order. It used to live only in the Players dialog,
+  which meant knowing to go there.
+- A creature now carries its menu with it. What the panel you are in can do
+  comes first, because that is why you right-clicked there: **Take off the
+  map** stays a Combat thing and is offered nowhere else. What is true of the
+  creature anywhere follows, under a separator.
+- Plugins can add to it. See *Adding to the right-click menu* in the README —
+  an action declared once appears in every panel that lists characters,
+  including panels written later.
+
+### An invite is one line
+
+- **The invite carries the address as well as the code**, so there is one thing
+  to send and one thing to paste:
+  `ws://192.168.1.10:8765#7K3PQ-M2XRV`. Pasting it into the invite box fills
+  the address in too. Two things to copy was two things to get wrong, and the
+  address is the half people mistype.
+- It survives the trip: a stray space, a full stop a chat app added, a
+  `canonkeeper://` somebody put in front, or the code alone all read correctly.
+- On a headless server, `--invite CHARACTER --address wss://your-host` prints
+  the whole line.
+- **The chooser takes one too.** Paste it on **Join a session**, the first
+  screen the app shows, and you are in — that is where somebody arriving for
+  the first time actually is, rather than inside a panel they have not seen
+  yet.
+
+### Nobody is given a login any more
+
+- **An invite is the only way in the first time.** There is no longer any way
+  for a DM to make a player's login: not in the Players dialog, not in a
+  template, and not on a headless server. A DM who set your password knew it,
+  which made "do not reuse this one" advice they were not in a position to
+  give.
+- **After that you are trusted.** Log in with the username and password you
+  chose, remembered by your machine's credential store if you asked it to.
+- **Lost it? Ask for another code.** A new invite on a character you already
+  play hands the seat back to whoever uses it — the same operation as somebody
+  new taking the character on. The login playing them keeps working right up
+  until the code is used, so a code made by accident does not throw anybody
+  out mid-session; when it is used, that seat's old password stops working and
+  anyone still logged in on it is told why and disconnected.
+- The seat is handed over rather than replaced, so the private things that
+  player had been told — shares made with them alone, ownership of their
+  character — follow the character rather than being quietly dropped.
+- On a headless server, `--add-player` is gone and `--invite CHARACTER` prints
+  a code. `--characters` shows who is played, who is invited, and who is
+  neither.
+
+### Players make their own logins
+
+- **Invite a player to a character.** In **Players**, pick the character and
+  press **Invite a player...**: you get a code to send them. They type it once,
+  choose their own username and password, and the account arrives already
+  attached to that character.
+- **You never see their password**, and it never crosses the network — not even
+  the first time, when there is nothing on the host to check it against. The
+  code is what the new password material is sealed with, and the code is not on
+  the wire either.
+- **Making a new code kills the old one.** Somebody who never got round to
+  joining cannot come back a week later and use the first code you sent, and
+  neither can anybody who read it over their shoulder.
+- **Codes last 24 hours** and can be used once. Send one the way you would send
+  a password: it is the whole of what stands between a stranger and that seat.
+- The Players list shows which characters have a code out and nobody using it
+  yet, so an unanswered invite is not invisible.
+
+### One-shots no longer ship passwords
+
+- **A one-shot now starts with characters and nobody in them**, and you invite
+  your players as above. *The Last Coach* used to create three logins —
+  `one`, `two`, `three` — and a DM login, all with a password written in the
+  template file. That file is in a public repository, so those were published
+  passwords: anybody who found a hosted one-shot could have read them and
+  logged in as somebody's character, or as the DM.
+- Templates meant for testing the app keep their fixed logins. Those are the
+  ones the suite runs against, and a template that cannot be tested is worse
+  than one with known passwords — but they are not adventures, and they are
+  kept out of the chooser.
+- **A login written into a playable template is now ignored** rather than
+  trusted, so this cannot come back by somebody adding one to the next
+  template.
+
 ## 0.5.2
 
 Dying takes three rolls, walking away from somebody costs, and a fight has

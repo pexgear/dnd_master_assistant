@@ -21,7 +21,7 @@ from typing import Any
 #: Bumped when the contract grows, not only when it breaks. A build that does
 #: not know about encounters would connect happily and show a table no map --
 #: half-working, which is the state this number exists to prevent.
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 
 #: No O/0 or I/1 -- these get read aloud across a table.
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -68,6 +68,10 @@ class MessageType(StrEnum):
     # client -> server
     HELLO = "hello"        # {username} or {token} for the host's own app
     LOGIN = "login"        # {proof} -- answers a challenge
+    #: {username, salt, sealed, tag} -- making an account from an invite, before
+    #: there is an account to log in with. The password is not in it and neither
+    #: is the invite code; see canon_keeper_protocol/enrol.py.
+    ENROL = "enrol"
     CHAT = "chat"
     ROLL = "roll"
     EDIT = "edit"          # {id, changes} -- a player editing their own PC
@@ -96,6 +100,10 @@ class MessageType(StrEnum):
 
     # server -> client
     CHALLENGE = "challenge"  # {salt, nonce}
+    #: {username, character} -- the account exists now. Not a login: the client
+    #: turns round and logs in with what it just chose, so there is exactly one
+    #: path into a session and enrolment is not a second door.
+    ENROLLED = "enrolled"
     WELCOME = "welcome"
     SNAPSHOT = "snapshot"    # everything this account may see
     PANEL_NAMES = "panels"   # what the DM calls each panel

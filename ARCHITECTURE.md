@@ -126,6 +126,7 @@ Migrations are numbered `.sql` files driven by `PRAGMA user_version`:
 | `011_death_saves.sql` | death saves made and failed, for this fight |
 | `012_reactions.sql` | the round a combatant last used its reaction in |
 | `013_bodies_and_teams.sql` | who is lying down, and which side they are on |
+| `014_invites.sql` | one live invite per character, and what became of the rest |
 
 `entity.data_json` is how "start small, then evolve" is paid for: new fields
 cost a form change, not a migration. The price is that nothing validates them,
@@ -135,7 +136,7 @@ so anything load-bearing belongs in a column.
 
 ## The wire
 
-Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 5`; a
+Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 6`; a
 mismatch is refused at the door with a readable reason rather than
 half-working.
 
@@ -153,6 +154,41 @@ second of which was a real bug at about fifteen entities.
 knows the password without sending it. A LAN has no TLS and people reuse
 passwords. Every failure — no such user, wrong password, disabled account —
 returns one identical message, so the login cannot enumerate who plays.
+
+**Enrolment answers the same challenge.** A campaign starts with characters and
+no accounts, so the first login has nothing to log in *to*. An invite is made
+for a character; whoever holds the code derives the salt and verifier on their
+own machine and sends the verifier sealed under the code, tagged over the nonce,
+the username, the salt and the ciphertext. The password never crosses the wire
+and neither does the code — the host tries the invites it has live, and the one
+whose tag checks out is both the answer and the proof. See
+`canon_keeper_protocol/enrol.py`, which carries the reasoning and the limits.
+
+Three things make it a door rather than a hole. The pad is scrypt output used
+**once** — a fresh nonce per attempt — so it is a one-time pad over a
+fixed-length secret rather than a hand-rolled stream cipher. The code goes
+through scrypt, so a thirty-bit code recorded off the wire cannot be brute-forced
+into a verifier. And **enrolment is not a login**: it makes the account and
+stops, and the client comes back through the ordinary door, so there is one way
+into a session rather than two.
+
+An invite is spent once, dies after 24 hours, and is revoked the moment another
+is made for that character — which is what stops a code that was sent and
+forgotten from still working a week later.
+
+**It is the only first way in.** Nothing else creates a player login: not the
+Players dialog, not a template, not the headless server. A DM who set somebody's
+password knew it, and the arrangement where the person who runs your game also
+holds your password is the one this design exists to remove. After the first
+time, the ordinary login is the way back.
+
+**An invite on a character somebody already plays is a hand-over, not a second
+player.** The same seat gets a new name and new password material — the account
+row is kept, because its id is what every share made "with the rogue only" and
+the ownership of their character point at. That single rule covers both a player
+who lost their password and a character changing hands, and it is why anyone
+still logged in on the old credentials is disconnected when the code is used: a
+live session is authority, and it would outlive the login it came from.
 
 **Reconnect is cheap.** A client caches what it holds and sends its versions on
 connect; the host replies with only what changed. The cache is keyed by campaign
@@ -177,13 +213,30 @@ default is public, so nothing already written changed meaning.
 
 Every panel, first-party ones included, loads through the
 `canonkeeper.panels` entry point group and satisfies `plugin.PanelPlugin`
-(`API_VERSION = 1`). Dogfooding the contract is the only thing that keeps it
+(`API_VERSION = 2`). Dogfooding the contract is the only thing that keeps it
 usable by outsiders.
 
 `AppContext` is the whole public surface: `repos`, `bus`, `log`, `campaign_id`,
-`role`, `shared`, `names`, `pending_join`. Panels never import each other — they
-coordinate through `bus` signals, so a panel that is not installed simply does
-not exist rather than breaking its neighbours.
+`role`, `shared`, `names`, `pending_join`, `session_address`. Panels never
+import each other — they coordinate through `bus` signals, so a panel that is
+not installed simply does not exist rather than breaking its neighbours.
+
+**A creature carries its menu with it.** `entity_actions` is the same idea one
+level down: right-clicking a character offers what this panel can do *first*,
+because that is why you right-clicked here, and then what is true of that
+creature anywhere. "Take off the map" belongs to Combat and is offered nowhere
+else; inviting a player to a character is the same act in every panel, including
+one nobody has written yet. Actions load from the `canonkeeper.entity_actions`
+group under the panel loader's rules — a bad one costs its own menu item and
+nothing more.
+
+Two ways to refuse an action, because there are two reasons to: the **panel**
+passes `skip={"invite"}` at the call site, where the refusal is visible; the
+**action** answers `applies()` for this creature, this person, right now. And
+`Target` carries an id, a kind and a name rather than an entity row — a player's
+panels are built from what the host sent them and have no entity table, so an
+action handed a DM's `Entity` would pass every test and fail on half the laptops
+at the table.
 
 **Every dock sets `objectName` to the plugin id.** Qt silently drops docks
 without one, and the symptom is "my layout randomly resets".

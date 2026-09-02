@@ -2,8 +2,7 @@
   "id": "the-last-coach",
   "name": "The Last Coach",
   "summary": "A three-hour one-shot. The coach out of town leaves at dawn, and someone on it should not be.",
-  "about": "For three or four players at level 1, in an evening.\n\nThe party are strangers sharing the last coach before the pass closes for winter. One of the other passengers is being hunted; one of them is doing the hunting; the driver knows and has been paid not to. It ends when the coach reaches the pass -- whoever is still on it.\n\nOriginal material, so it ships with the app. Logins are 'one', 'two', 'three' with the password 'the-pass-closes'.",
-
+  "about": "For three or four players at level 1, in an evening.\n\nThe party are strangers sharing the last coach before the pass closes for winter. One of the other passengers is being hunted; one of them is doing the hunting; the driver knows and has been paid not to. It ends when the coach reaches the pass -- whoever is still on it.\n\nOriginal material, so it ships with the app. It comes with three characters and nobody in them: invite your players from the Players dialog, and each of them chooses their own password.",
   "entities": [
     {
       "key": "wren",
@@ -12,25 +11,51 @@
       "summary": "A courier who has made this run before, and is nervous about this one.",
       "data": {
         "status": "well",
-        "hp": 10, "max_hp": 10,
+        "hp": 10,
+        "max_hp": 10,
         "conditions": "",
         "party_knows": "Knows the road. Keeps checking behind.",
         "sheet": {
           "schema": 1,
-          "species": "human", "subspecies": "",
-          "class_index": "rogue", "subclass": "",
+          "species": "human",
+          "subspecies": "",
+          "class_index": "rogue",
+          "subclass": "",
           "level": 1,
           "background": "",
-          "abilities": {"str": 10, "dex": 16, "con": 13, "int": 12, "wis": 14, "cha": 12},
+          "abilities": {
+            "str": 10,
+            "dex": 16,
+            "con": 13,
+            "int": 12,
+            "wis": 14,
+            "cha": 12
+          },
           "ability_improvements": {},
-          "skill_proficiencies": ["perception", "stealth", "investigation", "insight"],
-          "languages": ["Common", "Thieves' cant"],
-          "equipment": ["leather-armor", "shortsword", "dagger", "shortbow"],
+          "skill_proficiencies": [
+            "perception",
+            "stealth",
+            "investigation",
+            "insight"
+          ],
+          "languages": [
+            "Common",
+            "Thieves' cant"
+          ],
+          "equipment": [
+            "leather-armor",
+            "shortsword",
+            "dagger",
+            "shortbow"
+          ],
           "hp_rolled": [],
           "hp_current": 10,
           "temp_hp": 0,
           "conditions": [],
-          "death_saves": {"successes": 0, "failures": 0}
+          "death_saves": {
+            "successes": 0,
+            "failures": 0
+          }
         }
       }
     },
@@ -41,27 +66,58 @@
       "summary": "A travelling priest, going wherever he is sent.",
       "data": {
         "status": "well",
-        "hp": 10, "max_hp": 10,
+        "hp": 10,
+        "max_hp": 10,
         "conditions": "",
         "party_knows": "Kind, and asks a great many questions.",
         "sheet": {
           "schema": 1,
-          "species": "human", "subspecies": "",
-          "class_index": "cleric", "subclass": "life",
+          "species": "human",
+          "subspecies": "",
+          "class_index": "cleric",
+          "subclass": "life",
           "level": 1,
           "background": "acolyte",
-          "abilities": {"str": 12, "dex": 10, "con": 14, "int": 11, "wis": 16, "cha": 13},
+          "abilities": {
+            "str": 12,
+            "dex": 10,
+            "con": 14,
+            "int": 11,
+            "wis": 16,
+            "cha": 13
+          },
           "ability_improvements": {},
-          "skill_proficiencies": ["insight", "religion"],
-          "languages": ["Common", "Celestial"],
-          "equipment": ["scale-mail", "shield", "mace"],
-          "spells_known": ["cure-wounds", "bless", "guiding-bolt", "sacred-flame"],
-          "spells_prepared": ["cure-wounds", "bless"],
+          "skill_proficiencies": [
+            "insight",
+            "religion"
+          ],
+          "languages": [
+            "Common",
+            "Celestial"
+          ],
+          "equipment": [
+            "scale-mail",
+            "shield",
+            "mace"
+          ],
+          "spells_known": [
+            "cure-wounds",
+            "bless",
+            "guiding-bolt",
+            "sacred-flame"
+          ],
+          "spells_prepared": [
+            "cure-wounds",
+            "bless"
+          ],
           "hp_rolled": [],
           "hp_current": 10,
           "temp_hp": 0,
           "conditions": [],
-          "death_saves": {"successes": 0, "failures": 0}
+          "death_saves": {
+            "successes": 0,
+            "failures": 0
+          }
         }
       }
     },
@@ -72,25 +128,48 @@
       "summary": "A hired sword between employers.",
       "data": {
         "status": "well",
-        "hp": 13, "max_hp": 13,
+        "hp": 13,
+        "max_hp": 13,
         "conditions": "",
         "party_knows": "Armed, and not hiding it.",
         "sheet": {
           "schema": 1,
-          "species": "half-orc", "subspecies": "",
-          "class_index": "fighter", "subclass": "",
+          "species": "half-orc",
+          "subspecies": "",
+          "class_index": "fighter",
+          "subclass": "",
           "level": 1,
           "background": "",
-          "abilities": {"str": 16, "dex": 13, "con": 15, "int": 9, "wis": 12, "cha": 10},
+          "abilities": {
+            "str": 16,
+            "dex": 13,
+            "con": 15,
+            "int": 9,
+            "wis": 12,
+            "cha": 10
+          },
           "ability_improvements": {},
-          "skill_proficiencies": ["athletics", "intimidation"],
-          "languages": ["Common", "Orc"],
-          "equipment": ["chain-mail", "greataxe", "javelin"],
+          "skill_proficiencies": [
+            "athletics",
+            "intimidation"
+          ],
+          "languages": [
+            "Common",
+            "Orc"
+          ],
+          "equipment": [
+            "chain-mail",
+            "greataxe",
+            "javelin"
+          ],
           "hp_rolled": [],
           "hp_current": 13,
           "temp_hp": 0,
           "conditions": [],
-          "death_saves": {"successes": 0, "failures": 0}
+          "death_saves": {
+            "successes": 0,
+            "failures": 0
+          }
         }
       }
     },
@@ -105,15 +184,33 @@
         "motive": "get through the pass and be paid",
         "secrets": "Took forty gold to make one extra stop tonight, and not to mention it.",
         "party_knows": "The driver. Not talkative.",
-        "hp": 4, "max_hp": 4,
+        "hp": 4,
+        "max_hp": 4,
         "sheet": {
           "schema": 1,
-          "species": "human", "class_index": "", "level": 1,
-          "abilities": {"str": 12, "dex": 10, "con": 12, "int": 10, "wis": 12, "cha": 8},
-          "skill_proficiencies": ["animal-handling", "survival"],
-          "equipment": ["club"],
+          "species": "human",
+          "class_index": "",
+          "level": 1,
+          "abilities": {
+            "str": 12,
+            "dex": 10,
+            "con": 12,
+            "int": 10,
+            "wis": 12,
+            "cha": 8
+          },
+          "skill_proficiencies": [
+            "animal-handling",
+            "survival"
+          ],
+          "equipment": [
+            "club"
+          ],
           "hp_current": 4,
-          "overrides": {"ac": 10, "hp_max": 4},
+          "overrides": {
+            "ac": 10,
+            "hp_max": 4
+          },
           "player_notes": "Commoner, CR 0. Thirty years of this road, and no wish to fight on it."
         }
       }
@@ -129,15 +226,34 @@
         "motive": "reach the far side of the pass alive",
         "secrets": "Witnessed a killing in the town behind them and is the only one who can name who did it.",
         "party_knows": "A passenger. Says little.",
-        "hp": 9, "max_hp": 9,
+        "hp": 9,
+        "max_hp": 9,
         "sheet": {
           "schema": 1,
-          "species": "human", "class_index": "", "level": 2,
-          "abilities": {"str": 10, "dex": 12, "con": 10, "int": 14, "wis": 12, "cha": 14},
-          "skill_proficiencies": ["deception", "insight", "persuasion"],
-          "equipment": ["dagger"],
+          "species": "human",
+          "class_index": "",
+          "level": 2,
+          "abilities": {
+            "str": 10,
+            "dex": 12,
+            "con": 10,
+            "int": 14,
+            "wis": 12,
+            "cha": 14
+          },
+          "skill_proficiencies": [
+            "deception",
+            "insight",
+            "persuasion"
+          ],
+          "equipment": [
+            "dagger"
+          ],
           "hp_current": 9,
-          "overrides": {"ac": 11, "hp_max": 9},
+          "overrides": {
+            "ac": 11,
+            "hp_max": 9
+          },
           "player_notes": "Noble, CR 1/8. Not a fighter, and the whole evening is about keeping them alive."
         }
       }
@@ -153,16 +269,39 @@
         "motive": "make sure Miren Ashe does not reach the far side",
         "secrets": "Paid the driver for the extra stop. Intends to use it.",
         "party_knows": "A passenger. Good company.",
-        "hp": 27, "max_hp": 27,
+        "hp": 27,
+        "max_hp": 27,
         "conditions": "",
         "sheet": {
           "schema": 1,
-          "species": "human", "class_index": "", "level": 3,
-          "abilities": {"str": 11, "dex": 16, "con": 12, "int": 12, "wis": 14, "cha": 14},
-          "skill_proficiencies": ["deception", "perception", "stealth", "persuasion"],
-          "equipment": ["leather-armor", "rapier", "shortsword", "crossbow-light"],
+          "species": "human",
+          "class_index": "",
+          "level": 3,
+          "abilities": {
+            "str": 11,
+            "dex": 16,
+            "con": 12,
+            "int": 12,
+            "wis": 14,
+            "cha": 14
+          },
+          "skill_proficiencies": [
+            "deception",
+            "perception",
+            "stealth",
+            "persuasion"
+          ],
+          "equipment": [
+            "leather-armor",
+            "rapier",
+            "shortsword",
+            "crossbow-light"
+          ],
           "hp_current": 27,
-          "overrides": {"ac": 15, "hp_max": 27},
+          "overrides": {
+            "ac": 15,
+            "hp_max": 27
+          },
           "player_notes": "Assassin-shaped, about CR 2. Sneak Attack 2d6, and will not start anything with witnesses in the coach."
         }
       }
@@ -194,7 +333,9 @@
       "parent": "road",
       "name": "The Water Stop",
       "summary": "A trough, a lean-to, and no reason to stop tonight.",
-      "data": {"place_type": "building"}
+      "data": {
+        "place_type": "building"
+      }
     },
     {
       "key": "pass",
@@ -202,33 +343,56 @@
       "parent": "road",
       "name": "The Pass",
       "summary": "Where the road ends and the evening does.",
-      "data": {"place_type": "region"}
+      "data": {
+        "place_type": "region"
+      }
     }
   ],
-
   "facts": [
-    {"subject": "quarry", "predicate": "witnessed", "object": "a killing in the town behind them"},
-    {"subject": "hunter", "predicate": "is hunting", "object": "Miren Ashe"},
-    {"subject": "hunter", "predicate": "paid", "object": "Old Pell for one unscheduled stop"},
-    {"subject": "driver", "predicate": "will stop", "object": "at the water stop, about three hours in"},
-    {"subject": "pass", "predicate": "closes", "object": "at first snow, which is tonight or tomorrow"}
+    {
+      "subject": "quarry",
+      "predicate": "witnessed",
+      "object": "a killing in the town behind them"
+    },
+    {
+      "subject": "hunter",
+      "predicate": "is hunting",
+      "object": "Miren Ashe"
+    },
+    {
+      "subject": "hunter",
+      "predicate": "paid",
+      "object": "Old Pell for one unscheduled stop"
+    },
+    {
+      "subject": "driver",
+      "predicate": "will stop",
+      "object": "at the water stop, about three hours in"
+    },
+    {
+      "subject": "pass",
+      "predicate": "closes",
+      "object": "at first snow, which is tonight or tomorrow"
+    }
   ],
-
-  "accounts": [
-    {"username": "gm", "password": "the-pass-closes", "role": "dm", "display_name": "The DM"},
-    {"username": "one", "password": "the-pass-closes", "display_name": "Player One", "plays": "wren"},
-    {"username": "two", "password": "the-pass-closes", "display_name": "Player Two", "plays": "matthias"},
-    {"username": "three", "password": "the-pass-closes", "display_name": "Player Three", "plays": "hana"}
-  ],
-
+  "accounts": [],
   "shares": [
-    {"entity": "road"},
-    {"entity": "coach"},
-    {"entity": "driver"},
-    {"entity": "quarry"},
-    {"entity": "hunter"}
+    {
+      "entity": "road"
+    },
+    {
+      "entity": "coach"
+    },
+    {
+      "entity": "driver"
+    },
+    {
+      "entity": "quarry"
+    },
+    {
+      "entity": "hunter"
+    }
   ],
-
   "storyline": [
     {
       "id": "boarding",

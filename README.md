@@ -82,24 +82,33 @@ a Characters panel with no campaign behind it is a list of nobody.
   file you own, so there is no login -- holding the file makes you its DM. Copy
   one to another machine and it appears there.
 - **Join a session** lists sessions running on your network, plus ones you have
-  joined before. That needs the username and password the DM gave you.
+  joined before. The first time, paste the invite your DM sent into the
+  **Invite code** box — it fills the address in for you, and the username and
+  password you type there become your login. After that, just the username and
+  password you chose.
 
 ### Skipping the chooser
 
-Tick **Remember my password for this session** when you join, and next time
-picking that session fills the password in for you. Tick **Open this
-automatically next time** and the app goes straight in without asking at all --
-on either tab, so it works for the campaign you run as well as one you join.
+A login that works is remembered, without being asked. Next time, picking that
+session fills the password in for you. Tick **Open this automatically next
+time** and the app goes straight in without asking at all -- on either tab, so
+it works for the campaign you run as well as one you join.
 
 Passwords go to the operating system's credential store: Windows Credential
 Manager, the macOS Keychain, or the Secret Service on Linux. Never to a file of
-ours. On a machine with no credential store the box is simply disabled and you
-type your password each time.
+ours. Only a password the host has actually accepted is kept, so a typo is never
+saved. On a machine with no credential store nothing is stored and you type it
+each time.
 
 To get the chooser back: **File > Open a Different Campaign...**, or **File >
 Stop Opening This Automatically**, or start with `canonkeeper --choose`. If the
 campaign file has been deleted or the saved password no longer works, the
 chooser comes back on its own rather than failing a login you never saw.
+
+**A join that does not work keeps you in the chooser.** A wrong password, a
+host that is not answering, or an invite already used leaves you on the same
+tab with the reason and another go at it — the app does not open until the host
+has actually let you in, and nothing is remembered until then either.
 
 ## Playing together (LAN)
 
@@ -112,9 +121,11 @@ If publishing is not set up, you are told and the session stays up on your
 network regardless -- failing to reach the wider internet is not failing to
 host.
 
-Before anyone can join you need to give them a login -- **Table ▸ Players...**:
-a username, a password, and the character they play. Chat then shows the
-character's name, because at the table people are their characters.
+Before anyone can join you need to invite them -- **Table ▸ Players...**: pick
+the character, press **Invite a player...**, and send them the line it copies.
+They make their own login from it; see [Inviting players](#inviting-players).
+Chat then shows the character's name, because at the table people are their
+characters.
 
 **Speak** beside the chat box records you and puts the words in the box — it does
 not send them. Correct whatever came out wrong, then press Enter. It runs
@@ -163,6 +174,33 @@ Take a share back and it disappears from their screen, rather than going stale.
 
 Players do not move anything. You move it, and their map follows.
 
+### Inviting players
+
+A campaign starts with characters and nobody playing them. In **Players**, pick
+the character and press **Invite a player…** — you get one line to send whoever
+is playing them, holding the address *and* the code:
+
+```
+ws://192.168.1.10:8765#7K3PQ-M2XRV
+```
+
+They paste the whole thing into the invite box when they join; it fills the
+address in for them, and they choose their own username and password. Their
+account arrives already attached to that character. One thing to send is one
+thing to get wrong, and the address is the half people mistype.
+
+**You never see their password.** It does not cross the network either, not even
+the first time — their app derives the password material locally and seals it
+with the invite code, which is not on the wire at all. That is the same promise
+login makes, extended to the one moment there was nothing on the host to check
+against.
+
+Send a code the way you would send a password: it is the whole of what stands
+between a stranger and that seat. Codes are good for **24 hours**, can be used
+once, and **making a new one kills the old** — so somebody who never got round
+to joining cannot use last week's code, and neither can anyone who read it over
+their shoulder.
+
 ### Passwords
 
 Your password is never sent over the network. The host sends a challenge, your
@@ -172,20 +210,32 @@ passwords.
 
 Stored passwords are scrypt verifiers, never the password itself. Anyone holding
 the campaign file could still log in as a player -- but they would already have
-your secrets, which is the thing actually worth protecting.
+your secrets, which is the thing actually worth protecting. The same is true of
+any invite still outstanding: the host has to hold the code to open what was
+sealed with it.
 
 ### Hosting somewhere else
 
 The host can be a separate machine -- a spare box on the LAN, or a server anyone
-can reach. It hosts one campaign, and creating logins is part of the same
+can reach. It hosts one campaign, and inviting people is part of the same
 command because a dedicated server has no other way to be told who may join:
 
 ```bash
-canonkeeper-server --db our-campaign.sqlite3 --add-player marco
+canonkeeper-server --db our-campaign.sqlite3 --characters
+```
+
+```bash
+canonkeeper-server --db our-campaign.sqlite3 --invite Marla --address wss://your-host
+```
+
+That prints the whole invite to send. Then start it:
+
+```bash
 canonkeeper-server --db our-campaign.sqlite3
 ```
 
-The DM then joins it like everyone else, with a `--add-dm` login.
+The DM joins it like everyone else, with a `--add-dm` login. There is no
+`--add-player`: nobody's password is set by anybody but them.
 
 **Windows will ask** to allow the app on private networks the first time you
 host. Say yes, or nobody can connect.
@@ -231,9 +281,13 @@ port on your router (but then the traffic is unencrypted), or run
 ## One-shots
 
 **Start a one-shot** in the chooser builds a campaign from a template: the
-characters, places, facts and logins are already in it, and it is the same every
-time. Good for an evening that begins somewhere specific, and for trying the app
+characters, places and facts are already in it, and it is the same every time.
+Good for an evening that begins somewhere specific, and for trying the app
 without typing a world in first.
+
+It ships **characters and nobody in them**. Invite your players to them from
+**Players…**, the same way as any campaign — a template that carried logins
+would be carrying passwords, and a template file is public.
 
 | | |
 |---|---|
@@ -645,6 +699,36 @@ A panel that fails to import, declares the wrong API version, or raises while
 building its widget is disabled and reported under **Help ▸ Installed Panels**;
 it never stops the app from opening. Set `CANONKEEPER_DISABLE_PLUGINS=id1,id2`
 to turn one off from outside the app.
+
+### Adding to the right-click menu
+
+A creature carries a menu with it wherever it is shown. Declare an action and it
+appears in every panel that lists characters — the Characters panel, the
+initiative order, and any panel written later:
+
+```toml
+[project.entry-points."canonkeeper.entity_actions"]
+send_to_vtt = "my_pkg.actions:SendToVirtualTabletop"
+```
+
+```python
+class SendToVirtualTabletop:
+    id = "send_to_vtt"       # stable: it is how a panel opts out
+    order = 20
+
+    def label(self, ctx, target):
+        return f"Send {target.name} to the tabletop"
+
+    def applies(self, ctx, target):
+        return target.kind == "pc" and ctx.role == "dm"
+
+    def run(self, ctx, target, parent=None):
+        ...                   # target.entity_id, target.panel, target.extra
+```
+
+A panel's own items stay above yours, under a separator, because they are the
+reason somebody right-clicked *there*. An action that raises is disabled rather
+than fatal, exactly like a panel.
 
 ## Contributing and releases
 

@@ -10,6 +10,7 @@ from canon_keeper.repo.chat import ChatMessage, ChatRepo
 from canon_keeper.repo.encounters import Combatant, Encounter, EncounterRepo
 from canon_keeper.repo.entities import Entity, EntityRepo, StaleWrite
 from canon_keeper.repo.facts import Fact, FactRepo
+from canon_keeper.repo.invites import Invite, InviteRepo
 from canon_keeper.repo.layouts import LayoutRepo
 from canon_keeper.repo.proposals import Proposal, ProposalRepo
 from canon_keeper.repo.sessions import Session, SessionRepo, Utterance, UtteranceRepo
@@ -28,6 +29,7 @@ class Repos:
         self.encounters = EncounterRepo(conn)
         self.entities = EntityRepo(conn)
         self.facts = FactRepo(conn)
+        self.invites = InviteRepo(conn)
         self.layouts = LayoutRepo(conn)
         self.proposals = ProposalRepo(conn)
         self.sessions = SessionRepo(conn)
@@ -43,6 +45,8 @@ __all__ = [
     "StaleWrite",
     "Fact",
     "FactRepo",
+    "Invite",
+    "InviteRepo",
     "CampaignRepo",
     "LayoutRepo",
     "SettingsRepo",

@@ -428,3 +428,27 @@ def test_a_name_is_found_the_way_a_person_would(table):
 def test_a_name_that_is_nobody(table):
     assert table.entity_named("Gandalf") is None
     assert table.entity_named("") is None
+
+
+def test_the_map_says_who_has_been_handed_to_the_agent():
+    """Without this it has no idea, and asks the table whether it should play
+    them -- a question somebody already answered by pressing the button."""
+    from canon_keeper_dm_agent.tools import describe_fight
+
+    fight = {
+        "name": "The cave",
+        "width": 10,
+        "height": 10,
+        "round": 1,
+        "combatants": [
+            {"id": 1, "entity": 1, "x": 0, "y": 0, "simulated": True},
+            {"id": 2, "entity": 2, "x": 1, "y": 0},
+        ],
+    }
+    entities = {1: {"name": "Marla"}, 2: {"name": "Brok"}}
+
+    said = describe_fight(fight, entities)
+
+    assert "Marla" in said and "played by you" in said
+    brok = said.split("Brok")[1].split(";")[0]
+    assert "played by you" not in brok, "only the handed-over one is yours"

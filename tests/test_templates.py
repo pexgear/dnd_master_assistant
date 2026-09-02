@@ -13,6 +13,7 @@ import pytest
 
 from canon_keeper.db import connect, migrate
 from canon_keeper.repo import Repos
+from canon_keeper.repo.entities import KIND_PC
 from canon_keeper.templates import (
     PROGRESS_SETTING,
     SOURCE_SETTING,
@@ -333,24 +334,101 @@ def test_two_runs_produce_the_same_campaign(blank, tmp_path):
         conn.close()
 
 
-def test_the_passwords_are_the_ones_the_template_states(blank):
-    """Generated passwords could not be handed out, or tested against."""
+def test_no_template_brings_a_login(blank):
+    """Not even the ones used for testing, and not even the DM's.
+
+    A template file is public, so a password written in one is a published
+    password: anybody who found a hosted one-shot could read the credentials
+    out of the repository and log in as somebody's character, or as the DM.
+    Everybody arrives by invitation now.
+    """
     repos, campaign_id = blank
-    template = get("test-table")
+    for template in available():
+        build.populate(repos, campaign_id, template)
+        assert repos.accounts.list(campaign_id) == [], (
+            f"{template.id} made a login"
+        )
+
+
+# ------------------------------------------------- no published passwords
+
+
+def test_a_one_shot_people_play_ships_no_logins(blank):
+    """A template file is public, so a password in one is a published password.
+
+    Anybody who found a hosted one-shot could otherwise read the credentials
+    out of the repository and log in as somebody's character -- or, worse, as
+    the DM.
+    """
+    repos, campaign_id = blank
+    template = get("the-last-coach")
+    assert template.for_testing is False
+
     build.populate(repos, campaign_id, template)
 
-    account = repos.accounts.by_username(campaign_id, "marco")
-    assert auth.derive_verifier("goblin-teeth", account.salt) == account.verifier
+    assert repos.accounts.list(campaign_id) == []
 
 
-def test_players_own_the_characters_they_play(blank):
+def test_a_one_shot_still_brings_its_characters(blank):
+    """Empty seats, not an empty campaign. The characters are the point."""
+    repos, campaign_id = blank
+    build.populate(repos, campaign_id, get("the-last-coach"))
+
+    played = repos.entities.list(campaign_id, kinds=(KIND_PC,))
+    assert len(played) == 3
+
+
+def test_the_chooser_counts_seats_not_logins():
+    """It used to count accounts, which now says nought players for three."""
+    assert get("the-last-coach").player_count == 3
+
+
+def test_no_template_anybody_plays_states_a_password():
+    """The guard in the builder, checked against the files as shipped.
+
+    A future template that put a login back would be refused at build time --
+    this is here so it is caught by whoever writes it rather than by whoever
+    hosts it.
+    """
+    for template in available():
+        if template.for_testing:
+            continue
+        assert template.accounts == [], (
+            f"{template.id} ships logins. A template people play brings "
+            "characters and invitations, not passwords."
+        )
+
+
+def test_even_a_login_written_into_one_is_ignored(blank):
+    """The rule is enforced, not merely observed by the files that exist."""
+    import dataclasses
+
+    repos, campaign_id = blank
+    template = dataclasses.replace(
+        get("the-last-coach"),
+        accounts=[
+            {"username": "gm", "password": "published", "role": "dm"},
+            {"username": "one", "password": "published", "plays": "wren"},
+        ],
+    )
+
+    build.populate(repos, campaign_id, template)
+
+    assert repos.accounts.list(campaign_id) == []
+
+
+def test_nobody_owns_a_character_until_somebody_is_invited(blank):
+    """Ownership follows the account, and there are no accounts yet.
+
+    A character with an owner nobody can log in as would be a seat that looks
+    taken and is not.
+    """
     repos, campaign_id = blank
     build.populate(repos, campaign_id, get("test-table"))
 
-    marco = repos.accounts.by_username(campaign_id, "marco")
-    owned = repos.entities.owned_by(marco.id)
-
-    assert [e.name for e in owned] == ["Elara Nightwind"]
+    played = repos.entities.list(campaign_id, kinds=(KIND_PC,))
+    assert played, "the template brought no characters"
+    assert all(e.owner_account_id is None for e in played)
 
 
 def test_places_are_nested(blank):

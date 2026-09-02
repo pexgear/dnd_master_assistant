@@ -8,7 +8,7 @@ A server hosts exactly one campaign, so it needs that campaign's file. Accounts
 live in the same file, which is why creating them is a job for this command too:
 a dedicated server has no other way to be told who is allowed in.
 
-    canonkeeper-server --db our-campaign.sqlite3 --add-player marco
+    canonkeeper-server --db our-campaign.sqlite3 --invite Marla
     canonkeeper-server --db our-campaign.sqlite3
 """
 
@@ -25,9 +25,11 @@ from PySide6.QtCore import QCoreApplication, QTimer
 
 from canon_keeper import __version__, config
 from canon_keeper.db import connect, migrate
+from canon_keeper_protocol import enrol
 from canon_keeper_protocol.auth import AuthError
 from canon_keeper.net.server import DEFAULT_PORT, SessionServer
 from canon_keeper.repo import Repos
+from canon_keeper.repo.entities import KIND_PC
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -51,7 +53,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     accounts = parser.add_argument_group("accounts")
     accounts.add_argument("--list-players", action="store_true", help="show who may log in")
-    accounts.add_argument("--add-player", metavar="USERNAME", help="create a player login")
+    accounts.add_argument(
+        "--invite",
+        metavar="CHARACTER",
+        help="make a one-use invite code for a character, and print it",
+    )
+    accounts.add_argument(
+        "--characters", action="store_true", help="show who can be invited"
+    )
+    accounts.add_argument(
+        "--address",
+        metavar="URL",
+        help="the address players connect to, folded into --invite output",
+    )
     accounts.add_argument("--add-dm", metavar="USERNAME", help="create a DM login")
     accounts.add_argument(
         "--add-agent",
@@ -87,7 +101,7 @@ def _manage_accounts(args, repos: Repos, campaign_id: int) -> bool:
         handled = True
         people = repos.accounts.list(campaign_id)
         if not people:
-            print("No logins yet. Add one with --add-player USERNAME.")
+            print("No logins yet. Invite somebody with --invite CHARACTER.")
         for account in people:
             character = ""
             if account.character_entity_id is not None:
@@ -96,8 +110,52 @@ def _manage_accounts(args, repos: Repos, campaign_id: int) -> bool:
             state = " (disabled)" if account.disabled else ""
             print(f"  {account.username:20} {account.role:6}{character}{state}")
 
+    if args.characters:
+        handled = True
+        for entity in repos.entities.list(campaign_id, kinds=(KIND_PC,)):
+            seat = next(
+                (
+                    a
+                    for a in repos.accounts.list(campaign_id)
+                    if a.character_entity_id == entity.id
+                ),
+                None,
+            )
+            waiting = repos.invites.waiting_for(entity.id)
+            if seat is not None:
+                state = f"played by {seat.username}"
+            elif waiting is not None:
+                state = f"invited ({waiting.code})"
+            else:
+                state = "nobody yet"
+            print(f"  {entity.name:24} {state}")
+
+    if args.invite:
+        handled = True
+        wanted = args.invite.strip().lower()
+        found = [
+            e
+            for e in repos.entities.list(campaign_id, kinds=(KIND_PC,))
+            if e.name.strip().lower() == wanted
+        ]
+        if not found:
+            raise SystemExit(
+                f"No character called {args.invite!r}. Try --characters."
+            )
+        invite = repos.invites.create(campaign_id, found[0].id)
+        # The whole thing, address included, so what gets pasted into a chat
+        # window is one line and the player has nothing to assemble.
+        whole = enrol.wrap(args.address or "", invite.code)
+        print(f"Invite for {found[0].name}: {whole}")
+        if not args.address:
+            print(
+                "No --address given, so that is the code alone. Add "
+                "--address wss://your-host to send one line."
+            )
+        print("Good for 24 hours, and once. Making another one cancels it.")
+        print("Send it the way you would send a password.")
+
     for flag, role in (
-        (args.add_player, "player"),
         (args.add_dm, "dm"),
         (args.add_agent, "agent"),
     ):
@@ -145,9 +203,10 @@ def main(argv: list[str] | None = None) -> int:
     if _manage_accounts(args, repos, campaign.id):
         return 0
 
-    if not repos.accounts.list(campaign.id):
-        print("This campaign has no logins yet, so nobody could join.")
-        print(f"  canonkeeper-server --db {db_path} --add-player USERNAME")
+    if not repos.accounts.list(campaign.id) and not repos.invites.live(campaign.id):
+        print("This campaign has nobody in it and nobody invited to it.")
+        print(f"  canonkeeper-server --db {db_path} --characters")
+        print(f"  canonkeeper-server --db {db_path} --invite CHARACTER")
         return 1
 
     app = QCoreApplication(sys.argv[:1])

@@ -593,6 +593,11 @@ def describe_fight(fight: dict, entities: dict) -> str:
             # Said plainly, because a model that thinks a body is still fighting
             # will narrate it swinging at somebody.
             spot += ", down"
+        if combatant.get("simulated"):
+            # Without this the agent has no idea a character was handed to it,
+            # and asks the table whether it should play them -- which is a
+            # question somebody already answered by pressing the button.
+            spot += ", played by you"
         if combatant.get("id") == fight.get("turn"):
             spot += ", up now"
         where.append(f"{name_of(combatant)} at {spot}")

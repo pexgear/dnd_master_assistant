@@ -390,20 +390,40 @@ def test_only_players_are_offered_as_owners(ctx, panel, elara):
     assert "gm" not in offered, "the DM does not need to be given a character"
 
 
-def test_assigning_a_character_in_the_players_dialog_grants_ownership(ctx, qtbot):
-    """The other place you naturally think about who plays what."""
+def test_moving_a_login_to_a_character_grants_ownership(ctx, qtbot):
+    """The other place you naturally think about who plays what.
+
+    The dialog cannot make a login any more -- everybody arrives by invitation
+    -- but it can still move an existing one onto a different character, and
+    ownership has to follow or the player cannot edit their own sheet.
+    """
     from canon_keeper.panels.table.dialogs import AccountsDialog
 
     elara = ctx.repos.entities.create(
         Entity(id=None, campaign_id=ctx.campaign_id, kind=KIND_PC, name="Elara")
     )
+    account = ctx.repos.accounts.create(ctx.campaign_id, "marco", "goblin-teeth")
+
     dialog = AccountsDialog(ctx)
     qtbot.addWidget(dialog)
-
-    dialog._username.setText("marco")
-    dialog._password.setText("goblin-teeth")
+    row = next(
+        dialog._list.item(i)
+        for i in range(dialog._list.count())
+        if dialog._list.item(i).data(256) == account.id
+    )
+    dialog._list.setCurrentItem(row)
     dialog._character.setCurrentIndex(dialog._character.findData(elara.id))
     dialog._save()
 
-    account = ctx.repos.accounts.by_username(ctx.campaign_id, "marco")
     assert ctx.repos.entities.get(elara.id).owner_account_id == account.id
+
+
+def test_the_players_dialog_cannot_make_a_login(ctx, qtbot):
+    """The whole point: a DM who set your password would know it."""
+    from canon_keeper.panels.table.dialogs import AccountsDialog
+
+    dialog = AccountsDialog(ctx)
+    qtbot.addWidget(dialog)
+
+    assert not hasattr(dialog, "_password")
+    assert dialog._username.isReadOnly()

@@ -30,10 +30,13 @@ import secrets
 
 #: scrypt cost. ~16 MB and a few tenths of a second, which is plenty against
 #: someone guessing at a stolen campaign file and unnoticeable when logging in.
-_N = 2**14
-_R = 8
-_P = 1
-_DKLEN = 32
+#: Public because enrolment derives at the same cost, deliberately: a guess at
+#: an invite should never be cheaper than a guess at a password.
+SCRYPT_N = _N = 2**14
+SCRYPT_R = _R = 8
+SCRYPT_P = _P = 1
+#: How long a verifier is. Enrolment seals exactly this many bytes.
+VERIFIER_BYTES = _DKLEN = 32
 
 SALT_BYTES = 16
 NONCE_BYTES = 32

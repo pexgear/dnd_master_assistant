@@ -7,6 +7,7 @@ network nobody has to read an IP address aloud -- pick the session, then log in.
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -25,9 +26,11 @@ from PySide6.QtWidgets import (
 
 from canon_keeper import campaigns, credentials
 from canon_keeper.net import discovery
-from canon_keeper_protocol.auth import MIN_PASSWORD_LENGTH, AuthError
+from canon_keeper_protocol import enrol
+from canon_keeper_protocol.auth import AuthError
 from canon_keeper.net.server import DEFAULT_PORT
 from canon_keeper.repo.entities import KIND_PC
+from canon_keeper.repo.invites import already_played
 
 _URL_ROLE = 256
 
@@ -83,6 +86,13 @@ class HostDialog(QDialog):
         )
 
 
+_JOIN_NOTE = (
+    "Your password is never sent over the network -- the host asks a question "
+    "only someone who knows it can answer. Once it works it is kept in this "
+    "computer's credential store, so you do not type it again."
+)
+
+
 class JoinDialog(QDialog):
     def __init__(self, last_url: str = "", last_username: str = "", parent=None) -> None:
         super().__init__(parent)
@@ -108,23 +118,25 @@ class JoinDialog(QDialog):
         self._password.setEchoMode(QLineEdit.EchoMode.Password)
         self._password.returnPressed.connect(self.accept)
         form.addRow("Password", self._password)
+
+        # First time in, there is no account yet: the DM sent a code for a
+        # character, and this is where it turns into a login. Empty for
+        # everybody who already has one, which is everybody after the first
+        # evening.
+        self._code = QLineEdit()
+        self._code.setPlaceholderText("Paste the whole invite your DM sent")
+        self._code.setToolTip(
+            "Paste the whole line -- it carries the address as well, and fills "
+            "it in above. Then choose any username and password you like: the "
+            "DM never sees the password."
+        )
+        self._code.textChanged.connect(self._on_code_changed)
+        form.addRow("Invite code", self._code)
         layout.addLayout(form)
 
-        self._remember = QCheckBox("Remember my password for this session")
-        self._remember.setEnabled(credentials.is_available())
-        if not credentials.is_available():
-            self._remember.setToolTip(
-                "This machine has no credential store, so passwords cannot be saved."
-            )
-        layout.addWidget(self._remember)
-
-        note = QLabel(
-            "Your password is never sent over the network -- the host asks a "
-            "question only someone who knows it can answer. If saved, it goes to "
-            "this computer's credential store."
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        self._note = QLabel(_JOIN_NOTE)
+        self._note.setWordWrap(True)
+        layout.addWidget(self._note)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -150,7 +162,6 @@ class JoinDialog(QDialog):
         saved = credentials.load(url, username)
         if saved:
             self._password.setText(saved)
-            self._remember.setChecked(True)
 
     def _on_sessions(self, sessions) -> None:
         selected = self._found.currentItem()
@@ -177,6 +188,36 @@ class JoinDialog(QDialog):
                     break
             self._load_saved()
 
+    def _on_code_changed(self, raw: str) -> None:
+        """Take an invite apart, and say what it is about to do.
+
+        A whole invite is one line -- ``ws://host:port#CODE`` -- so pasting it
+        here fills the address in as well. That is the whole reason it is one
+        line: the address is the half people mistype, and a player who has just
+        been sent something should not have to work out which part of it goes
+        where.
+
+        Enrolment is the one irreversible thing in this dialog: the invite is
+        spent whether or not the username was the one they meant.
+        """
+        address, code = enrol.unwrap(raw)
+        if address and code:
+            self._url.setText(address)
+            # Put back only the code, so the box shows what it is holding
+            # rather than a line half of which has moved.
+            self._code.setText(code)
+            return
+
+        if enrol.clean_code(raw):
+            self._note.setText(
+                "With an invite code, this makes a <b>new account</b> from the "
+                "username and password above and attaches it to the character "
+                "your DM invited. Your password is never sent -- not to the "
+                "network, and not to your DM."
+            )
+        else:
+            self._note.setText(_JOIN_NOTE)
+
     def values(self) -> tuple[str, str, str]:
         return (
             self._url.text().strip(),
@@ -184,8 +225,9 @@ class JoinDialog(QDialog):
             self._password.text(),
         )
 
-    def should_remember(self) -> bool:
-        return self._remember.isChecked()
+    def invite_code(self) -> str:
+        """The code, tidied, or empty for an ordinary login."""
+        return enrol.clean_code(self._code.text())
 
     def done(self, result: int) -> None:  # noqa: D102 - Qt naming
         self._listener.stop()
@@ -195,16 +237,25 @@ class JoinDialog(QDialog):
 class AccountsDialog(QDialog):
     """Who may log in, and which character each of them plays."""
 
-    def __init__(self, ctx, parent=None) -> None:
+    def __init__(self, ctx, parent=None, address: str = "") -> None:
         super().__init__(parent)
         self._ctx = ctx
+        #: Where this session is, so an invite can carry it. Empty when the DM
+        #: is not hosting yet, which makes the code the whole invite.
+        self._address = address
         self.setWindowTitle("Players")
         self.resize(520, 380)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel("People with a login here can join your sessions.")
+        blurb = QLabel(
+            "Everybody gets in by invitation. Pick a character below and press "
+            "<b>Invite a player...</b> for a code to send them - they choose "
+            "their own username and password, and you never see it. Sending a "
+            "new code for a character they already play hands it over, which is "
+            "also how somebody who has lost their password gets back in."
         )
+        blurb.setWordWrap(True)
+        layout.addWidget(blurb)
 
         self._list = QListWidget()
         self._list.currentItemChanged.connect(lambda *_: self._load_selected())
@@ -212,13 +263,9 @@ class AccountsDialog(QDialog):
 
         form = QFormLayout()
         self._username = QLineEdit()
-        self._username.setPlaceholderText("marco")
+        self._username.setReadOnly(True)
+        self._username.setPlaceholderText("(chosen by whoever takes the invite)")
         form.addRow("Username", self._username)
-
-        self._password = QLineEdit()
-        self._password.setEchoMode(QLineEdit.EchoMode.Password)
-        self._password.setPlaceholderText(f"at least {MIN_PASSWORD_LENGTH} characters")
-        form.addRow("Password", self._password)
 
         self._character = QComboBox()
         self._character.setToolTip(
@@ -232,19 +279,29 @@ class AccountsDialog(QDialog):
         layout.addLayout(form)
 
         row = QHBoxLayout()
-        add = QPushButton("Add / update")
+        add = QPushButton("Change character")
+        add.setToolTip("Move the selected login onto a different character.")
         add.clicked.connect(self._save)
         row.addWidget(add)
-
-        reset = QPushButton("Set password")
-        reset.clicked.connect(self._set_password)
-        row.addWidget(reset)
 
         remove = QPushButton("Remove")
         remove.clicked.connect(self._remove)
         row.addWidget(remove)
         row.addStretch(1)
         layout.addLayout(row)
+
+        invite_row = QHBoxLayout()
+        invite = QPushButton("Invite a player...")
+        invite.setToolTip(
+            "Make a code for the character chosen above. Whoever you send it "
+            "to picks their own username and password -- you never see it."
+        )
+        invite.clicked.connect(self._invite)
+        invite_row.addWidget(invite)
+        self._invite_note = QLabel("")
+        self._invite_note.setWordWrap(True)
+        invite_row.addWidget(self._invite_note, 1)
+        layout.addLayout(invite_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
@@ -262,6 +319,18 @@ class AccountsDialog(QDialog):
             self._character.addItem(pc.name, pc.id)
 
         self._list.clear()
+        # Characters with a code out and nobody yet. Listed with the logins
+        # rather than somewhere else, because "who can get in" is one question
+        # and an unanswered invite is half an answer to it.
+        for pc in self._ctx.repos.entities.list(self._ctx.campaign_id, kinds=(KIND_PC,)):
+            waiting = self._ctx.repos.invites.waiting_for(pc.id)
+            if waiting is None:
+                continue
+            item = QListWidgetItem(f"{pc.name}   [invited - {waiting.code}]")
+            item.setData(_URL_ROLE, None)
+            item.setForeground(self.palette().placeholderText())
+            self._list.addItem(item)
+
         for account in self._ctx.repos.accounts.list(self._ctx.campaign_id):
             character = ""
             if account.character_entity_id is not None:
@@ -276,73 +345,107 @@ class AccountsDialog(QDialog):
 
     def _selected_account(self):
         item = self._list.currentItem()
-        if item is None:
-            return None
+        if item is None or item.data(_URL_ROLE) is None:
+            return None  # a waiting invite, which is not a login yet
         return self._ctx.repos.accounts.get(item.data(_URL_ROLE))
 
     def _load_selected(self) -> None:
         account = self._selected_account()
         if account is None:
+            # A waiting invite rather than a login. Clear the name so the form
+            # is not showing somebody the buttons would not act on.
+            self._username.clear()
             return
         self._username.setText(account.username)
-        self._password.clear()
         index = self._character.findData(account.character_entity_id)
         self._character.setCurrentIndex(index if index >= 0 else 0)
         self._is_dm.setChecked(account.is_dm)
 
     # ------------------------------------------------------------------ actions
 
+    def _invite(self) -> None:
+        """A code for the chosen character, and the last one stops working.
+
+        No password is typed here by anybody. That is the point: a DM who sets
+        a player's password knows it, and then "do not reuse your password" is
+        advice they are not in a position to give.
+        """
+        repos = self._ctx.repos
+        entity_id = self._character.currentData()
+        if entity_id is None:
+            QMessageBox.information(
+                self,
+                "Invite a player",
+                "Choose which character they will play first.",
+            )
+            return
+
+        entity = repos.entities.get(entity_id)
+        name = entity.name if entity is not None else "that character"
+        handover = already_played(repos.accounts, self._ctx.campaign_id, entity_id)
+        if handover and QMessageBox.question(
+            self,
+            "Invite a player",
+            f"{name} already has a player.\n\nA new code hands the character "
+            "over: whoever uses it chooses a new username and password, and the "
+            "login playing them now stops working. That is also how somebody "
+            "who has lost their password gets back in.\n\nMake the code?",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        replacing = repos.invites.waiting_for(entity_id) is not None
+        invite = repos.invites.create(self._ctx.campaign_id, entity_id)
+        # One string, holding where to connect as well as the code. Two things
+        # to copy is two things to get wrong, and the address is the half people
+        # mistype.
+        whole = enrol.wrap(self._address, invite.code)
+        QApplication.clipboard().setText(whole)
+        self._invite_note.setText(
+            f"<b>{whole}</b> copied - it plays {name}, and it is good for 24 "
+            "hours. Send the whole line: it is the address and the code."
+            + (
+                "" if self._address else
+                " <b>You are not hosting yet</b>, so it carries only the code -"
+                " make another once you are online, or send the address too."
+            )
+            + (" The code you made before this one no longer works." if replacing else "")
+            + (
+                " The login playing them now keeps working until this code is "
+                "used." if handover else ""
+            )
+        )
+        self._reload()
+
     def _save(self) -> None:
-        username = self._username.text().strip()
-        if not username:
-            QMessageBox.warning(self, "Players", "A username is needed.")
+        """Change which character an existing login plays. It cannot make one.
+
+        Nobody's password is typed here any more. A DM who set a player's
+        password knew it, which made "do not reuse this one" advice they were
+        not in a position to give -- and the first thing a new table needs is a
+        way in that does not go through somebody else's memory. Everybody
+        arrives by invitation; see :meth:`_invite`.
+        """
+        account = self._selected_account()
+        if account is None:
+            QMessageBox.information(
+                self,
+                "Players",
+                "Pick a login to change, or use Invite a player... to make one.",
+            )
             return
 
         repos = self._ctx.repos
-        existing = repos.accounts.by_username(self._ctx.campaign_id, username)
-        role = "dm" if self._is_dm.isChecked() else "player"
-
+        chosen = self._character.currentData()
         try:
-            if existing is None:
-                repos.accounts.create(
-                    self._ctx.campaign_id,
-                    username,
-                    self._password.text(),
-                    role=role,
-                    character_entity_id=self._character.currentData(),
-                )
-            else:
-                repos.accounts.set_character(existing.id, self._character.currentData())
-                if self._password.text():
-                    repos.accounts.set_password(existing.id, self._password.text())
-
-            account = repos.accounts.by_username(self._ctx.campaign_id, username)
-            chosen = self._character.currentData()
-            if account is not None and chosen is not None:
+            repos.accounts.set_character(account.id, chosen)
+            if chosen is not None:
                 # Playing a character and owning it are the same intent here.
                 repos.entities.set_owner(chosen, account.id)
         except (ValueError, AuthError) as exc:
             QMessageBox.warning(self, "Players", str(exc))
             return
 
-        self._password.clear()
         self._reload()
-
-    def _set_password(self) -> None:
-        account = self._selected_account()
-        if account is None:
-            QMessageBox.information(self, "Players", "Pick someone first.")
-            return
-        if not self._password.text():
-            QMessageBox.information(self, "Players", "Type the new password first.")
-            return
-        try:
-            self._ctx.repos.accounts.set_password(account.id, self._password.text())
-        except AuthError as exc:
-            QMessageBox.warning(self, "Players", str(exc))
-            return
-        self._password.clear()
-        QMessageBox.information(self, "Players", f"Password changed for {account.username}.")
 
     def _remove(self) -> None:
         account = self._selected_account()

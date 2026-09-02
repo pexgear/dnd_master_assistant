@@ -174,30 +174,36 @@ def _create_facts(
 def _create_accounts(
     repos: Repos, campaign_id: int, template: Template, ids: dict[str, int]
 ) -> dict[str, int]:
-    """Logins with the passwords the template states.
+    """No logins at all. A template brings characters; people bring themselves.
 
-    Fixed on purpose. A template that minted its own passwords could not be
-    handed out ("here is your login") and could not be tested against.
+    A template file lives in a public repository, so a password written in one
+    is a *published* password. These used to be handed out as a convenience --
+    "logins are marco, elsa and dana" -- which meant anybody who found a hosted
+    one-shot could read the credentials out of the source and log in as
+    somebody's character, or as the DM.
+
+    The DM's own login is no exception, and that is the part worth saying out
+    loud: a published DM password opens the whole campaign rather than one seat.
+    The DM's own app does not need an account -- it holds the campaign file and
+    logs in with a local token -- and a headless host is told who may run it
+    with ``canonkeeper-server --add-dm``.
+
+    So the field is read and ignored rather than removed. Old campaign templates
+    still load, a login written into a new one is refused rather than honoured,
+    and the rule does not depend on whoever writes the next template
+    remembering it. Everybody arrives the same way now: an invite for a
+    character, and a password only they ever know.
     """
-    accounts: dict[str, int] = {}
     for raw in template.accounts:
         username = str(raw.get("username", ""))
-        if not username:
-            continue
-        plays = raw.get("plays")
-        character_id = ids.get(str(plays)) if plays else None
-        account = repos.accounts.create(
-            campaign_id,
-            username,
-            str(raw.get("password", "")),
-            role=str(raw.get("role", "player")),
-            display_name=str(raw.get("display_name", "")) or username,
-            character_entity_id=character_id,
-        )
-        accounts[username] = account.id
-        if character_id is not None:
-            repos.entities.set_owner(character_id, account.id)
-    return accounts
+        if username:
+            log.warning(
+                "ignoring the login %r in %r: templates bring characters and "
+                "invitations, not passwords",
+                username,
+                template.id,
+            )
+    return {}
 
 
 def _create_shares(

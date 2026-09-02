@@ -78,6 +78,13 @@ class Bus(QObject):
     # paint their own colours -- syntax highlighting, charts -- should listen.
     theme_changed = Signal(bool)
 
+    # How the join the app was *launched* with turned out: (ok, reason).
+    # Emitted once, by the Table panel, for the connection it makes on startup
+    # and for nothing afterwards. The shell waits for it before showing the
+    # window, so a wrong password leaves you in the chooser being asked again
+    # rather than inside an empty app with an error in the chat.
+    session_ready = Signal(bool, str)
+
     # Free-text status for the main window's status bar.
     status_message = Signal(str)
 

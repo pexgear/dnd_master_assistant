@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtWebSockets import QWebSocket
 
 from canon_keeper.net import cache
-from canon_keeper_protocol import auth
+from canon_keeper_protocol import auth, enrol
 from canon_keeper_protocol.messages import (
     SystemKind,
     MAX_HOST_FRAME_BYTES,
@@ -43,6 +43,9 @@ class SessionClient(QObject):
     connected = Signal()
     disconnected = Signal()
     failed = Signal(str)  # human-readable, safe to show
+    #: (username, character) -- an invite was taken up and the account
+    #: exists. Not a login: the client logs in next, with what it chose.
+    enrolled = Signal(str, str)
     welcomed = Signal(object)  # Member (you)
     roster_changed = Signal(list)  # list[Member]
     #: (Member, text, aside). ``aside`` is a DM speaking while autopilot is on:
@@ -105,6 +108,9 @@ class SessionClient(QObject):
         self._url = ""
         self._username = ""
         self._password = ""
+        #: Set only while making an account from an invite. Never stored, and
+        #: cleared the moment the account exists.
+        self._invite_code = ""
         self._token = ""
         self._name = ""
         self._role = Role.PLAYER.value
@@ -163,6 +169,28 @@ class SessionClient(QObject):
         self._attempt = 0
         self._open()
 
+    def enrol(self, url: str, code: str, username: str, password: str) -> None:
+        """Make an account from an invite, then log in with it.
+
+        Two round trips rather than one, on purpose. Enrolment makes the
+        account and stops; logging in is the ordinary path every session takes.
+        A host that admitted somebody straight off an enrolment would have two
+        doors into a session, and the second one would be the one nobody looks
+        at again.
+        """
+        self.leave()
+        self._url = url
+        self._invite_code = enrol.clean_code(code)
+        self._username = username
+        self._password = password
+        self._token = ""
+        self._name = username
+        self._cache_key = (url, username)
+        self._campaign_key = ""
+        self._wanted = True
+        self._attempt = 0
+        self._open()
+
     def join_as_host(self, url: str, token: str, name: str) -> None:
         """Connect the DM's own app to the server it just started.
 
@@ -184,6 +212,8 @@ class SessionClient(QObject):
         self._wanted = False
         self._retry.stop()
         self._connect_timeout.stop()
+        # An invite half-used is not one to retry with on the next connection.
+        self._invite_code = ""
         self._me = None
         self._members = []
         # The cache is deliberately left in place: it is what makes the next
@@ -342,6 +372,9 @@ class SessionClient(QObject):
         if message.type == MessageType.CHALLENGE:
             self._answer_challenge(message)
 
+        elif message.type == MessageType.ENROLLED:
+            self._on_enrolled(message)
+
         elif message.type == MessageType.SNAPSHOT:
             entities = message.get("entities")
             entities = entities if isinstance(entities, list) else []
@@ -487,16 +520,65 @@ class SessionClient(QObject):
         )
 
     def _answer_challenge(self, message) -> None:
-        """Prove we know the password without sending it."""
+        """Prove we know the password without sending it.
+
+        Or, when we are here to make an account rather than to use one, seal the
+        new verifier under the invite code and send that instead. Both answer
+        the same challenge, because both need the host's nonce and neither may
+        put the thing it is proving on the wire.
+        """
         try:
             salt = bytes.fromhex(str(message.get("salt", "")))
             nonce = bytes.fromhex(str(message.get("nonce", "")))
         except ValueError:
             self.failed.emit("The host sent a login challenge we could not read.")
             return
-        if not salt or not nonce:
+        if not nonce:
+            return
+
+        if self._invite_code:
+            self._answer_with_enrolment(nonce)
+            return
+        if not salt:
             return
         verifier = auth.derive_verifier(self._password, salt)
         self._socket.sendTextMessage(
             encode(MessageType.LOGIN, proof=auth.proof(verifier, nonce))
+        )
+
+    def _on_enrolled(self, message) -> None:
+        """The account exists. Drop the code and come back in the front door.
+
+        The invite is spent either way, so holding on to it could only make a
+        second attempt fail confusingly. What we keep is the username and
+        password the person just chose -- which is exactly what they will type
+        every session from now on.
+        """
+        username = str(message.get("username", "")) or self._username
+        character = str(message.get("character", ""))
+        self._invite_code = ""
+        log.info("enrolled as %r", username)
+        self.enrolled.emit(username, character)
+        self.join(self._url, username, self._password, name=username)
+
+    def _answer_with_enrolment(self, nonce: bytes) -> None:
+        """Make the password material here, and send only what is sealed.
+
+        The salt is ours, not the host's: it is a new account and there is
+        nothing on the host to be consistent with yet. The password stays in
+        this process exactly as it does at login.
+        """
+        try:
+            salt, verifier = auth.make_credentials(self._password)
+        except auth.AuthError as exc:
+            self.failed.emit(str(exc))
+            self.leave()
+            return
+        self._socket.sendTextMessage(
+            encode(
+                MessageType.ENROL,
+                **enrol.seal(
+                    self._invite_code, nonce, self._username, salt, verifier
+                ),
+            )
         )

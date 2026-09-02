@@ -3,8 +3,7 @@
   "name": "Test Table",
   "for_testing": true,
   "summary": "Four logins, three characters and a goblin. For exercising the app.",
-  "about": "Not an adventure. A campaign with enough in it to try sharing, sheets, proposals and autopilot without typing anything first.\n\nLogins: marco / elsa / dana, password 'goblin-teeth'. The DM login is 'gm' with 'run-the-game'.",
-
+  "about": "Not an adventure. A campaign with enough in it to try sharing, sheets, proposals and autopilot without typing anything first.\n\nThree characters and nobody in them: invite players to them from the Players dialog.",
   "entities": [
     {
       "key": "elara",
@@ -13,26 +12,55 @@
       "summary": "A wizard who reads too much.",
       "data": {
         "status": "well",
-        "hp": 7, "max_hp": 7,
+        "hp": 7,
+        "max_hp": 7,
         "conditions": "",
         "sheet": {
           "schema": 1,
-          "species": "elf", "subspecies": "high-elf",
-          "class_index": "wizard", "subclass": "",
+          "species": "elf",
+          "subspecies": "high-elf",
+          "class_index": "wizard",
+          "subclass": "",
           "level": 1,
           "background": "",
-          "abilities": {"str": 8, "dex": 14, "con": 12, "int": 16, "wis": 13, "cha": 10},
+          "abilities": {
+            "str": 8,
+            "dex": 14,
+            "con": 12,
+            "int": 16,
+            "wis": 13,
+            "cha": 10
+          },
           "ability_improvements": {},
-          "skill_proficiencies": ["arcana", "investigation"],
-          "languages": ["Common", "Elvish"],
-          "equipment": ["quarterstaff", "dagger"],
-          "spells_known": ["magic-missile", "shield", "burning-hands"],
-          "spells_prepared": ["magic-missile", "shield"],
+          "skill_proficiencies": [
+            "arcana",
+            "investigation"
+          ],
+          "languages": [
+            "Common",
+            "Elvish"
+          ],
+          "equipment": [
+            "quarterstaff",
+            "dagger"
+          ],
+          "spells_known": [
+            "magic-missile",
+            "shield",
+            "burning-hands"
+          ],
+          "spells_prepared": [
+            "magic-missile",
+            "shield"
+          ],
           "hp_rolled": [],
           "hp_current": 7,
           "temp_hp": 0,
           "conditions": [],
-          "death_saves": {"successes": 0, "failures": 0}
+          "death_saves": {
+            "successes": 0,
+            "failures": 0
+          }
         }
       }
     },
@@ -43,24 +71,48 @@
       "summary": "A fighter who does not.",
       "data": {
         "status": "well",
-        "hp": 13, "max_hp": 13,
+        "hp": 13,
+        "max_hp": 13,
         "conditions": "",
         "sheet": {
           "schema": 1,
-          "species": "dwarf", "subspecies": "hill-dwarf",
-          "class_index": "fighter", "subclass": "",
+          "species": "dwarf",
+          "subspecies": "hill-dwarf",
+          "class_index": "fighter",
+          "subclass": "",
           "level": 1,
           "background": "",
-          "abilities": {"str": 16, "dex": 12, "con": 15, "int": 8, "wis": 12, "cha": 10},
+          "abilities": {
+            "str": 16,
+            "dex": 12,
+            "con": 15,
+            "int": 8,
+            "wis": 12,
+            "cha": 10
+          },
           "ability_improvements": {},
-          "skill_proficiencies": ["athletics", "perception"],
-          "languages": ["Common", "Dwarvish"],
-          "equipment": ["chain-mail", "shield", "battleaxe", "handaxe"],
+          "skill_proficiencies": [
+            "athletics",
+            "perception"
+          ],
+          "languages": [
+            "Common",
+            "Dwarvish"
+          ],
+          "equipment": [
+            "chain-mail",
+            "shield",
+            "battleaxe",
+            "handaxe"
+          ],
           "hp_rolled": [],
           "hp_current": 13,
           "temp_hp": 0,
           "conditions": [],
-          "death_saves": {"successes": 0, "failures": 0}
+          "death_saves": {
+            "successes": 0,
+            "failures": 0
+          }
         }
       }
     },
@@ -71,24 +123,50 @@
       "summary": "A rogue nobody remembers hiring.",
       "data": {
         "status": "well",
-        "hp": 9, "max_hp": 9,
+        "hp": 9,
+        "max_hp": 9,
         "conditions": "",
         "sheet": {
           "schema": 1,
-          "species": "halfling", "subspecies": "lightfoot-halfling",
-          "class_index": "rogue", "subclass": "",
+          "species": "halfling",
+          "subspecies": "lightfoot-halfling",
+          "class_index": "rogue",
+          "subclass": "",
           "level": 1,
           "background": "",
-          "abilities": {"str": 10, "dex": 16, "con": 12, "int": 12, "wis": 13, "cha": 14},
+          "abilities": {
+            "str": 10,
+            "dex": 16,
+            "con": 12,
+            "int": 12,
+            "wis": 13,
+            "cha": 14
+          },
           "ability_improvements": {},
-          "skill_proficiencies": ["stealth", "sleight-of-hand", "acrobatics", "perception"],
-          "languages": ["Common", "Halfling"],
-          "equipment": ["leather-armor", "shortsword", "shortbow", "dagger"],
+          "skill_proficiencies": [
+            "stealth",
+            "sleight-of-hand",
+            "acrobatics",
+            "perception"
+          ],
+          "languages": [
+            "Common",
+            "Halfling"
+          ],
+          "equipment": [
+            "leather-armor",
+            "shortsword",
+            "shortbow",
+            "dagger"
+          ],
           "hp_rolled": [],
           "hp_current": 9,
           "temp_hp": 0,
           "conditions": [],
-          "death_saves": {"successes": 0, "failures": 0}
+          "death_saves": {
+            "successes": 0,
+            "failures": 0
+          }
         }
       }
     },
@@ -99,19 +177,37 @@
       "summary": "Runs the inn. Nervous lately.",
       "data": {
         "status": "well",
-        "hp": 4, "max_hp": 4,
+        "hp": 4,
+        "max_hp": 4,
         "voice": "quick, apologetic",
         "motive": "keep the inn open",
         "secrets": "He is hiding a deserter in the cellar.",
         "party_knows": "The innkeeper. Friendly enough.",
         "sheet": {
           "schema": 1,
-          "species": "human", "class_index": "", "level": 1,
-          "abilities": {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
-          "skill_proficiencies": ["insight", "persuasion"],
-          "equipment": ["club"],
+          "species": "human",
+          "class_index": "",
+          "level": 1,
+          "abilities": {
+            "str": 10,
+            "dex": 10,
+            "con": 10,
+            "int": 10,
+            "wis": 10,
+            "cha": 10
+          },
+          "skill_proficiencies": [
+            "insight",
+            "persuasion"
+          ],
+          "equipment": [
+            "club"
+          ],
           "hp_current": 4,
-          "overrides": {"ac": 10, "hp_max": 4},
+          "overrides": {
+            "ac": 10,
+            "hp_max": 4
+          },
           "player_notes": "Commoner, CR 0. Not a fighter and knows it."
         }
       }
@@ -123,18 +219,38 @@
       "summary": "A goblin with a grievance.",
       "data": {
         "status": "well",
-        "hp": 7, "max_hp": 7,
+        "hp": 7,
+        "max_hp": 7,
         "conditions": "",
         "motive": "revenge, ideally on someone else",
         "secrets": "He knows the road is watched.",
         "sheet": {
           "schema": 1,
-          "species": "", "class_index": "", "level": 1,
-          "abilities": {"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8},
-          "skill_proficiencies": ["stealth"],
-          "equipment": ["scimitar", "shortbow", "leather-armor", "shield"],
+          "species": "",
+          "class_index": "",
+          "level": 1,
+          "abilities": {
+            "str": 8,
+            "dex": 14,
+            "con": 10,
+            "int": 10,
+            "wis": 8,
+            "cha": 8
+          },
+          "skill_proficiencies": [
+            "stealth"
+          ],
+          "equipment": [
+            "scimitar",
+            "shortbow",
+            "leather-armor",
+            "shield"
+          ],
           "hp_current": 7,
-          "overrides": {"ac": 15, "hp_max": 7},
+          "overrides": {
+            "ac": 15,
+            "hp_max": 7
+          },
           "player_notes": "Goblin, CR 1/4. Nimble Escape: disengages or hides as a bonus action."
         }
       }
@@ -166,29 +282,40 @@
       "parent": "inn",
       "name": "The Cellar",
       "summary": "Barrels, and something behind them.",
-      "data": {"place_type": "room"}
+      "data": {
+        "place_type": "room"
+      }
     }
   ],
-
   "facts": [
-    {"subject": "toblen", "predicate": "is hiding", "object": "a Redbrand deserter in the cellar"},
-    {"subject": "goblin", "predicate": "knows", "object": "the east road is watched"},
-    {"subject": "phandalin", "predicate": "has no", "object": "standing guard"}
+    {
+      "subject": "toblen",
+      "predicate": "is hiding",
+      "object": "a Redbrand deserter in the cellar"
+    },
+    {
+      "subject": "goblin",
+      "predicate": "knows",
+      "object": "the east road is watched"
+    },
+    {
+      "subject": "phandalin",
+      "predicate": "has no",
+      "object": "standing guard"
+    }
   ],
-
-  "accounts": [
-    {"username": "gm", "password": "run-the-game", "role": "dm", "display_name": "The DM"},
-    {"username": "marco", "password": "goblin-teeth", "display_name": "Marco", "plays": "elara"},
-    {"username": "elsa", "password": "goblin-teeth", "display_name": "Elsa", "plays": "brok"},
-    {"username": "dana", "password": "goblin-teeth", "display_name": "Dana", "plays": "sable"}
-  ],
-
+  "accounts": [],
   "shares": [
-    {"entity": "toblen"},
-    {"entity": "phandalin"},
-    {"entity": "inn"}
+    {
+      "entity": "toblen"
+    },
+    {
+      "entity": "phandalin"
+    },
+    {
+      "entity": "inn"
+    }
   ],
-
   "storyline": [
     {
       "id": "arrive",

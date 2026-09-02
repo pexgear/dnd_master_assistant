@@ -11,6 +11,7 @@ import logging
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from canon_keeper import __version__, campaigns, config, credentials
@@ -18,7 +19,7 @@ from canon_keeper.bus import Bus
 from canon_keeper.db import connect, migrate
 from canon_keeper.naming import PanelNames
 from canon_keeper.net.state import SharedState
-from canon_keeper.plugin import AppContext
+from canon_keeper.plugin import AppContext, PendingJoin
 from canon_keeper.repo import Repos
 from canon_keeper.shell.loader import discover_panels
 from canon_keeper.shell.main_window import MainWindow
@@ -113,14 +114,57 @@ def _resolve_launch(
     return choose_campaign(start_online=args.player)
 
 
+#: Longest the chooser will sit there before giving up on a join. Comfortably
+#: past the client's own connect timeout and one scrypt, so this only fires when
+#: something has genuinely stopped answering rather than merely being slow.
+JOIN_TIMEOUT_MS = 30_000
+
+
+def _wait_for_the_join(ctx, log: logging.Logger) -> str:
+    """Block until the launch join resolves. Empty on success, else the reason.
+
+    The window is already built, which is what makes this cheap: the Table
+    panel is connecting with the one connection it will keep, so waiting costs
+    nothing on the wire and the table does not watch somebody join, leave and
+    join again while their app makes up its mind.
+    """
+    outcome: dict = {}
+    loop = QEventLoop()
+
+    def settled(ok: bool, reason: str) -> None:
+        outcome["ok"] = ok
+        outcome["reason"] = reason
+        loop.quit()
+
+    ctx.bus.session_ready.connect(settled)
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(JOIN_TIMEOUT_MS)
+    try:
+        loop.exec()
+    finally:
+        guard.stop()
+        try:
+            ctx.bus.session_ready.disconnect(settled)
+        except (RuntimeError, TypeError):  # pragma: no cover - already gone
+            pass
+
+    if not outcome:
+        log.warning("the host did not answer within %d ms", JOIN_TIMEOUT_MS)
+        return "The host did not answer."
+    return "" if outcome["ok"] else (outcome["reason"] or "That did not work.")
+
+
 def _remember_choices(launch: Launch) -> None:
     """Apply the "remember me" and "open automatically" boxes."""
     if launch.is_remote:
         campaigns.remember_remote(launch.url, launch.name, launch.username)
-        if launch.remember:
-            credentials.save(launch.url, launch.username, launch.password)
-        else:
-            credentials.forget(launch.url, launch.username)
+        # Saved without being asked. This only runs once the host has accepted
+        # the login, so what goes into the credential store is known to work --
+        # and being asked "shall I remember this?" every time you join your own
+        # weekly game is a question with one answer.
+        credentials.save(launch.url, launch.username, launch.password)
 
     if launch.autostart:
         campaigns.set_autostart(
@@ -182,10 +226,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-        _remember_choices(launch)
         if launch.is_remote:
             # Picked up by the Table panel, which connects once it is built.
-            ctx.pending_join = (launch.url, launch.username, launch.password)
+            ctx.pending_join = PendingJoin(
+                launch.url, launch.username, launch.password, launch.invite
+            )
 
         theme = ThemeController(app, ctx.repos.settings)
         theme.changed.connect(ctx.bus.theme_changed)
@@ -200,6 +245,24 @@ def main(argv: list[str] | None = None) -> int:
             window.setWindowTitle(
                 f"Canon Keeper - {launch.name or launch.url} (player)"
             )
+            # Built but not shown. A wrong password should leave you in the
+            # chooser being asked again, not inside an empty app with the
+            # reason buried in a chat log you have no session for.
+            problem = _wait_for_the_join(ctx, log)
+            if problem:
+                log.info("could not join %s: %s", launch.url, problem)
+                window.close()
+                window.deleteLater()
+                conn.close()
+                QMessageBox.warning(
+                    None, "Could not join", f"{problem}\n\nTry again."
+                )
+                force_chooser = True
+                continue
+
+        # Only now is the login known to be good, so only now is it worth
+        # remembering -- and worth opening automatically next time.
+        _remember_choices(launch)
         window.show()
         app.exec()
 

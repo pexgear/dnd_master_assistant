@@ -27,7 +27,7 @@ from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 from canon_keeper import campaigns
 from canon_keeper.content import Content
 from canon_keeper.net import discovery
-from canon_keeper_protocol import auth, grid
+from canon_keeper_protocol import auth, enrol, grid
 from canon_keeper_protocol.messages import Played
 from canon_keeper.repo.chat import (
     DEFAULT_LIMIT,
@@ -39,6 +39,7 @@ from canon_keeper.repo.chat import (
 )
 from canon_keeper_protocol.dice import DiceError, roll
 from canon_keeper.repo.entities import StaleWrite
+from canon_keeper.repo.invites import already_played
 from canon_keeper.rules.validation import validate
 from canon_keeper.net.projection import (
     project_encounter,
@@ -285,6 +286,9 @@ class SessionServer(QObject):
         server.newConnection.connect(self._on_new_connection)
         self._server = server
         log.info("hosting %r (campaign %s) on port %s", self.session_name, self.campaign_id, self.port)
+        # Before anybody can log in, so nobody's first turn of the evening is
+        # the one that discovers their character had no owner.
+        self._settle_ownership()
 
         if announce:
             self._beacon.start(self.session_name, self.port)
@@ -377,6 +381,8 @@ class SessionServer(QObject):
                 self._handle_hello(socket, pending, message)
             elif message.type == MessageType.LOGIN:
                 self._handle_login(socket, pending, message)
+            elif message.type == MessageType.ENROL:
+                self._handle_enrol(socket, pending, message)
             else:
                 self._send(
                     socket, MessageType.ERROR, code="expected_hello", message="log in first"
@@ -514,6 +520,259 @@ class SessionServer(QObject):
 
         self.repos.accounts.touch(account.id)
         self._admit(socket, pending, account=account, name=account.display_name)
+
+    def _handle_enrol(self, socket: QWebSocket, pending: _Pending, message) -> None:
+        """Make an account from an invite. Nobody is logged in when this runs.
+
+        The whole of the authorisation is holding a live invite code, which the
+        DM decided when they made it. So this checks exactly three things: that
+        some live invite opens what was sent, that the username is free, and
+        that the account it would attach to does not already exist. It never
+        says which of those failed -- see :func:`enrol.explain`.
+
+        Enrolment is not a login. It makes the account and stops; the client
+        turns round and logs in with what it just chose, so there is one way
+        into a session rather than two.
+        """
+        if not pending.nonce:
+            self._send(
+                socket, MessageType.ERROR, code="expected_hello", message="say hello first"
+            )
+            return
+
+        pending.attempts += 1
+        if pending.attempts > enrol.MAX_ATTEMPTS:
+            log.info("too many enrolment attempts; closing")
+            QTimer.singleShot(200, socket.close)
+            return
+
+        username = clean_name(message.get("username", ""))
+        try:
+            salt = bytes.fromhex(str(message.get("salt", "")))
+            sealed = bytes.fromhex(str(message.get("sealed", "")))
+        except ValueError:
+            self._refuse_enrolment(socket, pending)
+            return
+        tag = str(message.get("tag", ""))
+
+        # Every live invite is tried, and the loop does not stop at the first
+        # match: which invite it was, and how long that took, are not things a
+        # guess should be able to measure.
+        opened: tuple = ()
+        for invite in self.repos.invites.live(self.campaign_id):
+            try:
+                verifier = enrol.unseal(
+                    invite.code, pending.nonce, username, salt, sealed, tag
+                )
+            except enrol.EnrolError:
+                continue
+            if not opened:
+                opened = (invite, verifier)
+
+        if not opened:
+            self._refuse_enrolment(socket, pending)
+            return
+
+        invite, verifier = opened
+        problem = self._why_not_enrol(username, invite)
+        if problem:
+            # Said plainly rather than vaguely: whoever is holding a live code
+            # is somebody the DM invited, and "that name is taken" is what they
+            # need to hear to get in. The vague message is for people who could
+            # not open an invite at all.
+            self._send(socket, MessageType.ERROR, code="enrol_refused", message=problem)
+            return
+
+        # Claimed before anything is made, so two people racing with the same
+        # code cannot both end up with an account.
+        if not self.repos.invites.claim(invite.id):
+            self._refuse_enrolment(socket, pending)
+            return
+
+        # An invite on a character somebody already plays is a *hand-over*, not
+        # a second player: the same seat, answered by whoever holds the code.
+        # That covers both cases a DM has -- a player who lost their password,
+        # and somebody new taking the character on -- with one rule and without
+        # dropping the private things that seat had been told.
+        seat = self._seat_of(invite.entity_id)
+        try:
+            if seat is None:
+                account = self.repos.accounts.create_with_verifier(
+                    self.campaign_id,
+                    username,
+                    salt=salt,
+                    verifier=verifier,
+                    character_entity_id=invite.entity_id,
+                )
+            else:
+                account = self.repos.accounts.take_over(
+                    seat.id, username, salt=salt, verifier=verifier
+                )
+        except Exception:
+            self.repos.invites.hand_back(invite.id)
+            log.exception("could not make an account from invite %s", invite.id)
+            self._send(
+                socket,
+                MessageType.ERROR,
+                code="enrol_refused",
+                message="That account could not be made. Ask your DM.",
+            )
+            return
+
+        self.repos.invites.take_up(invite.id, account.id)
+        entity = self.repos.entities.get(invite.entity_id)
+        character = entity.name if entity is not None else ""
+        # Ownership follows the seat, so a hand-over hands the character over
+        # too rather than leaving it owned by whoever had it last.
+        self.repos.entities.set_owner(invite.entity_id, account.id)
+        # Anybody logged in on the old credentials is no longer that person.
+        if seat is not None:
+            self._show_out(seat.id)
+        log.info(
+            "invite %s taken up: %r plays %r%s",
+            invite.id,
+            username,
+            character,
+            " (taken over)" if seat is not None else "",
+        )
+
+        self._send(
+            socket, MessageType.ENROLLED, username=username, character=character
+        )
+        # The DM is told, always. An account appearing in their campaign is not
+        # something they should have to notice by reading the roster.
+        self._tell_dms(
+            f"{username} took up the invite for {character}. "
+            "They can log in with the password they just chose."
+        )
+        self.roster_changed.emit(self.members)
+        # A fresh nonce: this connection has not logged in yet, and the pad from
+        # this one has now been used.
+        pending.nonce = auth.new_nonce()
+
+    def _who_plays(self, entity) -> int | None:
+        """The account that plays this character, or None if nobody does.
+
+        Two rows say this and they can disagree: an **account** names the
+        character it plays, and an **entity** names the account that owns it.
+        They are written at different times by different code, and when they
+        drift the entity's half is the one that goes missing -- at which point
+        the host cannot tell that character from a monster. No accept bar for
+        the player, and autopilot takes their turn.
+
+        So the account is asked first: "which login plays this" is the fact a
+        DM actually set. Ownership is the derived half, and
+        :meth:`_settle_ownership` puts it back.
+        """
+        if entity is None:
+            return None
+        seat = self._seat_of(entity.id)
+        if seat is not None:
+            return seat.id
+        return entity.owner_account_id
+
+    def _settle_ownership(self) -> None:
+        """Make the entity half agree with the account half, once, at startup.
+
+        Repairs campaigns where the two came apart -- and they did: a one-shot
+        that stopped shipping logins left its characters owned by nobody, and
+        an account can be pointed at a character in a dialog that never touched
+        the entity.
+        """
+        for account in self.repos.accounts.list(self.campaign_id):
+            if account.character_entity_id is None:
+                continue
+            entity = self.repos.entities.get(account.character_entity_id)
+            if entity is None or entity.owner_account_id == account.id:
+                continue
+            log.info(
+                "%r plays %r but did not own it; putting that right",
+                account.username,
+                entity.name,
+            )
+            self.repos.entities.set_owner(entity.id, account.id)
+
+    def _seat_of(self, entity_id: int):
+        """The account that plays this character, if anybody does yet."""
+        return next(
+            (
+                account
+                for account in self.repos.accounts.list(self.campaign_id)
+                if account.character_entity_id == entity_id
+            ),
+            None,
+        )
+
+    def _why_not_enrol(self, username: str, invite) -> str:
+        """Why this enrolment cannot go ahead, in words for somebody invited."""
+        if len(username) < 2:
+            return "That username is too short."
+        taken = self.repos.accounts.by_username(self.campaign_id, username)
+        seat = self._seat_of(invite.entity_id)
+        if taken is not None and (seat is None or taken.id != seat.id):
+            # Free to keep your own name when you are coming back to your own
+            # character; not free to take somebody else's.
+            return f"{username} is already taken in this campaign."
+        return ""
+
+    def _refuse_enrolment(self, socket: QWebSocket, pending: _Pending) -> None:
+        """One wording, whatever went wrong. See :func:`enrol.explain`."""
+        log.info("enrolment refused (attempt %d)", pending.attempts)
+        self._send(
+            socket, MessageType.ERROR, code="bad_invite", message=enrol.explain()
+        )
+        if pending.attempts >= enrol.MAX_ATTEMPTS:
+            QTimer.singleShot(200, socket.close)
+            return
+        # A new nonce, so a recorded attempt cannot be replayed and so the pad
+        # is never derived twice from the same code and nonce.
+        pending.nonce = auth.new_nonce()
+        self._send(
+            socket,
+            MessageType.CHALLENGE,
+            salt=self._decoy_salt(pending.username).hex(),
+            nonce=pending.nonce.hex(),
+        )
+
+    def _show_out(self, account_id: int) -> None:
+        """Disconnect anybody still logged in on a seat that changed hands.
+
+        Without this the previous holder keeps a live session -- and a live
+        session is authority: they would still be sent that character's private
+        things, and could still act as them, until they happened to close the
+        app. Handing a seat over has to end the sitting as well as the login.
+        """
+        for socket, session in list(self._sessions.items()):
+            if session.account_id == account_id:
+                self._send(
+                    socket,
+                    MessageType.SYSTEM,
+                    text=(
+                        "Your DM has invited somebody to this character. "
+                        "This login is no longer the one that plays it."
+                    ),
+                    kind=SystemKind.NOTICE.value,
+                )
+                QTimer.singleShot(200, socket.close)
+
+    def invite_for(self, entity_id: int) -> str:
+        """Make an invite for a character and return the code. The DM's button.
+
+        Allowed on a character somebody already plays. That is the password
+        reset: a player whose password is gone gets a new code rather than a
+        DM who knows what they typed. It is also how a character changes hands
+        between people. Either way the seat is handed over, not duplicated --
+        the old login stops working the moment the code is used, and until then
+        it still does.
+
+        Returns an empty string only when there is no such character.
+        """
+        entity = self.repos.entities.get(entity_id)
+        if entity is None:
+            return ""
+        invite = self.repos.invites.create(self.campaign_id, entity_id)
+        log.info("invite made for %r", entity.name)
+        return invite.code
 
     def _admit(self, socket: QWebSocket, pending: _Pending, account, name: str) -> None:
         pending.timer.stop()
@@ -1557,7 +1816,7 @@ class SessionServer(QObject):
         if entity is None:
             self._send_refusal(socket, "That token is not a creature.")
             return
-        if entity.owner_account_id is None:
+        if self._who_plays(entity) is None:
             self._send_refusal(
                 socket,
                 "Nobody plays that character, so there is nobody to ask. Move it "
@@ -1620,12 +1879,13 @@ class SessionServer(QObject):
             self._stop_the_clock()
 
         log.info("proposed for %s: %s", entity.name, action["text"])
-        self._send_to_account(entity.owner_account_id, MessageType.ACTION, **action)
+        theirs = self._who_plays(entity)
+        self._send_to_account(theirs, MessageType.ACTION, **action)
         # The DM watches it happen. They are running the table even while a
         # machine is talking, and a turn being offered is part of that.
         frame = encode(MessageType.ACTION, **action, watching=True)
         for other_socket, other in self._sessions.items():
-            if other.viewer.is_dm and other.account_id != entity.owner_account_id:
+            if other.viewer.is_dm and other.account_id != theirs:
                 other_socket.sendTextMessage(frame)
 
     def _shape_the_action(self, encounter, combatant, entity, fields, bending=False):
@@ -1866,7 +2126,7 @@ class SessionServer(QObject):
         if entity is None:
             return
 
-        theirs = entity.owner_account_id == session.account_id
+        theirs = self._who_plays(entity) == session.account_id
         if session.is_agent or not (theirs or session.viewer.is_dm):
             self._send_refusal(socket, "That is not yours to hand over.")
             return
@@ -2155,7 +2415,7 @@ class SessionServer(QObject):
         if combatant.simulated:
             return True
         entity = self._entity_of(combatant.id)
-        return entity is not None and entity.owner_account_id is None
+        return entity is not None and self._who_plays(entity) is None
 
     def _an_agent_is_thinking(self) -> bool:
         return any(

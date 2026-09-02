@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from canon_keeper import entity_actions
 from canon_keeper.panels.characters.sheet_tab import SheetWidget
 from canon_keeper.panels.characters.wizard import CharacterWizard
 from canon_keeper.panels.sharing import ShareBar
@@ -86,6 +88,11 @@ class CharactersWidget(QWidget):
 
         self._list = QListWidget()
         self._list.currentItemChanged.connect(self._on_selection_changed)
+        # Right-clicking somebody here offers what is true of them anywhere --
+        # inviting a player to a character, most of all. This panel adds
+        # nothing of its own yet, so the menu is only the general half.
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_menu)
         left_layout.addWidget(self._list, 1)
 
         buttons = QHBoxLayout()
@@ -305,6 +312,35 @@ class CharactersWidget(QWidget):
         self._set_form_enabled(True)
 
     # ----------------------------------------------------------------- events
+
+    def _on_menu(self, position) -> None:
+        """What this creature offers, wherever it is shown.
+
+        Everything in here is general -- see :mod:`canon_keeper.entity_actions`.
+        Anything specific to this panel would go in first, above a separator,
+        because that is the reason somebody right-clicked *here*.
+        """
+        item = self._list.itemAt(position)
+        if item is None:
+            return
+        entity_id = item.data(Qt.ItemDataRole.UserRole)
+        entity = self._ctx.repos.entities.get(entity_id) if entity_id else None
+        if entity is None:
+            return
+
+        menu = QMenu(self)
+        entity_actions.fill(
+            menu,
+            self._ctx,
+            entity_actions.Target(
+                entity_id=entity.id,
+                kind=entity.kind,
+                name=entity.name,
+                panel="characters",
+            ),
+        )
+        if not menu.isEmpty():
+            menu.exec(self._list.mapToGlobal(position))
 
     def _on_selection_changed(self, current: QListWidgetItem, previous: QListWidgetItem) -> None:
         if self._loading:
