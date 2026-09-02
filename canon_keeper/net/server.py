@@ -53,7 +53,7 @@ from canon_keeper.net.projection import (
     visible_entity_ids,
 )
 from canon_keeper.repo.encounters import DEFAULT_HEIGHT, DEFAULT_WIDTH
-from canon_keeper.rules import attack, derive
+from canon_keeper.rules import attack, death, derive
 from canon_keeper_protocol.messages import (
     MAX_CHAT_LENGTH,
     MAX_NAME_LENGTH,
@@ -78,11 +78,12 @@ DEFAULT_PORT = 8765
 LOGIN_TIMEOUT_MS = 20_000
 
 #: How long a player has, after acting, to do something else before the turn
-#: moves on without them. Short on purpose: they have already had their say,
-#: and everybody else is watching a map that is not moving. Anything they type
-#: stops the clock, so it only ever runs out on somebody who has stopped
-#: reading.
-STILL_YOUR_TURN_MS = 15_000
+#: moves on without them. Anything they type stops the clock, so it only ever
+#: runs out on somebody who has stopped reading. Fifteen seconds was the first
+#: guess and it was too short at a real table: a player who has just watched
+#: their attack land needs a moment to decide there is nothing else, and being
+#: hurried out of a turn reads as the app losing track rather than waiting.
+STILL_YOUR_TURN_MS = 30_000
 
 #: The same, for a monster or a character somebody has handed to autopilot.
 #: Much shorter, because there is nobody to ask and nothing to read: it is the
@@ -1007,6 +1008,7 @@ class SessionServer(QObject):
             visible_entity_ids(self.repos, self.campaign_id, session.viewer),
             self.repos.encounters.obstacles(encounter.id),
             self._turn_budget(encounter),
+            self.repos.encounters.teams(encounter.id),
         )
 
     def _turn_budget(self, encounter) -> dict:
@@ -1059,12 +1061,33 @@ class SessionServer(QObject):
             combatant.entity_id in visible or session.viewer.owns(combatant.entity_id)
         )
 
+    def _tidy_the_fight(self) -> None:
+        """Bring the fight's own bookkeeping back in step before it is sent.
+
+        Two things are stored on the combatant that are really facts about the
+        creature: which side it is on, and whether it is lying down. Both are
+        kept here so that SQL can answer "who is standing in that square" and
+        "who is an enemy" without reaching across to the entity table, and both
+        are re-derived here so that a DM editing hit points in the Characters
+        panel cannot leave a ghost on its feet.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None:
+            return
+        self.repos.encounters.sort_into_teams(encounter.id)
+        for combatant in self.repos.encounters.combatants(encounter.id):
+            entity = self._entity_of(combatant.id)
+            hp = (entity.data or {}).get("hp") if entity is not None else None
+            if isinstance(hp, int):
+                self.repos.encounters.set_down(combatant.id, hp == 0)
+
     def publish_encounter(self) -> None:
         """Push the fight to everyone, filtered per person.
 
         Not one frame broadcast: two people at the same table are shown
         different tokens, so there is no shared frame to send.
         """
+        self._tidy_the_fight()
         for socket, session in self._sessions.items():
             self._send(
                 socket, MessageType.ENCOUNTER, encounter=self._encounter_for(session)
@@ -1116,17 +1139,8 @@ class SessionServer(QObject):
             )
             return
 
-        # The turn is moving whatever we were waiting for.
-        self._stop_the_clock()
-
         action = str(message.get("action", "")).lower()
-        if action == "begin":
-            self.repos.encounters.begin(encounter.id)
-        elif action == "next":
-            self.repos.encounters.advance(encounter.id)
-        elif action == "end":
-            self.repos.encounters.end(encounter.id)
-        else:
+        if action not in ("begin", "next", "end"):
             self._send(
                 socket,
                 MessageType.ERROR,
@@ -1134,11 +1148,36 @@ class SessionServer(QObject):
                 message="A turn is begin, next or end.",
             )
             return
-
+        self.run_turn(action)
         log.info("%s: turn %r", session.member.label, action)
+
+    def run_turn(self, action: str) -> str:
+        """Begin, next or end. Returns a reason it could not happen, or empty.
+
+        Public because the DM's own Combat panel calls it directly -- their app
+        *is* the host, and passing the turn now rolls a death save, which is not
+        a thing a panel may do for itself.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None:
+            return "There is no fight being run."
+
+        # The turn is moving whatever we were waiting for.
+        self._stop_the_clock()
+
+        if action == "begin":
+            self.repos.encounters.begin(encounter.id)
+        elif action == "next":
+            self._advance_turn()
+        elif action == "end":
+            self.repos.encounters.end(encounter.id)
+        else:
+            return "A turn is begin, next or end."
+
         self._announce_turn(action)
         self.publish_encounter()
         self.encounter_applied.emit()
+        return ""
 
     def _announce_turn(self, action: str) -> None:
         """Say it in the chat as well, and keep it.
@@ -1358,6 +1397,21 @@ class SessionServer(QObject):
         one of them uses up somebody's movement.
         """
         before = self.repos.encounters.combatant(combatant_id)
+        if (
+            spending
+            and before is not None
+            and before.on_map
+            and x is not None
+            and y is not None
+        ):
+            self._opportunity_attacks(before, x, y)
+            # The swings happen as they leave, so a creature dropped by one
+            # never arrives. It falls where it was standing, which is also
+            # where anybody coming to help it will look.
+            still_up = self.repos.encounters.combatant(combatant_id)
+            if still_up is None or not still_up.on_map or still_up.down:
+                return False
+
         if not self.repos.encounters.place(combatant_id, x, y):
             return False
 
@@ -1384,6 +1438,83 @@ class SessionServer(QObject):
         # The DM's own map reads the database, so it does not know yet.
         self.encounter_applied.emit()
         return True
+
+    def _are_enemies(self, one, other) -> bool:
+        """Whether these two combatants are on opposite sides of this fight.
+
+        Sides are a thing the fight records rather than a thing this guesses.
+        Every fight is made with two, everybody is sorted onto one of them by
+        the old rule -- player characters together, everything else against
+        them -- and from then on it is the DM's to change. The captured guard
+        fighting beside the party is a move, not an argument with the app.
+
+        Combatants with no side are on nobody's: a fight from before teams
+        existed provokes nothing until it is next published, which sorts it.
+        """
+        if one is None or other is None:
+            return False
+        if one.team_id is None or other.team_id is None:
+            return False
+        return one.team_id != other.team_id
+
+    def _opportunity_attacks(self, mover, to_x: int, to_y: int) -> None:
+        """Everybody whose reach this creature is walking out of gets a swing.
+
+        Start and end squares only -- not every square of the path. A creature
+        that steps around an ogre and back into its reach has not really left
+        it, and a rule that fired anyway would punish moving at all. The
+        version people play at a table is "did you leave", and this is that.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None or mover.id is None:
+            return
+        moving = self._entity_of(mover.id)
+        if moving is None:
+            return
+        # Sides are read off the fight, so they have to have been worked out
+        # before the first step anybody takes -- not at the next publish.
+        self.repos.encounters.sort_into_teams(encounter.id)
+        mover = self.repos.encounters.combatant(mover.id) or mover
+
+        resting = self._resting()
+        for other in self.repos.encounters.combatants(encounter.id):
+            if other.id == mover.id or not other.on_map or other.id is None:
+                continue
+            if other.id in resting or other.down:
+                continue  # the fallen do not swing at passers-by
+            if other.reaction_round >= encounter.round:
+                continue  # one reaction a round, and it is spent
+            if not self._are_enemies(mover, other):
+                continue
+            watcher = self._entity_of(other.id)
+            if watcher is None:
+                continue
+
+            sheet = (watcher.data or {}).get("sheet") or {}
+            was = attack.squares_between((other.x, other.y), (mover.x, mover.y))
+            now = attack.squares_between((other.x, other.y), (to_x, to_y))
+            if not attack.threatens(sheet, self.content, was):
+                continue
+            if attack.threatens(sheet, self.content, now):
+                continue  # still in reach: they have not got away with anything
+
+            weapon = attack.melee_weapon(sheet, self.content)
+            if weapon is None:
+                continue
+            self.repos.encounters.use_reaction(other.id, encounter.round)
+            self._broadcast_system(
+                f"{moving.name} leaves {watcher.name}'s reach: "
+                "an opportunity attack."
+            )
+            self._swing(
+                {"combatant": other.id, "target": mover.id, "weapon": weapon.name},
+                checked=True,
+            )
+            # Dropped on the way out. Nobody else gets a swing at somebody who
+            # is already on the floor.
+            after = self._entity_of(mover.id)
+            if after is not None and (after.data or {}).get("hp") == 0:
+                return
 
     # ------------------------------------------------------------ taking a turn
     #
@@ -1896,6 +2027,122 @@ class SessionServer(QObject):
     # It runs on the host. A client-side timer would be a promise the app makes
     # to four other people and keeps only while one person's laptop is awake.
 
+    def _resting(self) -> frozenset[int]:
+        """Who the turn should pass by: the dead, and the unconscious.
+
+        Worked out here rather than in the repository because it needs hit
+        points, which live on the entity. See
+        :func:`canon_keeper.rules.death.resting`.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None:
+            return frozenset()
+        return death.resting(
+            self.repos.encounters.combatants(encounter.id),
+            lambda combatant: self._entity_of(combatant.id),
+        )
+
+    def _advance_turn(self) -> None:
+        """Pass the turn, and keep passing it until it lands on somebody awake.
+
+        A dying character is handed the turn on purpose -- the death save
+        happens at the start of it -- but the save is the whole turn, so the
+        answer arrives and the turn moves straight on. Two of them in a row is
+        two rolls and one announcement each, which is what a table would do.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None:
+            return
+        # Bounded by the size of the order: every step either lands on somebody
+        # who acts or resolves one death save, and there are only so many of
+        # either before the round has to end.
+        for _ in range(len(self.repos.encounters.combatants(encounter.id)) + 1):
+            self.repos.encounters.advance(encounter.id, passing_over=self._resting())
+            encounter = self._the_running_fight()
+            if encounter is None or encounter.turn_combatant_id is None:
+                return
+            combatant = self.repos.encounters.combatant(encounter.turn_combatant_id)
+            if combatant is None or not self._is_dying(combatant):
+                return
+            if self._roll_death_save(combatant):
+                return  # a natural twenty: awake, and the turn is theirs
+
+    def _is_dying(self, combatant) -> bool:
+        entity = self._entity_of(combatant.id) if combatant is not None else None
+        if entity is None:
+            return False
+        hp = (entity.data or {}).get("hp")
+        if not isinstance(hp, int):
+            return False
+        return death.condition(
+            hp, entity.kind, combatant.death_successes, combatant.death_failures
+        ) == death.DYING
+
+    def _roll_death_save(self, combatant) -> bool:
+        """One death save, on the host's dice. True if they are back up.
+
+        Everybody hears it. A death save resolved quietly, with only the count
+        in the initiative order to show for it, would be the loudest moment in
+        the game happening off-screen.
+        """
+        entity = self._entity_of(combatant.id)
+        if entity is None:
+            return False
+
+        result = death.save(roll)
+        who = entity.name
+
+        if result.revived:
+            self.repos.encounters.clear_death_saves(combatant.id)
+            self._heal_to(entity, 1)
+            self._broadcast_system(f"{who} rolls a death save: {result.described}.")
+            return True
+
+        self.repos.encounters.record_death_save(
+            combatant.id,
+            successes=result.successes_added,
+            failures=result.failures_added,
+        )
+        after = self.repos.encounters.combatant(combatant.id)
+        successes = after.death_successes if after else 0
+        failures = after.death_failures if after else 0
+
+        self._broadcast_system(
+            f"{who} rolls a death save: {result.described} "
+            f"({successes} of {death.SAVES_NEEDED} made, "
+            f"{failures} of {death.SAVES_NEEDED} failed)."
+        )
+        if failures >= death.SAVES_NEEDED:
+            self._broadcast_system(f"{who} is dead.")
+            data = dict(entity.data or {})
+            data["status"] = "dead"
+            entity.data = data
+            self.repos.entities.update(entity)
+            self.publish_entity(entity.id)
+            self.entity_applied.emit(entity.id)
+        elif successes >= death.SAVES_NEEDED:
+            self._broadcast_system(f"{who} is stable, and out of the fight.")
+        self.publish_encounter()
+        return False
+
+    def _heal_to(self, entity, hit_points: int) -> None:
+        """Put somebody back above zero, in both the places hit points live."""
+        data = dict(entity.data or {})
+        data["hp"] = hit_points
+        data["status"] = "alive"
+        sheet = data.get("sheet")
+        if isinstance(sheet, dict):
+            sheet["hp_current"] = hit_points
+        entity.data = data
+        self.repos.entities.update(entity)
+        encounter = self._the_running_fight()
+        if encounter is not None:
+            for combatant in self.repos.encounters.combatants(encounter.id):
+                if combatant.entity_id == entity.id:
+                    self.repos.encounters.set_down(combatant.id, False)
+        self.publish_entity(entity.id)
+        self.entity_applied.emit(entity.id)
+
     def _machine_plays(self, combatant) -> bool:
         """Whether nobody is going to press anything for this one.
 
@@ -1985,7 +2232,7 @@ class SessionServer(QObject):
         who = entity.name if entity is not None else "somebody"
         log.info("nobody answered for %s; passing the turn on", who)
         self._stop_the_clock()
-        self.repos.encounters.advance(encounter.id)
+        self._advance_turn()
         self._broadcast_system(f"{who} takes no further action.")
         self._announce_turn("next")
         self.publish_encounter()
@@ -2002,7 +2249,7 @@ class SessionServer(QObject):
             return
 
         self._stop_the_clock()
-        self.repos.encounters.advance(encounter.id)
+        self._advance_turn()
         self._announce_turn("next")
         self.publish_encounter()
         self.encounter_applied.emit()
@@ -2200,28 +2447,70 @@ class SessionServer(QObject):
                  + (f"/{maximum}" if isinstance(maximum, int) else "")
                  + " hit points."
         )
-        if after == 0:
+        if after == 0 and before > 0:
             self._goes_down(target)
+        elif after == 0:
+            # Already down and hit again. A failed death save, which is the
+            # rule that makes standing over a fallen character mean something.
+            self._hit_while_down(target)
         self.publish_entity(target.id)
         self.entity_applied.emit(target.id)
 
     def _goes_down(self, entity) -> None:
-        """Off the map, and seen to go.
+        """Off their feet, and seen to fall -- but not off the map.
 
-        Off the map rather than out of the fight: they keep their place in the
-        order, so a DM can bring them round, and taking them out altogether
-        stays the deliberate thing it was. The animation goes first -- a token
-        that vanishes between two frames is a token nobody saw die.
+        They stay on the square they fell on. Taking the token away made the
+        most interesting square on the board the one square showing nothing,
+        and it hid the thing a party most needs to see: where their friend is
+        lying and how far away that is. A body does not hold the square against
+        anybody, so nobody has to walk around it.
+
+        For a player character this is the start of dying rather than the end of
+        it: the death save count starts here, at zero, because a character
+        healed and dropped a second time in the same fight is dying afresh and
+        not two thirds of the way through something.
         """
         encounter = self._the_running_fight()
         if encounter is None:
             return
         for combatant in self.repos.encounters.combatants(encounter.id):
-            if combatant.entity_id == entity.id and combatant.on_map:
-                self._show(Played.DOWN.value, combatant)
-                self.repos.encounters.place(combatant.id, None, None)
+            if combatant.entity_id == entity.id:
+                self.repos.encounters.clear_death_saves(combatant.id)
+                self.repos.encounters.set_down(combatant.id, True)
+                if combatant.on_map:
+                    self._show(Played.DOWN.value, combatant)
                 self.publish_encounter()
                 return
+
+    def _hit_while_down(self, entity) -> None:
+        """Damage to somebody already at zero: one failed death save.
+
+        Only for a character who is actually dying. Hitting a corpse is not a
+        rule, it is a mood.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None:
+            return
+        combatant = next(
+            (
+                c
+                for c in self.repos.encounters.combatants(encounter.id)
+                if c.entity_id == entity.id
+            ),
+            None,
+        )
+        if combatant is None or not self._is_dying(combatant):
+            return
+        self.repos.encounters.record_death_save(combatant.id, failures=1)
+        after = self.repos.encounters.combatant(combatant.id)
+        failures = after.death_failures if after else 0
+        self._broadcast_system(
+            f"{entity.name} is hit while down: a failed death save "
+            f"({failures} of {death.SAVES_NEEDED})."
+        )
+        if failures >= death.SAVES_NEEDED:
+            self._broadcast_system(f"{entity.name} is dead.")
+        self.publish_encounter()
 
     # ---------------------------------------------------------------- proposals
 

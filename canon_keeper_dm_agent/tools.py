@@ -576,10 +576,23 @@ def describe_fight(fight: dict, entities: dict) -> str:
         entity = entities.get(combatant.get("entity"))
         return (entity or {}).get("name") or "someone"
 
+    sides = {
+        team.get("id"): team.get("name")
+        for team in fight.get("teams") or ()
+        if isinstance(team, dict)
+    }
+
     where = []
     for combatant in fight.get("combatants") or []:
         x, y = combatant.get("x"), combatant.get("y")
         spot = grid.label(x, y)
+        side = sides.get(combatant.get("team"))
+        if side:
+            spot += f", on {side}"
+        if combatant.get("down"):
+            # Said plainly, because a model that thinks a body is still fighting
+            # will narrate it swinging at somebody.
+            spot += ", down"
         if combatant.get("id") == fight.get("turn"):
             spot += ", up now"
         where.append(f"{name_of(combatant)} at {spot}")

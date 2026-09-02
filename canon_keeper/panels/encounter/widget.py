@@ -42,6 +42,19 @@ from canon_keeper.panels.encounter.grid import COMBATANT_MIME, GridMap, Token
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.encounters import MAX_SIZE, MIN_SIZE, Encounter
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC
+from canon_keeper.rules import death
+
+
+def _header(name: str, palette) -> QListWidgetItem:
+    """A side's name in the order. Not selectable -- it is not a combatant."""
+    item = QListWidgetItem(name.upper())
+    item.setFlags(Qt.ItemFlag.NoItemFlags)
+    font = item.font()
+    font.setBold(True)
+    font.setPointSizeF(max(6.0, font.pointSizeF() - 1.0))
+    item.setFont(font)
+    item.setForeground(palette.placeholderText())
+    return item
 
 #: Kinds that can hold a sword. A city does not roll initiative.
 FIGHTING_KINDS = (KIND_PC, KIND_NPC)
@@ -73,6 +86,7 @@ class EncounterWidget(QWidget):
         self._ctx = ctx
         self._encounter: Encounter | None = None
         self._combatants: list = []
+        self._teams: list = []
         self._entities: dict[int, object] = {}
         self._shared: set[int] = set()
         self._content = None
@@ -236,6 +250,16 @@ class EncounterWidget(QWidget):
         repos = self._ctx.repos
         campaign = self._ctx.campaign_id
         self._encounter = repos.encounters.current(campaign)
+        if self._encounter is not None:
+            # A fight made before teams existed has none, and one made a moment
+            # ago has nobody on them yet. Both are sorted out on the way in, so
+            # nothing downstream has to cope with a combatant on no side.
+            repos.encounters.sort_into_teams(self._encounter.id)
+        self._teams = (
+            repos.encounters.teams(self._encounter.id)
+            if self._encounter is not None
+            else []
+        )
         self._combatants = (
             repos.encounters.combatants(self._encounter.id)
             if self._encounter is not None
@@ -258,6 +282,18 @@ class EncounterWidget(QWidget):
         entity = self._entities.get(combatant.entity_id)
         return entity is not None and entity.kind == KIND_PC
 
+    def _on_the_party_side(self, combatant) -> bool:
+        """Drawn in the party's colour. The side they are on, not what they are.
+
+        A captured guard moved onto the party's side should read as one of
+        theirs on the map, which is the whole reason sides are a thing a DM can
+        change rather than a thing the app decides from the creature.
+        """
+        for team in self._teams:
+            if team.id == combatant.team_id:
+                return team.is_party
+        return self._is_pc(combatant)
+
     def _unseen(self, combatant) -> bool:
         """On the map, but no player has been told this creature exists."""
         if not self._only_unseen.isChecked():
@@ -273,6 +309,17 @@ class EncounterWidget(QWidget):
         if isinstance(hp, int) and isinstance(max_hp, int):
             return f"{hp}/{max_hp}"
         return ""
+
+    def _condition_of(self, combatant) -> str:
+        entity = self._entities.get(combatant.entity_id)
+        if entity is None:
+            return death.UP
+        hp = (entity.data or {}).get("hp")
+        if not isinstance(hp, int):
+            return death.UP
+        return death.condition(
+            hp, entity.kind, combatant.death_successes, combatant.death_failures
+        )
 
     # ---------------------------------------------------------------- filling
 
@@ -299,38 +346,84 @@ class EncounterWidget(QWidget):
         self._fights.setEnabled(len(fights) > 1)
         self._fights.blockSignals(False)
 
+    def _state_line(self, combatant) -> str:
+        """The second line of a row: what is true of them beyond their name.
+
+        Everything that is *not* their name goes here, so the first line stays
+        scannable. A DM looking for who is up should not have to read past
+        "(12/12) - unshared" to find it.
+        """
+        parts = []
+        hp = self._hp_of(combatant)
+        if hp:
+            parts.append(hp)
+
+        state = self._condition_of(combatant)
+        if state == death.DYING:
+            # The count, not just the word: "one more failure" and "one more
+            # save" are the whole tension of the thing.
+            parts.append(
+                f"dying — {combatant.death_successes} made, "
+                f"{combatant.death_failures} failed"
+            )
+        elif state == death.STABLE:
+            parts.append("stable, unconscious")
+        elif state == death.DEAD:
+            parts.append("dead")
+
+        if not combatant.on_map:
+            parts.append("off the map")
+        if combatant.simulated:
+            parts.append("autopilot")
+        if self._unseen(combatant):
+            parts.append("unshared")
+        return " · ".join(parts)
+
     def _fill_order(self) -> None:
+        """The order, grouped by side, two lines to a row.
+
+        Grouped because "who is left on their side" is the question a fight is
+        actually about, and an interleaved list makes counting it a chore. The
+        order *within* a group is still initiative, so the list still answers
+        "who is next" -- it just answers the other question as well.
+        """
         chosen = self._map.selected
         self._order.blockSignals(True)
         self._order.clear()
-        for combatant in self._combatants:
-            parts = []
-            parts.append(
-                "  -- " if combatant.initiative is None else f"{combatant.initiative:>4}"
-            )
-            parts.append(self._name_of(combatant))
-            hp = self._hp_of(combatant)
-            if hp:
-                parts.append(f"({hp})")
-            if not combatant.on_map:
-                parts.append("- off the map")
-            if combatant.simulated:
-                parts.append("- autopilot")
-            if self._unseen(combatant):
-                parts.append("- unshared")
 
-            item = QListWidgetItem("  ".join(parts))
-            item.setData(Qt.ItemDataRole.UserRole, combatant.id)
-            if self._is_turn(combatant):
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-            if not combatant.on_map:
-                item.setForeground(self.palette().placeholderText())
-            self._order.addItem(item)
-            if combatant.id == chosen:
-                self._order.setCurrentItem(item)
+        unsorted = [c for c in self._combatants if c.team_id is None]
+        for team in self._teams:
+            members = [c for c in self._combatants if c.team_id == team.id]
+            if not members:
+                continue
+            self._order.addItem(_header(team.name, self.palette()))
+            for combatant in members:
+                self._add_row(combatant, chosen)
+
+        if unsorted:
+            self._order.addItem(_header("No side", self.palette()))
+            for combatant in unsorted:
+                self._add_row(combatant, chosen)
         self._order.blockSignals(False)
+
+    def _add_row(self, combatant, chosen) -> None:
+        initiative = (
+            "  -- " if combatant.initiative is None else f"{combatant.initiative:>4}"
+        )
+        state = self._state_line(combatant)
+        item = QListWidgetItem(
+            f"{initiative}  {self._name_of(combatant)}" + (f"\n{state}" if state else "")
+        )
+        item.setData(Qt.ItemDataRole.UserRole, combatant.id)
+        if self._is_turn(combatant):
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+        if not combatant.on_map or self._condition_of(combatant) != death.UP:
+            item.setForeground(self.palette().placeholderText())
+        self._order.addItem(item)
+        if combatant.id == chosen:
+            self._order.setCurrentItem(item)
 
     def _fill_map(self) -> None:
         if self._encounter is None:
@@ -349,9 +442,10 @@ class EncounterWidget(QWidget):
                     label=self._name_of(combatant),
                     x=combatant.x,
                     y=combatant.y,
-                    ours=self._is_pc(combatant),
+                    ours=self._on_the_party_side(combatant),
                     is_turn=self._is_turn(combatant),
                     unseen=self._unseen(combatant),
+                    down=combatant.down,
                 )
                 for combatant in self._combatants
                 if combatant.on_map
@@ -518,10 +612,13 @@ class EncounterWidget(QWidget):
     def _start_or_next(self) -> None:
         if self._encounter is None:
             return
-        if self._encounter.has_begun:
-            self._ctx.repos.encounters.advance(self._encounter.id)
-        else:
+        if not self._encounter.has_begun:
             self._ctx.repos.encounters.begin(self._encounter.id)
+            self._changed()
+            return
+        # Ask the host, which knows the hit points and holds the dice: passing
+        # the turn is also when a dying character rolls their death save.
+        self._ctx.bus.turn_requested.emit("next")
         self._changed()
 
     def _end(self) -> None:
@@ -733,10 +830,43 @@ class EncounterWidget(QWidget):
             simulate.triggered.connect(
                 lambda: self._simulate(combatant.id, not combatant.simulated)
             )
+        sides = menu.addMenu("Side")
+        for team in self._teams:
+            action = sides.addAction(team.name)
+            action.setCheckable(True)
+            action.setChecked(team.id == combatant.team_id)
+            action.triggered.connect(
+                lambda _checked=False, t=team.id: self._set_team(combatant.id, t)
+            )
+        sides.addSeparator()
+        made = sides.addAction("New side...")
+        made.triggered.connect(lambda: self._new_team(combatant.id))
+
         menu.addSeparator()
         remove = menu.addAction(f"Take {name} out of the fight")
         remove.triggered.connect(lambda: self._remove(combatant.id, name))
         menu.exec(position)
+
+    def _set_team(self, combatant_id: int, team_id: int | None) -> None:
+        self._ctx.repos.encounters.set_team(combatant_id, team_id)
+        self._changed()
+
+    def _new_team(self, combatant_id: int) -> None:
+        """Another side, with whoever was right-clicked already on it.
+
+        Made from the menu of the creature that needs it rather than from a
+        Teams dialog somewhere, because a third side is something a DM realises
+        they want *about a particular creature* -- the guard who turns, the
+        summoned thing that answers to nobody.
+        """
+        if self._encounter is None:
+            return
+        name, ok = QInputDialog.getText(self, "New side", "What are they called?")
+        if not ok or not name.strip():
+            return
+        team = self._ctx.repos.encounters.add_team(self._encounter.id, name.strip())
+        self._ctx.repos.encounters.set_team(combatant_id, team.id)
+        self._changed()
 
     def _simulate_selected(self) -> None:
         combatant = self._by_id(self._map.selected) if self._map.selected else None

@@ -292,7 +292,8 @@ def apply_player_edit(
 def project_encounter(encounter, combatants: list, viewer: Viewer,
                       visible_ids: set[int] | None = None,
                       obstacles: set | None = None,
-                      budget: dict | None = None) -> dict:
+                      budget: dict | None = None,
+                      teams: list | None = None) -> dict:
     """One fight, reduced to what ``viewer`` may see of it.
 
     The same allowlist as everything else, applied to tokens: a combatant
@@ -342,6 +343,12 @@ def project_encounter(encounter, combatants: list, viewer: Viewer,
         "running": encounter.running,
         "version": encounter.version,
         "combatants": [_combatant(c, viewer) for c in allowed],
+        # The sides, so a list can be grouped by them and a name can be shown
+        # instead of a number. Unfiltered: a party can see who it is fighting.
+        "teams": [
+            {"id": t.id, "name": t.name, "party": bool(t.is_party)}
+            for t in (teams or ())
+        ],
         # Sorted so the same fight produces the same frame twice, which is what
         # makes two clients comparable when one of them is wrong.
         "obstacles": sorted([int(x), int(y)] for x, y in (obstacles or ())),
@@ -368,6 +375,19 @@ def _combatant(combatant, viewer: Viewer) -> dict:
         # Sent to everyone. A table deserves to know which of them is being
         # played by a machine, the same way the roster names the agent.
         "simulated": bool(combatant.simulated),
+        # Also to everyone, and for the same reason: a character rolling death
+        # saves is the thing the whole table is leaning forward to watch. The
+        # count is only ever non-zero for a player character, whose hit points
+        # its own player can already see.
+        "death_successes": int(combatant.death_successes),
+        "death_failures": int(combatant.death_failures),
+        # Lying where they fell. Drawn as a ghost rather than taken away: the
+        # square with your friend on it is the one everybody is looking at.
+        "down": bool(combatant.down),
+        # Which side. Sent to everyone -- who is fighting whom is the first
+        # thing anybody at a table can see, and a fight where that is a secret
+        # is a fight nobody can play.
+        "team": combatant.team_id,
     }
     if viewer.is_dm:
         projected["name"] = combatant.name

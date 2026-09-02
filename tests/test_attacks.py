@@ -637,7 +637,7 @@ def test_after_acting_they_are_asked_if_there_is_more(qtbot, fight):
         qtbot.waitUntil(lambda: bool(asked), timeout=5000)
         waiting, seconds = asked[0]
         assert waiting is True
-        assert seconds == 15
+        assert seconds == 30
     finally:
         agent.leave()
         player.leave()
@@ -1131,7 +1131,7 @@ def test_a_second_action_does_not_split_the_turn(qtbot, fight, monkeypatch):
         agent.leave()
 
 
-def test_a_person_still_gets_their_fifteen_seconds(qtbot, fight, monkeypatch):
+def test_a_person_still_gets_the_long_clock(qtbot, fight, monkeypatch):
     """The short clock is for machines. A person is asked, and gets longer."""
     import canon_keeper.net.server as server_module
 
@@ -1150,7 +1150,7 @@ def test_a_person_still_gets_their_fifteen_seconds(qtbot, fight, monkeypatch):
         player.send_answer(offered[0]["id"], True)
 
         qtbot.waitUntil(lambda: bool(asked), timeout=5000)
-        assert asked[0] == (True, 15)
+        assert asked[0] == (True, 30)
         qtbot.wait(500)
         assert (
             repos.encounters.get(encounter.id).turn_combatant_id == tokens["hero"].id

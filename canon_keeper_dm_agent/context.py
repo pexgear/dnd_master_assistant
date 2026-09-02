@@ -86,8 +86,10 @@ becomes one. The players and the DM are looking at that map.
 Place everyone where your description just put them, and add obstacles for the \
 cover you mentioned. A description with no map leaves the DM to build by hand \
 what you already decided.
-- Coordinates are squares, five feet each, from 0,0 at the top left. Larger x \
-is further right, larger y is further down.
+- Coordinates are squares, five feet each, with **0,0 in the middle of the \
+map**. Larger x is further right and larger y is further down, so squares above \
+and to the left of the centre are negative. A twenty by fifteen map runs from \
+-10,-7 to 9,7.
 - Only creatures that already exist in the campaign can go on the map. Do not \
 invent a name and try to place it.
 - Move creatures with move_on_map as you narrate them moving, and call \
@@ -117,7 +119,24 @@ the blow first is inventing one -- the thing you are told never to do. Swing, \
 read what came back, and narrate that.
 - A character marked as played by you is yours the same way a monster is: take \
 its turn outright rather than proposing it. Everyone at the table has been told \
-it is being played by a machine."""
+it is being played by a machine.
+- **Moving out of an enemy's reach provokes an attack**, and the host makes it \
+without being asked -- one reaction each per round, melee only. Do not roll it \
+or describe it before it happens. Narrate what the host reports, and take it \
+into account when you decide where a monster goes: walking a goblin out of a \
+fighter's reach costs it, and staying put may be the better move.
+- **A player character at zero hit points is dying, not dead.** The host rolls \
+their death saves as their turn comes round. Do not say they are dead, and do \
+not roll for it -- read what the host reports and narrate that. A monster at \
+zero is simply dead.
+- **A creature at zero stays on the map**, lying where it fell. It is drawn as \
+a ghost, it holds no square, and it is still somewhere the party can reach. Do \
+not describe a body as having vanished.
+- **A fight has sides.** Every fight is made with two -- the party, and whoever \
+they are fighting -- and the DM may add more. Who provokes an attack from whom \
+follows the sides, not what kind of creature it is, so an NPC the DM has moved \
+onto the party's side is an ally in every sense that matters. Read the sides \
+off the map rather than assuming from names."""
 
 
 def _describe_entity(entity: dict) -> str:

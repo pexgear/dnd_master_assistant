@@ -67,13 +67,20 @@ _BLADE = QColor(210, 90, 60)
 STEP_MS = 130      #: one square of walking
 LUNGE_MS = 300     #: leaning in for a swing, and back
 FLOAT_MS = 1100    #: the damage rising off a token
-DOWN_MS = 650      #: a creature leaving the map
+DOWN_MS = 650      #: a creature going down where it stands
 FRAME_MS = 33      #: about thirty a second, which is enough for a token
 
 #: Damage, and the word for when there is none. Red for what it costs; grey for
 #: a miss, which is still worth showing -- it is half of what happened.
 _HURT = QColor(215, 75, 65)
 _MISSED = QColor(150, 150, 155)
+
+#: How solid a body on the floor is drawn. Faint enough to read as "not in
+#: this any more" at a glance, solid enough that nobody has to hunt for it --
+#: where somebody fell is a thing the party is trying to get to.
+GHOST_OPACITY = 0.35
+#: And drained of its side's colour, because a body is not fighting for anybody.
+_GHOST = QColor(140, 140, 145)
 
 
 @dataclass(frozen=True)
@@ -93,6 +100,10 @@ class Token:
     #: dotted -- the DM should not have to guess which of the two states a
     #: token is in, and asking the party is not a way to find out.
     unseen: bool = False
+    #: At zero hit points and lying where they fell. Drawn as a ghost: grey,
+    #: faint, and still on its square. Taking it away hid the thing a party
+    #: most wants to see, which is how far away their friend is.
+    down: bool = False
 
     @property
     def initials(self) -> str:
@@ -315,9 +326,10 @@ class GridMap(QWidget):
                     )
                 )
         elif kind == "down":
-            # Kept a moment longer than the state does. The host takes them off
-            # the map at once, so without this the token would be gone by the
-            # next frame and nobody would see it go.
+            # They stay on the map now, so this is a fall rather than an exit:
+            # the token sinks and fades to a ghost and then stops there. Kept in
+            # `_leaving` all the same, for the one case where they really do go
+            # -- a DM taking a body out of the fight while it is still falling.
             for token in self._tokens:
                 if token.id == combatant:
                     self._leaving[combatant] = token
@@ -699,9 +711,16 @@ class GridMap(QWidget):
 
         falling = self._effect_on(token.id, "down")
         if falling:
+            # Down to the ghost and no further. A token that faded to nothing
+            # would say "gone", and they are not gone -- they are on the floor,
+            # on that square, and somebody can reach them.
             done = falling.progress(now)
-            opacity = 1.0 - done
-            shrink = int(cell * done * 0.4)
+            opacity = 1.0 - done * (1.0 - GHOST_OPACITY)
+            shrink = int(cell * done * 0.2)
+            square = square.adjusted(shrink, shrink, -shrink, -shrink)
+        elif token.down:
+            opacity = GHOST_OPACITY
+            shrink = int(cell * 0.2)
             square = square.adjusted(shrink, shrink, -shrink, -shrink)
 
         return square, opacity
@@ -723,7 +742,11 @@ class GridMap(QWidget):
 
         margin = max(2, cell // 10)
         box = square.adjusted(margin, margin, -margin, -margin)
-        fill = QColor(_OURS if token.ours else _THEIRS)
+        going_down = self._effect_on(token.id, "down") is not None
+        fill = QColor(
+            _GHOST if (token.down or going_down)
+            else (_OURS if token.ours else _THEIRS)
+        )
         fill.setAlphaF(fill.alphaF() * opacity)
         if token.id == self._dragging:
             fill.setAlpha(150)

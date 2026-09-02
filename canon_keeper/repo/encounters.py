@@ -28,6 +28,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
+from canon_keeper.repo.entities import KIND_PC
 from canon_keeper_protocol import grid
 
 #: A grid smaller than this is not a battlefield, and one larger stops being
@@ -57,6 +58,21 @@ class Combatant:
     #: chair -- somebody could not make it, and their character should still
     #: take its turns rather than being walked around the room.
     simulated: bool = False
+    #: Death saving throws made and failed in this fight. Player characters
+    #: only; see :mod:`canon_keeper.rules.death`. Cleared by healing above zero,
+    #: and never carried out of the fight they were rolled in.
+    death_successes: int = 0
+    death_failures: int = 0
+    #: The round this one last used its reaction in, or 0 for never. A round
+    #: number rather than a flag, so nothing has to remember to clear it.
+    reaction_round: int = 0
+    #: At zero hit points, and still lying where they fell. Kept here rather
+    #: than read off the entity because occupancy is decided in SQL: a body does
+    #: not hold a square against the living. The host keeps it in step with the
+    #: hit points every time it publishes the fight.
+    down: bool = False
+    #: Which side they are on, or None until somebody has asked.
+    team_id: int | None = None
 
     @property
     def on_map(self) -> bool:
@@ -85,6 +101,11 @@ class Combatant:
             y=row["y"],
             added_at=row["added_at"],
             simulated=bool(_column(row, "simulated", 0)),
+            death_successes=_column(row, "death_successes", 0),
+            death_failures=_column(row, "death_failures", 0),
+            reaction_round=_column(row, "reaction_round", 0),
+            down=bool(_column(row, "down", 0)),
+            team_id=_column(row, "team_id", None),
         )
 
 
@@ -138,6 +159,37 @@ class Encounter:
         )
 
 
+#: The two sides every fight starts with. A DM who wants a third makes one; a
+#: DM who wants neither never has to look at them, because the party's team is
+#: where a player character goes without being asked and everything else lands
+#: on the other.
+PARTY = "The party"
+HOSTILE = "Hostile"
+
+
+@dataclass(slots=True)
+class Team:
+    """One side of a fight. Named, because "team 2" tells a table nothing."""
+
+    id: int | None
+    encounter_id: int
+    name: str = ""
+    #: The party's own. At most one per fight, and the default home for a
+    #: player character.
+    is_party: bool = False
+    created_at: float = 0.0
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Team":
+        return cls(
+            id=row["id"],
+            encounter_id=row["encounter_id"],
+            name=row["name"],
+            is_party=bool(row["is_party"]),
+            created_at=row["created_at"],
+        )
+
+
 def order_of(combatants: list[Combatant]) -> list[Combatant]:
     """The initiative order. A pure function, so it can be trusted anywhere."""
     return sorted(combatants, key=lambda c: c.sort_key)
@@ -174,6 +226,9 @@ class EncounterRepo:
                 " VALUES (?, ?, ?, ?, 0, ?, ?, ?, 1)",
                 (campaign_id, name, width, height, int(running), now, now),
             )
+        # Both sides exist before anybody is added, so a fight never has to be
+        # set up before it can be run.
+        self.ensure_teams(int(cursor.lastrowid))
         return Encounter(
             id=int(cursor.lastrowid),
             campaign_id=campaign_id,
@@ -385,6 +440,51 @@ class EncounterRepo:
             )
         self._touch(combatant.encounter_id)
 
+    def record_death_save(
+        self, combatant_id: int, successes: int = 0, failures: int = 0
+    ) -> None:
+        """Add to the count. Adds rather than sets, so two callers cannot race
+        each other into overwriting a failure with a success."""
+        combatant = self.combatant(combatant_id)
+        if combatant is None:
+            return
+        with self._conn:
+            self._conn.execute(
+                "UPDATE combatant SET death_successes = death_successes + ?, "
+                "death_failures = death_failures + ? WHERE id = ?",
+                (int(successes), int(failures), combatant_id),
+            )
+        self._touch(combatant.encounter_id)
+
+    def use_reaction(self, combatant_id: int, round_number: int) -> None:
+        """Spend this one's reaction for the round it is currently in."""
+        combatant = self.combatant(combatant_id)
+        if combatant is None:
+            return
+        with self._conn:
+            self._conn.execute(
+                "UPDATE combatant SET reaction_round = ? WHERE id = ?",
+                (int(round_number), combatant_id),
+            )
+        self._touch(combatant.encounter_id)
+
+    def clear_death_saves(self, combatant_id: int) -> None:
+        """Back above zero hit points: the count starts again if they drop again.
+
+        Carrying two failures through a healing word and into the next time
+        they go down would be a rule the game does not have, and a nasty one.
+        """
+        combatant = self.combatant(combatant_id)
+        if combatant is None:
+            return
+        with self._conn:
+            self._conn.execute(
+                "UPDATE combatant SET death_successes = 0, death_failures = 0 "
+                "WHERE id = ?",
+                (combatant_id,),
+            )
+        self._touch(combatant.encounter_id)
+
     def set_initiative(self, combatant_id: int, initiative: int | None) -> None:
         combatant = self.combatant(combatant_id)
         if combatant is None:
@@ -468,7 +568,12 @@ class EncounterRepo:
     def use_action(self, encounter_id: int) -> None:
         self._write(encounter_id, "action_used = 1", ())
 
-    def advance(self, encounter_id: int, skipping: int | None = None) -> None:
+    def advance(
+        self,
+        encounter_id: int,
+        skipping: int | None = None,
+        passing_over: frozenset[int] = frozenset(),
+    ) -> None:
         """Next turn, and next round when the order wraps.
 
         ``skipping`` is the combatant about to be deleted. They cannot be handed
@@ -476,6 +581,14 @@ class EncounterRepo:
         *their* place in the order, because the question is who acts after them,
         not who acts first. Closing the gap before looking sends the turn back
         to the top of the round, and somebody acts twice.
+
+        ``passing_over`` is everyone who is still in the fight and still in the
+        order but takes no turn: the dead, and the unconscious. They stay listed
+        -- a DM can bring them round, and a corpse is worth seeing -- but a fight
+        that stopped on every one of them got slower the closer it came to being
+        over, which is exactly backwards. Worked out by the caller, from
+        :func:`canon_keeper.rules.death.resting`, because hit points are not
+        this table's to know.
         """
         full = self.combatants(encounter_id)
         if not [c for c in full if c.id != skipping]:
@@ -490,6 +603,15 @@ class EncounterRepo:
             return
 
         ids = [c.id for c in full]
+        standing = [
+            i for i in ids if i != skipping and i not in passing_over
+        ]
+        if not standing:
+            # Everybody left is down. Nobody is up, and the DM ends the fight --
+            # it is not this method's place to decide a battle is finished.
+            self._write(encounter_id, "turn_combatant_id = NULL")
+            return
+
         if encounter.turn_combatant_id not in ids:
             # Whoever was up left the fight without this being told about it.
             # The top of the order is the honest place to resume, and the round
@@ -497,7 +619,7 @@ class EncounterRepo:
             self._write(
                 encounter_id,
                 f"turn_combatant_id = ?, {self._FRESH_TURN}",
-                (next(c.id for c in full if c.id != skipping),),
+                (standing[0],),
             )
             return
 
@@ -506,7 +628,7 @@ class EncounterRepo:
         for _ in range(len(ids) + 1):
             if position >= len(ids):
                 position, wrapped = 0, True
-            if ids[position] != skipping:
+            if ids[position] in standing:
                 break
             position += 1
 
@@ -562,12 +684,151 @@ class EncounterRepo:
     def _occupant(
         self, encounter_id: int, x: int, y: int, ignoring: int | None = None
     ) -> Combatant | None:
+        """Who is standing there. A body on the floor is not standing there.
+
+        The dead keep their square so you can see where they fell, but they do
+        not hold it: a corpse that blocked movement would turn the end of every
+        fight into an obstacle course, and stepping over a body is a thing
+        people do.
+        """
         row = self._conn.execute(
             "SELECT * FROM combatant WHERE encounter_id = ? AND x = ? AND y = ?"
-            " AND id != ?",
+            " AND id != ? AND COALESCE(down, 0) = 0",
             (encounter_id, x, y, ignoring or -1),
         ).fetchone()
         return Combatant.from_row(row) if row else None
+
+    # ------------------------------------------------------------------ teams
+
+    def teams(self, encounter_id: int) -> list[Team]:
+        """Every side in this fight, the party's first."""
+        rows = self._conn.execute(
+            "SELECT * FROM team WHERE encounter_id = ?"
+            " ORDER BY is_party DESC, created_at, id",
+            (encounter_id,),
+        ).fetchall()
+        return [Team.from_row(r) for r in rows]
+
+    def add_team(
+        self, encounter_id: int, name: str, is_party: bool = False
+    ) -> Team:
+        now = time.time()
+        with self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO team (encounter_id, name, is_party, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (encounter_id, name.strip() or "Another side", int(is_party), now),
+            )
+        self._touch(encounter_id)
+        return Team(
+            id=int(cursor.lastrowid),
+            encounter_id=encounter_id,
+            name=name,
+            is_party=is_party,
+            created_at=now,
+        )
+
+    def ensure_teams(self, encounter_id: int) -> list[Team]:
+        """The two a fight starts with, made if they are not there already.
+
+        Called rather than assumed, because a campaign that predates teams has
+        fights with none, and a fight opened three months from now should look
+        like one made today.
+        """
+        existing = self.teams(encounter_id)
+        if existing:
+            return existing
+        self.add_team(encounter_id, PARTY, is_party=True)
+        self.add_team(encounter_id, HOSTILE)
+        return self.teams(encounter_id)
+
+    def sort_into_teams(self, encounter_id: int) -> bool:
+        """Put anybody with no side onto one. True if anything moved.
+
+        The same rule the app used to guess with, run once and written down
+        instead of re-derived everywhere: player characters with the party,
+        everything else against them. Written down is the point -- a guess
+        cannot be corrected, and a DM can drag any of these onto another side
+        the moment it is wrong.
+        """
+        teams = self.ensure_teams(encounter_id)
+        party = next((t for t in teams if t.is_party), None)
+        against = next((t for t in teams if not t.is_party), None)
+        if party is None or against is None:
+            return False
+
+        with self._conn:
+            known = self._conn.execute(
+                "UPDATE combatant SET team_id = ("
+                "  SELECT CASE WHEN entity.kind = ? THEN ? ELSE ? END"
+                "  FROM entity WHERE entity.id = combatant.entity_id)"
+                " WHERE encounter_id = ? AND team_id IS NULL"
+                " AND entity_id IS NOT NULL",
+                (KIND_PC, party.id, against.id, encounter_id),
+            ).rowcount
+            # A name the DM typed for a fourth goblin has no entity and so no
+            # kind. It is on the map to be fought, so that is the side it takes.
+            nameless = self._conn.execute(
+                "UPDATE combatant SET team_id = ? WHERE encounter_id = ?"
+                " AND team_id IS NULL AND entity_id IS NULL",
+                (against.id, encounter_id),
+            ).rowcount
+
+        if known or nameless:
+            self._touch(encounter_id)
+            return True
+        return False
+
+    def rename_team(self, team_id: int, name: str) -> None:
+        row = self._conn.execute(
+            "SELECT encounter_id FROM team WHERE id = ?", (team_id,)
+        ).fetchone()
+        if row is None:
+            return
+        with self._conn:
+            self._conn.execute(
+                "UPDATE team SET name = ? WHERE id = ?",
+                (name.strip() or "Another side", team_id),
+            )
+        self._touch(row["encounter_id"])
+
+    def remove_team(self, team_id: int) -> None:
+        """Delete a side. Whoever was on it goes back to having none."""
+        row = self._conn.execute(
+            "SELECT encounter_id FROM team WHERE id = ?", (team_id,)
+        ).fetchone()
+        if row is None:
+            return
+        with self._conn:
+            self._conn.execute(
+                "UPDATE combatant SET team_id = NULL WHERE team_id = ?", (team_id,)
+            )
+            self._conn.execute("DELETE FROM team WHERE id = ?", (team_id,))
+        self._touch(row["encounter_id"])
+
+    def set_team(self, combatant_id: int, team_id: int | None) -> None:
+        combatant = self.combatant(combatant_id)
+        if combatant is None:
+            return
+        with self._conn:
+            self._conn.execute(
+                "UPDATE combatant SET team_id = ? WHERE id = ?",
+                (team_id, combatant_id),
+            )
+        self._touch(combatant.encounter_id)
+
+    def set_down(self, combatant_id: int, on: bool) -> bool:
+        """Lying where they fell, or back on their feet. True if it changed."""
+        combatant = self.combatant(combatant_id)
+        if combatant is None or combatant.down == bool(on):
+            return False
+        with self._conn:
+            self._conn.execute(
+                "UPDATE combatant SET down = ? WHERE id = ?",
+                (int(bool(on)), combatant_id),
+            )
+        self._touch(combatant.encounter_id)
+        return True
 
     def _write(self, encounter_id: int, assignment: str = "", params: tuple = ()) -> None:
         """One write, and every write bumps the version and the clock."""

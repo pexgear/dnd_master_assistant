@@ -359,12 +359,14 @@ def test_the_dm_dragging_a_token_is_shown_too(qtbot, live, repos):
         player.leave()
 
 
-def test_going_down_is_shown_before_the_token_goes(qtbot, live, repos):
-    """The headline one, and the easiest to get backwards.
+def test_going_down_is_shown_and_the_body_stays(qtbot, live, repos):
+    """The headline one.
 
-    The host takes them off the map immediately -- so the event has to be sent
-    first, or every client learns about the death by the token not being there
-    any more.
+    Going down is a fall, not an exit. The event still goes out -- every screen
+    should show them dropping at the same moment rather than each noticing a
+    changed flag -- but the token stays on the square it fell on, drawn as a
+    ghost. Taking it away made the square the party most wants to reach the one
+    square showing nothing.
     """
     server, _repos, _encounter, tokens = live
     player = _join(qtbot, server, "marco", "goblin-teeth")
@@ -373,6 +375,7 @@ def test_going_down_is_shown_before_the_token_goes(qtbot, live, repos):
     try:
         goblin = repos.entities.list(server.campaign_id)
         yeemik = next(e for e in goblin if e.name == "Yeemik")
+        before = repos.encounters.combatant(tokens["seen"].id)
 
         server._take_damage(yeemik, 99)
         qtbot.waitUntil(
@@ -380,10 +383,12 @@ def test_going_down_is_shown_before_the_token_goes(qtbot, live, repos):
         )
 
         assert repos.entities.get(yeemik.id).data["hp"] == 0
-        assert not repos.encounters.combatant(tokens["seen"].id).on_map
-        assert repos.encounters.combatant(tokens["seen"].id) is not None, (
-            "off the map, not out of the fight -- a DM may bring them round"
+        after = repos.encounters.combatant(tokens["seen"].id)
+        assert after is not None, (
+            "down, not out of the fight -- a DM may bring them round"
         )
+        assert (after.x, after.y) == (before.x, before.y)
+        assert after.down is True
     finally:
         player.leave()
 

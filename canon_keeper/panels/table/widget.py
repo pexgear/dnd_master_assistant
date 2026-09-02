@@ -50,6 +50,7 @@ from canon_keeper.panels.table import rolls
 from canon_keeper.panels.table.dialogs import AccountsDialog, HostDialog, JoinDialog
 from canon_keeper.panels.table.dice_overlay import RollDialog
 from canon_keeper.plugin import AppContext
+from canon_keeper.rules import death
 
 class _FunnelSignals(QObject):
     done = Signal(object)  # funnel.Result
@@ -207,6 +208,9 @@ class TableWidget(QWidget):
         # The DM taking a turn by hand. It needs the host, and the host lives
         # here; the Combat panel has no socket, exactly like every other panel.
         ctx.bus.turn_taken.connect(self._on_turn_taken)
+        # Passing the turn also goes to the host, because it can roll a death
+        # save. Offline it falls back to walking the order here.
+        ctx.bus.turn_requested.connect(self._on_turn_requested)
         # A player handing their own character over. It goes to the host, which
         # decides whether it is theirs to hand.
         ctx.bus.simulate_requested.connect(self._client.send_simulate)
@@ -796,6 +800,44 @@ class TableWidget(QWidget):
         )
         if problem:
             self._ctx.bus.status_message.emit(problem)
+
+    def _on_turn_requested(self, action: str) -> None:
+        """The DM's Combat panel passing the turn.
+
+        Through the host when there is one, because a dying character's death
+        save is rolled as the turn passes and dice are the host's. With nobody
+        hosting there is no save to roll and no table to tell, so the order is
+        walked here -- still stepping over whoever is out of the fight, so that
+        laying an encounter out alone behaves like running one.
+        """
+        if self._server is not None and self._server.is_running:
+            problem = self._server.run_turn(action)
+            if problem:
+                self._ctx.bus.status_message.emit(problem)
+            return
+
+        encounters = self._ctx.repos.encounters
+        encounter = encounters.running(self._ctx.campaign_id)
+        if encounter is None:
+            return
+        if action == "next":
+            combatants = encounters.combatants(encounter.id)
+            encounters.advance(
+                encounter.id,
+                passing_over=death.resting(
+                    combatants,
+                    lambda c: (
+                        self._ctx.repos.entities.get(c.entity_id)
+                        if c.entity_id is not None
+                        else None
+                    ),
+                ),
+            )
+        elif action == "begin":
+            encounters.begin(encounter.id)
+        elif action == "end":
+            encounters.end(encounter.id)
+        self._ctx.bus.encounter_changed.emit()
 
     def _on_agent_moved(self) -> None:
         """A token moved on someone else's say-so. Tell the DM's own panels."""

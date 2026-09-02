@@ -326,9 +326,30 @@ rather than vanishing between two frames. Everyone at the table sees the same
 thing at the same moment, because the host says what happened and every screen
 draws that — rather than each working its own version out.
 
-A creature at zero comes off the map but stays in the initiative order, so you
-can bring them round. Taking them out of the fight is still the deliberate
-thing it was.
+**A creature at zero stays where it fell**, drawn as a grey ghost on its square.
+It is the square everybody is looking at — the one with your friend on it — and
+a gap there told you nothing. Nobody has to walk around a body, and the turn
+steps over the dead rather than stopping to offer each of them one.
+
+**A fight has sides.** Two are made with it and filled in without asking: *The
+party*, and *Hostile* for everyone else. The initiative order is grouped by
+them, so how many are left on each side is something you can see. Right-click
+anybody to move them across, or to start a third — for the captured guard who
+fights beside you, or the rival adventurers who are not monsters. Opportunity
+attacks follow the sides rather than what kind of creature somebody is.
+
+Each row in the order is two lines: the name and the initiative on top, and
+what is true of them underneath — hit points, dying and how close it is, off the
+map, played by autopilot, not yet shared.
+
+**A monster at zero is dead; a player character at zero is dying.** They roll a
+death save at the start of each of their turns, on the host's dice and in front
+of everybody — three made and they are stable, three failed and they are gone.
+A natural twenty puts them back up on one hit point with the turn still theirs,
+a natural one costs two, and hitting somebody who is already down costs them a
+save. The initiative order carries the running count, so the table can see how
+close it is. Healing above zero clears it: two failures do not follow you into
+the next time you go down.
 
 Your players see the fight as it happens and cannot touch it. They see exactly
 the creatures you have **shared** with them: putting a monster on the map does
@@ -492,9 +513,15 @@ your sheet. The panel keeps the count while the turn is yours: *"Your turn: 15
 feet of 30 left, 15 used · attack still to come."*
 
 **Acting does not end your turn.** Say what else you do, press **Done**, or let
-it pass on its own after fifteen seconds — anything you type stops that clock.
-The clock runs on the host, so it is a promise to the whole table rather than to
+it pass on its own after half a minute — anything you type stops that clock. The
+clock runs on the host, so it is a promise to the whole table rather than to
 whoever's laptop happens to be awake.
+
+**Walking away from somebody costs.** Leave an enemy's reach and they get a
+swing at you as you go — one reaction each per round, and melee only, so an
+archer cannot hold you there. It is the rule that makes standing somewhere mean
+something; without it you could stroll past the ogre to reach the wizard behind
+it. Dropped on the way out, you fall on the square you left.
 
 It is deliberately the simple case — a weapon on your sheet, one attack, no
 spells. Everything else is still a DM's ruling, which is where it belongs.

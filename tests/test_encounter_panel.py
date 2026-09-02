@@ -11,6 +11,8 @@ import logging
 
 import pytest
 
+from PySide6.QtCore import Qt
+
 from canon_keeper.bus import Bus
 from canon_keeper.net.state import SharedState
 from canon_keeper.panels.encounter import (
@@ -67,19 +69,62 @@ def test_the_dm_gets_the_one_with_buttons(ctx, qtbot):
     assert isinstance(made, EncounterWidget)
 
 
+def _rows(order) -> list[str]:
+    """The combatants in an order list, without the side headings.
+
+    A heading carries no combatant id, which is also what stops it being
+    selectable -- so the same check does for both.
+    """
+    return [
+        order.item(i).text()
+        for i in range(order.count())
+        if order.item(i).data(Qt.ItemDataRole.UserRole) is not None
+    ]
+
+
+def _headings(order) -> list[str]:
+    return [
+        order.item(i).text()
+        for i in range(order.count())
+        if order.item(i).data(Qt.ItemDataRole.UserRole) is None
+    ]
+
+
 # ------------------------------------------------------------- the DM's panel
 
 
 def test_it_shows_the_fight(widget, fight):
     encounter, _tokens, _hero, _goblin = fight
-    assert widget._order.count() == 2
+    assert len(_rows(widget._order)) == 2
     assert "The cave" in widget._heading.text()
 
 
+def test_the_order_is_grouped_by_side(widget):
+    """The party first, then whoever they are fighting."""
+    assert _headings(widget._order) == ["THE PARTY", "HOSTILE"]
+
+
+def test_a_new_fight_has_two_sides_without_being_asked(widget, ctx, fight):
+    encounter, _tokens, _hero, _goblin = fight
+    teams = ctx.repos.encounters.teams(encounter.id)
+    assert [t.name for t in teams] == ["The party", "Hostile"]
+    assert [t.is_party for t in teams] == [True, False]
+
+
 def test_the_order_is_the_initiative_order(widget):
-    labels = [widget._order.item(i).text() for i in range(widget._order.count())]
+    """Within a side. Across sides the grouping wins, which is the point."""
+    labels = _rows(widget._order)
     assert "Sable" in labels[0], "18 comes before 9"
     assert "Yeemik" in labels[1]
+
+
+def test_a_row_says_the_name_first_and_the_rest_underneath(widget):
+    """Two lines: who they are, then what is true of them."""
+    sable = _rows(widget._order)[0]
+    head, _, tail = sable.partition("\n")
+    assert "Sable" in head
+    assert "unshared" not in head, "the name line is for the name"
+    assert "18" in head
 
 
 def test_an_unshared_creature_is_marked(widget):
@@ -119,11 +164,8 @@ def test_taking_one_off_the_map_keeps_it_in_the_order(widget, ctx, fight):
     _encounter, tokens, _hero, _goblin = fight
     widget._take_off(tokens["hero"].id)
     assert ctx.repos.encounters.combatant(tokens["hero"].id) is not None
-    assert widget._order.count() == 2
-    labels = " ".join(
-        widget._order.item(i).text() for i in range(widget._order.count())
-    )
-    assert "off the map" in labels
+    assert len(_rows(widget._order)) == 2
+    assert "off the map" in " ".join(_rows(widget._order))
 
 
 def test_a_token_off_the_map_is_not_drawn(widget, ctx, fight):
@@ -156,17 +198,26 @@ def test_clicking_a_square_does_not_teleport_someone_already_standing(widget, ct
 
 
 def test_starting_and_passing_the_turn(widget, ctx, fight):
+    """Starting is the panel's own; passing the turn is asked of the host.
+
+    Passing it can roll a death save, and dice are the host's. The panel says
+    what it wants and the Table panel -- which owns the host -- does it, the
+    same way taking a turn by hand already worked.
+    """
     encounter, tokens, _hero, _goblin = fight
     widget._start_or_next()
     assert ctx.repos.encounters.get(encounter.id).round == 1
     assert ctx.repos.encounters.get(encounter.id).turn_combatant_id == tokens["hero"].id
     assert widget._turn_button.text() == "Next turn"
 
+    asked: list[str] = []
+    ctx.bus.turn_requested.connect(asked.append)
     widget._start_or_next()
+
+    assert asked == ["next"], "the panel passed the turn without asking the host"
     assert (
-        ctx.repos.encounters.get(encounter.id).turn_combatant_id == tokens["goblin"].id
-    )
-    assert "Yeemik is up" in widget._heading.text()
+        ctx.repos.encounters.get(encounter.id).turn_combatant_id == tokens["hero"].id
+    ), "the panel moved the turn itself as well"
 
 
 def test_ending_it_stops_the_clock(widget, ctx, fight):
@@ -196,7 +247,10 @@ def test_taking_someone_out_of_the_fight(widget, ctx, fight, monkeypatch):
     _encounter, tokens, _hero, _goblin = fight
     widget._remove(tokens["goblin"].id, "Yeemik")
     assert ctx.repos.encounters.combatant(tokens["goblin"].id) is None
-    assert widget._order.count() == 1
+    assert len(_rows(widget._order)) == 1
+    assert _headings(widget._order) == ["THE PARTY"], (
+        "a side with nobody left on it is not worth a heading"
+    )
 
 
 def test_starting_a_fight_asks_nothing(qtbot, ctx):
@@ -326,7 +380,11 @@ def test_the_order_hands_over_one_combatant_id(widget, fight):
     from canon_keeper.panels.encounter.grid import COMBATANT_MIME
 
     _encounter, tokens, _hero, _goblin = fight
-    item = widget._order.item(0)
+    item = next(
+        widget._order.item(i)
+        for i in range(widget._order.count())
+        if widget._order.item(i).data(Qt.ItemDataRole.UserRole) is not None
+    )
     data = widget._order.mimeData([item])
 
     assert data.hasFormat(COMBATANT_MIME)

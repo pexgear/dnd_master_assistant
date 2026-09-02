@@ -5,6 +5,64 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+### Sides
+
+- **A fight has teams.** Two, made with every fight and filled in without being
+  asked: **The party**, and **Hostile** for everyone else. The initiative order
+  is grouped by them, so "how many of them are left" is a thing you can see
+  rather than count.
+- **Right-click anybody to move them onto another side**, or to make a new one.
+  That is the case the old guess got wrong -- the captured guard who fights
+  beside the party, the rival adventurers who are not monsters -- and it now
+  takes one click instead of an argument with the app.
+- **Opportunity attacks follow the sides**, not what kind of creature somebody
+  is. An NPC you have moved onto the party's side is an ally in every sense
+  that matters.
+
+### The dead stay where they fell
+
+- **A body is a ghost on the map, not a gap.** Taking the token away made the
+  square everybody was looking at -- the one with your friend on it -- the one
+  square showing nothing. It fades, greys, and stays. Nobody has to walk around
+  it: a body holds no ground.
+- **Rows in the initiative order are two lines now**: the name and initiative
+  on the first, and everything else -- hit points, dying and how close it is,
+  off the map, autopilot, unshared -- underneath. Looking for whose turn it is
+  should not mean reading past a hit point total to find it.
+
+### The map holds you
+
+- **Opportunity attacks.** Walk out of an enemy's reach and they swing at you
+  as you go -- one reaction each per round, melee only, so a bow does not hold
+  ground. Without it the grid was a diagram: you could stroll past the ogre to
+  reach the wizard behind it and the ogre could only watch. Dropped on the way
+  out, you fall on the square you left, which is where anyone coming to help
+  will look. A DM dragging tokens about provokes nothing -- that is arranging
+  the board, not somebody walking.
+
+### Dying
+
+- **A player character at zero is dying, not dead.** A death save at the start
+  of each of their turns, on the host's dice, in front of everybody: three made
+  and they are stable, three failed and they are gone. A natural twenty puts
+  them back on their feet with one hit point and the turn still theirs; a
+  natural one costs two. Hitting somebody who is already down costs them a save.
+  The initiative order carries the count, so the table can see how close it is.
+- **A monster at zero is still simply dead.** Three more d20s to confirm the orc
+  is finished is nobody's idea of a good time.
+- **The turn no longer stops on the dead.** They keep their place in the order
+  -- a DM can still bring them round -- but the turn steps over them. A long
+  fight used to get slower the closer it came to being over, offering a turn to
+  every creature that had died in it.
+- **Healing clears the count.** Carrying two failures through a healing word
+  and into the next time you go down is a rule the game does not have.
+
+### Also
+
+- **Half a minute to finish your turn**, not fifteen seconds. Fifteen was a
+  guess made without a table, and it hurried people who had just watched their
+  attack land.
+
 ## 0.5.1
 
 0.5.0's combat, finished: the rules it was missing, turns that end by

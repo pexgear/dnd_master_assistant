@@ -1,10 +1,14 @@
 """Swinging a weapon at somebody.
 
 Deliberately the simple case and nothing else: a weapon attack with a thing on
-the character's sheet. No spells, no advantage, no opportunity attacks, no
-sneak attack. Those are rulings a DM makes, and a machine that made half of
-them would be worse than one that makes none -- the table would have to check
-every result to find out which half.
+the character's sheet. No spells, no advantage, no sneak attack. Those are
+rulings a DM makes, and a machine that made half of them would be worse than
+one that makes none -- the table would have to check every result to find out
+which half.
+
+**Opportunity attacks are the exception**, because they are not a ruling: they
+happen whether or not anybody remembers them, and forgetting one is how a grid
+quietly becomes a diagram. See :func:`threatens`.
 
 What is here is the arithmetic nobody enjoys doing: which modifier applies to
 this weapon, what the target's armour class is, whether a d20 got there, and
@@ -91,6 +95,29 @@ def weapons_of(sheet: dict, content) -> list[Weapon]:
         if weapon is not None:
             found.append(weapon)
     return found
+
+
+def melee_weapon(sheet: dict, content) -> Weapon | None:
+    """The first melee weapon carried, or ``None``.
+
+    What somebody swings when they did not choose: an opportunity attack is
+    taken in the half-second somebody walks past, and stopping to ask which
+    weapon would be a dialog nobody wants during another player's turn. First
+    carried, because the order on a sheet is the order a person wrote it in.
+    """
+    for weapon in weapons_of(sheet, content):
+        if not weapon.ranged:
+            return weapon
+    return None
+
+
+def threatens(sheet: dict, content, gap: int) -> bool:
+    """Whether a creature with this sheet has any say over a square ``gap`` away.
+
+    Only melee. A bow does not stop somebody walking past you, which is the
+    rule that makes archers want somebody standing in front of them.
+    """
+    return gap <= MELEE_REACH and melee_weapon(sheet, content) is not None
 
 
 def find_weapon(sheet: dict, content, wanted: str) -> Weapon:

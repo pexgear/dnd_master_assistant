@@ -123,6 +123,9 @@ Migrations are numbered `.sql` files driven by `PRAGMA user_version`:
 | `008_private_lines.sql` | who a line in the log was for |
 | `009_turn_budget.sql` | what the turn in progress has spent |
 | `010_simulated.sql` | a player character autopilot is playing |
+| `011_death_saves.sql` | death saves made and failed, for this fight |
+| `012_reactions.sql` | the round a combatant last used its reaction in |
+| `013_bodies_and_teams.sql` | who is lying down, and which side they are on |
 
 `entity.data_json` is how "start small, then evolve" is paid for: new fields
 cost a form change, not a migration. The price is that nothing validates them,
@@ -389,7 +392,7 @@ which is the one thing it is told never to do. `SWING` is that door: the host
 rolls, applies the damage, and the agent narrates what came back.
 
 Once a turn has been acted on, the host asks whoever is up whether there is
-more, and passes the turn on if nothing comes back within fifteen seconds. That
+more, and passes the turn on if nothing comes back within half a minute. That
 clock runs on the **host**: it is a promise made to four other people, and it
 must not depend on one person's laptop staying awake. Anything they type stops
 it, so it only ever runs out on somebody who has stopped reading.
@@ -403,6 +406,27 @@ turn taken away mid-thought comes back as an action on somebody else's.
 That clock was originally only started for a person, which meant a monster or a
 handed-over character acted and then held the table until the DM pressed
 something. The only thing that ever ended a turn was somebody pressing Done.
+
+**The turn steps over whoever is out of the fight** — the dead and the
+unconscious — and `EncounterRepo.advance` is told who they are rather than
+working it out, because that answer needs hit points and hit points are not the
+encounter tables' to know. `rules/death.resting` is the one place that decides,
+and both the host and the DM's own panel ask it, so there are not two versions
+of "is that one still in this" to drift apart.
+
+It does **not** step over somebody who is *dying*. A player character at zero is
+handed their turn on purpose: the death save happens at the start of it. Skip
+them and they neither die nor recover, which is worse than either. Monsters get
+no saves — three more d20s to confirm the orc is finished is a rule that costs
+a table more than it gives.
+
+**Opportunity attacks** are the one piece of combat the app rules on without
+being asked. Leaving an enemy's reach provokes one, because the alternative is a
+grid that is only a diagram: walking past a thing has to cost something or where
+anybody stands stops mattering. Start and end squares, not every square of the
+path; one reaction each per round, held as the round it was spent in rather than
+a flag somebody has to remember to clear. Sides are player characters against
+everything else, which is crude and is not a form to fill in before a fight.
 
 ---
 

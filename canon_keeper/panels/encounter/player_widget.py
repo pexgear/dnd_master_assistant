@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from canon_keeper.panels.encounter.grid import GridMap, Preview, Token
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.entities import KIND_PC
+from canon_keeper.rules import death
 
 
 class PlayerEncounterWidget(QWidget):
@@ -125,6 +126,7 @@ class PlayerEncounterWidget(QWidget):
             return
 
         combatants = [c for c in encounter.get("combatants", []) if isinstance(c, dict)]
+        teams = [t for t in encounter.get("teams") or () if isinstance(t, dict)]
         turn = encounter.get("turn")
 
         self._map.set_grid(
@@ -144,8 +146,9 @@ class PlayerEncounterWidget(QWidget):
                     label=self._name_of(c),
                     x=int(c["x"]),
                     y=int(c["y"]),
-                    ours=self._is_pc(c),
+                    ours=self._on_the_party_side(c, teams),
                     is_turn=c.get("id") == turn,
+                    down=bool(c.get("down")),
                 )
                 for c in combatants
                 if isinstance(c.get("x"), int) and isinstance(c.get("y"), int)
@@ -153,24 +156,17 @@ class PlayerEncounterWidget(QWidget):
         )
 
         self._order.clear()
-        for combatant in combatants:
-            initiative = combatant.get("initiative")
-            label = "  ".join(
-                part
-                for part in (
-                    "  -- " if initiative is None else f"{int(initiative):>4}",
-                    self._name_of(combatant),
-                    self._hp_of(combatant),
-                    "" if _placed(combatant) else "- off the map",
-                )
-                if part
-            )
-            item = QListWidgetItem(label)
-            if combatant.get("id") == turn:
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-            self._order.addItem(item)
+        for team in teams:
+            members = [c for c in combatants if c.get("team") == team.get("id")]
+            if not members:
+                continue
+            self._order.addItem(_header(str(team.get("name") or ""), self.palette()))
+            for combatant in members:
+                self._order.addItem(self._row(combatant, turn))
+
+        loose = [c for c in combatants if not _on_a_side(c, teams)]
+        for combatant in loose:
+            self._order.addItem(self._row(combatant, turn))
 
         self._show_budget(encounter, combatants)
         self._show_hand_over(combatants)
@@ -190,6 +186,48 @@ class PlayerEncounterWidget(QWidget):
             "You see what your DM has shared with you. There may be more in the "
             "room than is on this map."
         )
+
+    def _row(self, combatant: dict, turn) -> QListWidgetItem:
+        """One two-line row: who they are, then what is true of them.
+
+        The name line stays the name, so a player scanning for whose turn it is
+        does not read past a hit point total to find it. Everything else -- how
+        hurt they are, whether they are dying and how close that is -- goes
+        underneath.
+        """
+        initiative = combatant.get("initiative")
+        head = (
+            "  -- " if initiative is None else f"{int(initiative):>4}"
+        ) + f"  {self._name_of(combatant)}"
+
+        state = [part for part in (self._hp_of(combatant),) if part]
+        successes = int(combatant.get("death_successes") or 0)
+        failures = int(combatant.get("death_failures") or 0)
+        if failures >= death.SAVES_NEEDED:
+            state.append("dead")
+        elif successes >= death.SAVES_NEEDED:
+            state.append("stable, unconscious")
+        elif combatant.get("down"):
+            # Only a player character ever rolls these, so no count at all on
+            # somebody who is down means a creature that simply died.
+            state.append(
+                f"dying — {successes} made, {failures} failed"
+                if successes or failures
+                else "down"
+            )
+        if not _placed(combatant):
+            state.append("off the map")
+        if combatant.get("simulated"):
+            state.append("autopilot")
+
+        item = QListWidgetItem(head + (f"\n{' · '.join(state)}" if state else ""))
+        if combatant.get("id") == turn:
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+        if combatant.get("down") or not _placed(combatant):
+            item.setForeground(self.palette().placeholderText())
+        return item
 
     def _show_budget(self, encounter: dict, combatants: list[dict]) -> None:
         """Movement left and whether the action is gone.
@@ -325,6 +363,13 @@ class PlayerEncounterWidget(QWidget):
         entity = self._entity(combatant)
         return bool(entity) and entity.get("kind") == KIND_PC
 
+    def _on_the_party_side(self, combatant: dict, teams: list) -> bool:
+        """Which colour to draw them. The side they are on, not what they are."""
+        for team in teams:
+            if team.get("id") == combatant.get("team"):
+                return bool(team.get("party"))
+        return self._is_pc(combatant)
+
     def _hp_of(self, combatant: dict) -> str:
         entity = self._entity(combatant)
         data = (entity or {}).get("data") or {}
@@ -344,3 +389,19 @@ class PlayerEncounterWidget(QWidget):
 
 def _placed(combatant: dict) -> bool:
     return isinstance(combatant.get("x"), int) and isinstance(combatant.get("y"), int)
+
+
+def _on_a_side(combatant: dict, teams: list) -> bool:
+    return any(team.get("id") == combatant.get("team") for team in teams)
+
+
+def _header(name: str, palette) -> QListWidgetItem:
+    """A side's name in the order. Not selectable -- it is not a combatant."""
+    item = QListWidgetItem(name.upper())
+    item.setFlags(Qt.ItemFlag.NoItemFlags)
+    font = item.font()
+    font.setBold(True)
+    font.setPointSizeF(max(6.0, font.pointSizeF() - 1.0))
+    item.setFont(font)
+    item.setForeground(palette.placeholderText())
+    return item

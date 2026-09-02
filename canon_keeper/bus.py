@@ -56,6 +56,12 @@ class Bus(QObject):
     # taking it back: (combatant id, on). Yours to give without finding the DM.
     simulate_requested = Signal(int, bool)
 
+    # The DM passing the turn: "next". It goes to the host, because passing the
+    # turn can roll a death save, and dice are the host's. The panel falls back
+    # to advancing the order itself when there is no host to ask -- a DM laying
+    # a fight out on their own is not a table, and nothing is being decided.
+    turn_requested = Signal(str)
+
     # Something to show on the map: a walk, a swing, a creature going down.
     # Described by the host so that every screen at the table shows the same
     # thing, rather than each working its own version out from two states.
