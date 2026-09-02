@@ -5,6 +5,16 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+### Fixes
+
+- **Releases publish again.** Nothing has been published since 0.3.1, and the
+  reason was a dialog: when the `anthropic` package is not installed, pressing
+  autopilot explains why it cannot run — and on CI, where nobody can click OK,
+  that explanation waited forever. GitHub killed the run at its six-hour
+  ceiling, which is reported as *cancelled* and names nothing. It only ever
+  happened there, because the machine the code was written on has that package
+  installed.
+
 ## 0.5.4
 
 Autopilot no longer takes your turn, and the release pipeline says something

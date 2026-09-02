@@ -54,6 +54,12 @@ dev = [
   # The headless client and the two things built on it are tested here too.
   "websockets>=12.0",
   "mcp>=2.0",
+  # Not because the app needs it -- that is the `agent` extra, and optional --
+  # but because CI without it is a different machine from the one the code was
+  # written on. That difference hid a hanging test for a month: the agent's
+  # "you have not installed anthropic" dialog only ever appeared on CI, where
+  # nobody could click it.
+  "anthropic>=0.40",
 ]
 
 [project.urls]

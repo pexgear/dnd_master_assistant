@@ -296,6 +296,10 @@ def test_it_does_not_start_one_over_an_agent_already_connected(table, monkeypatc
 
 def test_it_does_start_one_when_only_players_are_connected(table, monkeypatch):
     started = []
+    # Say the requirements are met. Without this the answer depends on whether
+    # `anthropic` happens to be installed, which is exactly the difference
+    # between a developer's machine and CI.
+    monkeypatch.setattr(agent_runner, "missing_requirement", lambda: "")
     monkeypatch.setattr(agent_runner, "find_executable", lambda: ["canonkeeper-agent"])
     monkeypatch.setattr(agent_runner, "api_key", lambda: "sk-test")
     monkeypatch.setattr(
