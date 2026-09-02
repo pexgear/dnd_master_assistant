@@ -190,6 +190,31 @@ who lost their password and a character changing hands, and it is why anyone
 still logged in on the old credentials is disconnected when the code is used: a
 live session is authority, and it would outlive the login it came from.
 
+**A seat token is the third way in, and the narrowest.** A character handed to
+autopilot needs something to log in with, and after invitations there is nothing
+to use: nobody can make a login and the DM does not know their player's
+password. So the host mints a token scoped to one account and one character,
+and a connection arriving on it is admitted **as that player** — same
+projection, same authority, no password.
+
+That is the whole point rather than a convenience. Autopilot playing a character
+used to be the DM's agent, which sees every secret, so a handed-over character
+knew where the ambush was and walked around it. That looks like good play and it
+is cheating. A seat cannot do it, because it is *on* the player's seat rather
+than beside it: the projection is enforced by the host, not observed by the
+agent.
+
+What it may *do* is narrower still (`_may_act_for`): move, swing and end the
+turn of the one character it was handed, while that character is still handed
+over, while it is still that character's turn. It cannot move anybody else, pass
+the turn, set an initiative or touch the fight. The moment it can reach past
+that one chair it stops being a seat and becomes an account with a strange name.
+
+Tokens live in memory and are never written down — a token in the campaign file
+would be a stored credential for somebody's character — and revoking one both
+drops it and disconnects any session still sitting in it. Dropping it alone
+would only stop the *next* connection.
+
 **Reconnect is cheap.** A client caches what it holds and sends its versions on
 connect; the host replies with only what changed. The cache is keyed by campaign
 *and* by `campaign_key`, and versions from a different campaign are ignored

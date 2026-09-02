@@ -117,6 +117,11 @@ class _Session:
     #: An autopilot login. Its chat is refused while autopilot is off, which is
     #: the whole of what "off" means -- not a politeness the agent observes.
     is_agent: bool = False
+    #: The character this connection is standing in for, when it arrived on a
+    #: seat token rather than a password. It is a *player* connection in every
+    #: other respect -- same projection, same authority -- because the whole
+    #: point is that a machine playing Marla sees what Marla's player sees.
+    seat_for: int | None = None
     #: Composing something right now. Broadcast so a table can see that
     #: silence means thinking rather than nothing happening.
     busy: bool = False
@@ -166,6 +171,11 @@ class SessionServer(QObject):
         #: machine is friction with nothing behind it. The token is regenerated
         #: per run and never leaves the process except to the local client.
         self.local_token = secrets.token_urlsafe(32)
+        #: Live seat tokens: token -> (account id, entity id). One per character
+        #: handed to autopilot. Held in memory and never written down, so a
+        #: handover cannot outlive the session it was made in -- and there is no
+        #: stored credential for a seat to leak from a campaign file.
+        self._seats: dict[str, tuple[int, int]] = {}
 
         #: A campaign's own identity, generated once and kept in its settings.
         #: Entity ids and versions both restart at one in a new campaign, so
@@ -447,6 +457,31 @@ class SessionServer(QObject):
             self._admit(socket, pending, account=None, name=str(message.get("name", "")))
             return
 
+        # A machine standing in for a character. It is admitted as that player
+        # and nothing more: same projection, same authority, no password.
+        seat = str(message.get("seat", ""))
+        if seat:
+            account, entity_id = self._seat_holder(seat)
+            if account is None:
+                log.info("a seat token was offered and is not live")
+                self._send(
+                    socket,
+                    MessageType.ERROR,
+                    code="bad_login",
+                    message=auth.explain(),
+                )
+                QTimer.singleShot(200, socket.close)
+                return
+            pending.known = self._trusted_versions(message)
+            self._admit(
+                socket,
+                pending,
+                account=account,
+                name=account.display_name or account.username,
+                seat_for=entity_id,
+            )
+            return
+
         pending.known = self._trusted_versions(message)
 
         username = clean_name(message.get("username", ""))
@@ -650,6 +685,76 @@ class SessionServer(QObject):
         # this one has now been used.
         pending.nonce = auth.new_nonce()
 
+    # ------------------------------------------------------------------ seats
+    #
+    # A character handed to autopilot needs something to log in with, and after
+    # invitations there is nothing to use: nobody can make a login, and the DM
+    # does not know their player's password. That is the point of the design,
+    # not a gap in it.
+    #
+    # So the host mints a **seat token** instead. It is scoped to one account
+    # and one character, lives in memory for as long as the handover does, and
+    # buys exactly what that player's own login buys -- the same projection, the
+    # same authority. A machine playing Marla sees what Marla's player sees,
+    # because it is on Marla's seat rather than beside it.
+    #
+    # Not persisted, deliberately. A token in the campaign file would be a
+    # stored credential for a seat, and the thing it protects is not worth one:
+    # if the host restarts, the handover is minted again.
+
+    def mint_seat(self, entity_id: int) -> str:
+        """A token for whoever is standing in for this character. Empty if none.
+
+        Replaces any token already out for that character, so handing a
+        character over twice does not leave the first stand-in able to act.
+        """
+        entity = self.repos.entities.get(entity_id)
+        account_id = self._who_plays(entity)
+        if entity is None or account_id is None:
+            return ""
+        self.revoke_seat(entity_id)
+        token = secrets.token_urlsafe(32)
+        self._seats[token] = (account_id, entity_id)
+        log.info("seat token minted for %r", entity.name)
+        return token
+
+    def revoke_seat(self, entity_id: int) -> None:
+        """Take the seat back, and shut any connection still sitting in it.
+
+        Both halves matter. Dropping the token stops a *new* connection; a
+        session already open on it would otherwise keep playing somebody's
+        character after they had asked for it back.
+        """
+        gone = [t for t, (_a, e) in self._seats.items() if e == entity_id]
+        for token in gone:
+            self._seats.pop(token, None)
+        if not gone:
+            return
+        for socket, session in list(self._sessions.items()):
+            if session.seat_for == entity_id:
+                self._send(
+                    socket,
+                    MessageType.SYSTEM,
+                    text="That character is back with their player.",
+                    kind=SystemKind.NOTICE.value,
+                )
+                QTimer.singleShot(200, socket.close)
+
+    def _seat_holder(self, token: str):
+        """``(account, entity_id)`` for a live token, or ``(None, None)``.
+
+        Constant-time compared against every live token rather than looked up,
+        so the answer takes the same time whether or not the token exists.
+        """
+        found = None
+        for known, seat in self._seats.items():
+            if secrets.compare_digest(known, token):
+                found = seat
+        if found is None:
+            return None, None
+        account_id, entity_id = found
+        return self.repos.accounts.get(account_id), entity_id
+
     def _who_plays(self, entity) -> int | None:
         """The account that plays this character, or None if nobody does.
 
@@ -774,7 +879,14 @@ class SessionServer(QObject):
         log.info("invite made for %r", entity.name)
         return invite.code
 
-    def _admit(self, socket: QWebSocket, pending: _Pending, account, name: str) -> None:
+    def _admit(
+        self,
+        socket: QWebSocket,
+        pending: _Pending,
+        account,
+        name: str,
+        seat_for: int | None = None,
+    ) -> None:
         pending.timer.stop()
         self._pending.pop(socket, None)
 
@@ -818,6 +930,7 @@ class SessionServer(QObject):
             account_id=account_id,
             viewer=viewer,
             is_agent=account is not None and account.is_agent,
+            seat_for=seat_for,
         )
         session.visible = visible_entity_ids(self.repos, self.campaign_id, viewer)
         self._sessions[socket] = session
@@ -1366,6 +1479,31 @@ class SessionServer(QObject):
             return self._autopilot
         return session.viewer.is_dm
 
+    def _may_act_for(self, session: _Session, combatant) -> bool:
+        """Whether this connection may take *this* creature's turn, right now.
+
+        Everything a stand-in is allowed to do is in the four conditions below,
+        and it is allowed nothing else. It is a player connection: it cannot
+        move anybody else, pass the turn, set an initiative or touch the fight.
+        It can take the turn of the one character it was handed, while it is
+        still handed over, while it is still that character's turn.
+
+        Narrow on purpose. A seat exists so a machine can sit in one chair, and
+        the moment it can reach past that chair it stops being a seat and
+        becomes an account with a strange name.
+        """
+        if self._may_run_the_table(session):
+            return True
+        if session.seat_for is None or combatant is None:
+            return False
+        if not combatant.simulated:
+            return False
+        entity = self._entity_of(combatant.id)
+        if entity is None or entity.id != session.seat_for:
+            return False
+        encounter = self._the_running_fight()
+        return encounter is not None and encounter.turn_combatant_id == combatant.id
+
     def _refuse_the_fight(self, socket: QWebSocket) -> None:
         self._send(
             socket,
@@ -1605,10 +1743,6 @@ class SessionServer(QObject):
 
     def _handle_move(self, socket: QWebSocket, session: _Session, message) -> None:
         """A request to move a token. ``x``/``y`` of null takes it off the map."""
-        if not self._may_run_the_table(session):
-            self._refuse_the_fight(socket)
-            return
-
         combatant_id = message.get("combatant")
         if not isinstance(combatant_id, int):
             return
@@ -1619,6 +1753,11 @@ class SessionServer(QObject):
 
         combatant = self.repos.encounters.combatant(combatant_id)
         encounter = self._the_running_fight()
+        # Asked after the combatant is known, because a stand-in may move one
+        # creature and only one; see :meth:`_may_act_for`.
+        if not self._may_act_for(session, combatant):
+            self._refuse_the_fight(socket)
+            return
         if combatant is None or encounter is None or combatant.encounter_id != encounter.id:
             self._send(
                 socket,
@@ -2161,6 +2300,11 @@ class SessionServer(QObject):
 
         on = bool(message.get("on"))
         self.repos.encounters.set_simulated(combatant_id, on)
+        # The seat exists for exactly as long as the handover does.
+        if on:
+            self.mint_seat(entity.id)
+        else:
+            self.revoke_seat(entity.id)
         self._broadcast_system(
             f"Autopilot is playing {entity.name}." if on
             else f"{entity.name} is back with their player."
@@ -2176,14 +2320,13 @@ class SessionServer(QObject):
         asking for them, which is the one thing it is told never to do. This is
         the door.
         """
-        if not self._may_run_the_table(session):
-            self._refuse_the_fight(socket)
-            return
-
         encounter = self._the_running_fight()
         combatant = self.repos.encounters.combatant(message.get("combatant"))
         target = self.repos.encounters.combatant(message.get("target"))
         entity = self._entity_of(message.get("combatant"))
+        if not self._may_act_for(session, combatant):
+            self._refuse_the_fight(socket)
+            return
         if (
             encounter is None
             or combatant is None
@@ -2532,7 +2675,8 @@ class SessionServer(QObject):
         if encounter is None or encounter.turn_combatant_id is None:
             return
         entity = self._entity_of(encounter.turn_combatant_id)
-        if entity is None or entity.owner_account_id != session.account_id:
+        # Their own seat, whether a person is sitting in it or a machine is.
+        if entity is None or self._who_plays(entity) != session.account_id:
             self._send_refusal(socket, "It is not your turn to end.")
             return
 
