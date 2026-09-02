@@ -5,6 +5,17 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.5.2
+
+Dying takes three rolls, walking away from somebody costs, and a fight has
+sides.
+
+**Everyone at a table needs this version.** The wire moved to 5 -- death saves,
+who is lying down and which side they are on are all new things said over it --
+and a mixed table is refused at the door with a readable reason rather than
+half-working. Campaign files are upgraded when you open them, and nothing needs
+converting by hand.
+
 ### Sides
 
 - **A fight has teams.** Two, made with every fight and filled in without being
