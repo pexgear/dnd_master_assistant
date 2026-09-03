@@ -194,13 +194,33 @@ APP_ID = "pexgear.CanonKeeper"
 
 
 def _own_the_taskbar_entry(log: logging.Logger) -> None:
-    """Tell Windows this is its own application. A no-op everywhere else."""
+    """Tell Windows this is its own application. A no-op everywhere else.
+
+    Says so in the log when it will not work, because it fails by *succeeding*:
+    a process running under the Microsoft Store Python has package identity,
+    Windows takes the taskbar button's icon from that package's manifest, and
+    the call below returns S_OK while changing nothing. The symptom is the
+    Python logo in the taskbar beside a correct icon in the title bar, and
+    nothing anywhere to explain it. A venv inherits this from the interpreter
+    it was built with, so the cure is a python.org interpreter rather than a
+    fresh venv from the same base.
+    """
     if sys.platform != "win32":
         return
     try:
         import ctypes
 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+        length = ctypes.c_uint32(0)
+        # Anything but APPMODEL_ERROR_NO_PACKAGE means we are inside one.
+        if ctypes.windll.kernel32.GetCurrentPackageFullName(
+            ctypes.byref(length), None
+        ) != 15700:
+            log.info(
+                "running under a packaged interpreter (%s), so Windows will "
+                "show its icon in the taskbar rather than ours",
+                sys.executable,
+            )
     except Exception:  # noqa: BLE001 - a cosmetic call is never worth a crash
         log.debug("could not claim a taskbar identity", exc_info=True)
 
