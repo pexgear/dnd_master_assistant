@@ -18,6 +18,23 @@ What changed, from the point of view of someone running a game. See
   events, so lining a whole turn up before committing to it is a change to
   *when* the plan is handed over rather than a rewrite.
 
+### What a creature has left, on the map
+
+- **Pips under whoever is up show what is left of their turn** — one for
+  movement, one for the action — and they empty as the turn is spent.
+- **A creature that has already swung at somebody walking past is marked.**
+  The opposite way round on purpose: still having your reaction is everybody's
+  default state, so a pip on every token would say nothing, while having spent
+  it is exactly what somebody deciding whether to walk past needs to know.
+- **Exhausted means exhausted.** A second action in one turn is now refused —
+  the app had counted the action since turn budgets existed and never read the
+  count, so a second swing went straight through. The DM's own turns obey the
+  movement allowance too. Dragging a token is untouched: that gesture means
+  "put it there", not "walk there".
+
+**Everyone at a table needs this version.** The wire moved to 8 — whether a
+creature has spent its reaction is a new thing said over it.
+
 ### A fight works with nobody connected
 
 - **Combat no longer answers "go online first".** Rolling, hit points and

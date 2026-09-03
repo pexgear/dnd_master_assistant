@@ -396,6 +396,11 @@ def _combatant(combatant, viewer: Viewer) -> dict:
         # thing anybody at a table can see, and a fight where that is a secret
         # is a fight nobody can play.
         "team": combatant.team_id,
+        # The round they last swung at somebody walking past. Sent as the round
+        # rather than as "spent", because whether it is spent depends on which
+        # round it is now, and the client already knows that -- while a boolean
+        # computed here would be stale the moment the round turned.
+        "reacted_round": int(getattr(combatant, "reaction_round", 0) or 0),
     }
     if viewer.is_dm:
         projected["name"] = combatant.name

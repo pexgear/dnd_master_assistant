@@ -128,6 +128,10 @@ class PlayerEncounterWidget(QWidget):
         combatants = [c for c in encounter.get("combatants", []) if isinstance(c, dict)]
         teams = [t for t in encounter.get("teams") or () if isinstance(t, dict)]
         turn = encounter.get("turn")
+        # What is left of the turn, and which round it is -- the second is what
+        # turns "the round they last reacted in" into "they have reacted".
+        budget = encounter.get("budget") or {}
+        this_round = int(encounter.get("round") or 0)
 
         self._map.set_grid(
             int(encounter.get("width") or 1), int(encounter.get("height") or 1)
@@ -149,6 +153,14 @@ class PlayerEncounterWidget(QWidget):
                     ours=self._on_the_party_side(c, teams),
                     is_turn=c.get("id") == turn,
                     down=bool(c.get("down")),
+                    squares_left=(
+                        int(budget.get("left") or 0) if c.get("id") == turn else 0
+                    ),
+                    acted=bool(budget.get("acted")),
+                    reacted=(
+                        this_round > 0
+                        and int(c.get("reacted_round") or 0) >= this_round
+                    ),
                 )
                 for c in combatants
                 if isinstance(c.get("x"), int) and isinstance(c.get("y"), int)

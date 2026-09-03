@@ -164,7 +164,7 @@ so anything load-bearing belongs in a column.
 
 ## The wire
 
-Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 7`; a
+Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 8`; a
 mismatch is refused at the door with a readable reason rather than
 half-working.
 

@@ -138,12 +138,15 @@ def test_swinging_costs_the_other_creature_hit_points(alone):
     goblin = repos.encounters.combatant(tokens["goblin"].id)
     before = (repos.entities.get(goblin.entity_id).data or {}).get("hp")
 
-    # Enough swings that a run of misses cannot make this flaky, and the fight
-    # is what is being tested rather than one roll.
+    # One swing a turn, because that is the rule now -- so the round is passed
+    # between them. Enough of them that a run of misses cannot make this flaky,
+    # and the fight is what is being tested rather than one roll.
     for _ in range(12):
         widget._on_turn_taken(
             {"combatant": tokens["hero"].id, "target": tokens["goblin"].id}
         )
+        widget._on_turn_requested("next")
+        widget._on_turn_requested("next")
 
     after = (repos.entities.get(goblin.entity_id).data or {}).get("hp")
     assert after < before, "twelve swings and the goblin is untouched"

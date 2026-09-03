@@ -76,6 +76,14 @@ FRAME_MS = 33      #: about thirty a second, which is enough for a token
 _HURT = QColor(215, 75, 65)
 _MISSED = QColor(150, 150, 155)
 
+#: The three things a creature spends. Green for movement and blue for the
+#: action, because they are two halves of one turn and want telling apart at a
+#: glance; red for a reaction already spent, because that one is a warning
+#: rather than an allowance -- it is what somebody walking past has to know.
+_MOVE_LEFT = QColor(110, 190, 120)
+_ACTION_LEFT = QColor(120, 170, 230)
+_REACTED = QColor(215, 95, 85)
+
 #: How solid a body on the floor is drawn. Faint enough to read as "not in
 #: this any more" at a glance, solid enough that nobody has to hunt for it --
 #: where somebody fell is a thing the party is trying to get to.
@@ -105,6 +113,18 @@ class Token:
     #: faint, and still on its square. Taking it away hid the thing a party
     #: most wants to see, which is how far away their friend is.
     down: bool = False
+    #: Squares this creature can still walk, and whether its action is still
+    #: there. Only meaningful for whoever is up, which is the only token they
+    #: are drawn on: what is left of *your* turn is the question a turn is
+    #: about, and a pip on every token would be sixteen answers to it.
+    squares_left: int = 0
+    acted: bool = False
+    #: Already swung at somebody walking past this round. The opposite
+    #: polarity to the two above, deliberately: still having your reaction is
+    #: everybody's default state and drawing it everywhere says nothing, while
+    #: having spent it is the exception and it is exactly what somebody
+    #: deciding whether to walk past this creature needs to know.
+    reacted: bool = False
 
     @property
     def initials(self) -> str:
@@ -994,6 +1014,65 @@ class GridMap(QWidget):
             initials.setAlphaF(opacity)
             painter.setPen(QPen(initials))
             painter.drawText(box, Qt.AlignmentFlag.AlignCenter, token.initials)
+
+        if not (token.down or going_down):
+            self._draw_budget(painter, token, square, cell, opacity)
+
+    def _draw_budget(
+        self, painter: QPainter, token: Token, square: QRect, cell: int, opacity: float
+    ) -> None:
+        """What this creature has left, under its feet.
+
+        Two questions, and they want opposite answers. *What is left of my
+        turn* is asked about one creature -- whoever is up -- so its two pips
+        are drawn only there; a boot and a blade on every token would be
+        sixteen answers to a question about one of them. *Can that thing swing
+        at me as I go past* is asked about everybody else, and its answer is
+        interesting only when it is no: a mark that appears once the reaction
+        is spent, rather than one that sits on every token saying "still".
+
+        Beneath the token rather than over it, so nothing covers the initials
+        that say who this is.
+        """
+        if cell < MIN_CELL + 6:
+            return  # no room for a pip that anybody could tell from a speck
+
+        size = max(5, cell // 5)
+        gap = max(2, size // 3)
+        marks: list[tuple[QColor, bool]] = []
+        if token.is_turn:
+            # Filled while it is still there, hollow once it is gone: a spent
+            # move should read as an outline of the thing you no longer have.
+            marks.append((_MOVE_LEFT, token.squares_left > 0))
+            marks.append((_ACTION_LEFT, not token.acted))
+        if token.reacted:
+            marks.append((_REACTED, True))
+        if not marks:
+            return
+
+        width = len(marks) * size + (len(marks) - 1) * gap
+        x = square.center().x() - width // 2
+        # Straddling the bottom of the token, like a badge. Wholly inside it
+        # and the initials fight for the space; wholly below and it lands in
+        # the next creature's square.
+        y = square.bottom() - size
+
+        # A ring in the board's own colour behind every pip, so green on blue
+        # and red on red are both still a pip rather than a smudge.
+        backing = QPen(self.palette().base().color(), max(1, size // 3))
+        for colour, filled in marks:
+            shade = QColor(colour)
+            shade.setAlphaF(shade.alphaF() * opacity)
+            spot = QRect(x, y, size, size)
+            painter.setPen(backing)
+            painter.setBrush(shade if filled else self.palette().base())
+            painter.drawEllipse(spot)
+            if not filled:
+                # Spent: an outline where the thing used to be.
+                painter.setPen(QPen(shade, max(1, size // 4)))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(spot.adjusted(1, 1, -1, -1))
+            x += size + gap
 
     # ------------------------------------------------------------------ mouse
 

@@ -510,11 +510,44 @@ class EncounterWidget(QWidget):
                     is_turn=self._is_turn(combatant),
                     unseen=self._unseen(combatant),
                     down=combatant.down,
+                    squares_left=self._squares_left(combatant),
+                    acted=bool(self._encounter.action_used),
+                    reacted=self._has_reacted(combatant),
                 )
                 for combatant in self._combatants
                 if combatant.on_map
             ]
         )
+
+    def _squares_left(self, combatant) -> int:
+        """How far this creature could still walk, if it is their turn.
+
+        Zero for everybody else, which is what the map wants: the pips are only
+        drawn for whoever is up, and a number worked out for the other fifteen
+        would be fifteen sheet reads a frame for something nobody draws.
+        """
+        if self._encounter is None or not self._is_turn(combatant):
+            return 0
+        entity = self._entities.get(combatant.entity_id)
+        sheet = (getattr(entity, "data", None) or {}).get("sheet") or {}
+        from canon_keeper.rules import derive
+
+        try:
+            speed = derive.speed_in_squares(sheet, self._content_for_rules())
+        except Exception:  # noqa: BLE001 - a broken sheet is not worth a crash
+            return 0
+        return max(0, speed - int(self._encounter.moved_squares or 0))
+
+    def _has_reacted(self, combatant) -> bool:
+        """Already swung at somebody walking past, this round.
+
+        Compared against the round rather than stored as a flag: what is
+        recorded is the round they reacted in, so nothing has to be cleared at
+        the top of a round and no stale flag can survive one.
+        """
+        if self._encounter is None or not self._encounter.has_begun:
+            return False
+        return int(getattr(combatant, "reaction_round", 0) or 0) >= self._encounter.round
 
     def _fill_heading(self) -> None:
         if self._encounter is None:
@@ -749,10 +782,13 @@ class EncounterWidget(QWidget):
         if self._condition_of(combatant) != death.UP:
             return []
         choices: list[Choice] = []
-        if combatant.on_map:
+        if combatant.on_map and self._squares_left(combatant) > 0:
             choices.append(Choice(kind="move", label="Move"))
-        for weapon in self._weapons_of(combatant):
-            choices.append(Choice(kind="attack", label=weapon, weapon=weapon))
+        # A spent action takes every weapon with it: one action is one swing,
+        # so offering a wedge the host would refuse would be a wheel that lies.
+        if not (self._encounter is not None and self._encounter.action_used):
+            for weapon in self._weapons_of(combatant):
+                choices.append(Choice(kind="attack", label=weapon, weapon=weapon))
         return choices
 
     def _offer_wheel(self, combatant_id: int) -> None:
@@ -770,7 +806,7 @@ class EncounterWidget(QWidget):
         choices = self._choices_for(combatant)
         if not choices:
             self._ctx.bus.status_message.emit(
-                f"{self._name_of(combatant)} has nothing to do from here."
+                f"{self._name_of(combatant)} has nothing left this turn."
             )
             return
         self._map.offer(combatant_id, choices)

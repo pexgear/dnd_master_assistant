@@ -2182,6 +2182,27 @@ class SessionServer(QObject):
             return speed
         return max(0, speed - int(encounter.moved_squares or 0))
 
+    def already_acted(self, combatant, entity) -> str:
+        """Whether this creature's action is already spent, and so says.
+
+        A turn is a move up to your speed and *one* action. The app has counted
+        the action since there was a turn budget at all, and until now nothing
+        read the count -- so a second swing went through, which made the whole
+        budget decorative. Told as a sentence rather than a shrug, the same way
+        being out of reach is, because it is a rule and rules are worth stating.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None or combatant is None or entity is None:
+            return ""
+        if encounter.turn_combatant_id != combatant.id:
+            # Not their turn: an opportunity attack, or a DM resolving
+            # something out of order. Neither spends this turn's action, so
+            # neither is bound by it.
+            return ""
+        if not encounter.action_used:
+            return ""
+        return f"{entity.name} has already acted this turn."
+
     def _send_refusal(self, socket: QWebSocket, message: str) -> None:
         self._send(socket, MessageType.ERROR, code="refused", message=message)
 
@@ -2766,10 +2787,20 @@ class SessionServer(QObject):
             x, y = int(move[0]), int(move[1])
             if not encounter.holds(x, y):
                 return f"{x},{y} is off the map."
+            # The same allowance a player is held to. Dragging a token remains
+            # free -- that gesture means "put it there", not "walk there" --
+            # but a turn taken *as a turn* obeys the rules whoever takes it, or
+            # the budget on screen is decorative.
+            short = self._too_far(combatant, entity, x, y)
+            if short:
+                return short
             if not self._do_move(combatant_id, x, y, spending=True):
                 return f"{x},{y} is taken, or something is in the way."
 
         if target is not None:
+            spent = self.already_acted(combatant, entity)
+            if spent:
+                return spent
             self._swing(
                 {"combatant": combatant_id, "target": int(target), "weapon": weapon}
             )
@@ -2820,7 +2851,20 @@ class SessionServer(QObject):
             )
 
         if action.get("target") is not None:
-            self._swing(action)
+            # A bend is the DM saying the rule does not apply this once, so it
+            # skips the check the same way the reach check is skipped.
+            spent = (
+                ""
+                if action.get("bending")
+                else self.already_acted(
+                    self.repos.encounters.combatant(action["combatant"]),
+                    self._entity_of(action["combatant"]),
+                )
+            )
+            if spent:
+                self._tell(session.account_id, spent)
+            else:
+                self._swing(action)
 
         self.publish_encounter()
         self.encounter_applied.emit()
