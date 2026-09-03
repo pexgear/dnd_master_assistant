@@ -433,6 +433,14 @@ is on the felt. Lining a whole turn up before committing to it is then a change
 to *when* the plan is handed over, in one method, rather than a rewrite of how
 the map works.
 
+While a move is being lined up, hovering a square shows the walk to it —
+`GridMap._hover_path`, built with `grid.steps_between`, the same step-by-step
+walk the host sends when a move actually happens. Drawn rather than left to be
+counted: "how many squares is that corner" is the question a grid exists to
+answer. The part beyond `Token.squares_left` turns the same warning colour a
+spent reaction is marked in, so a move that would be refused reads as refused
+before it is clicked rather than after.
+
 ### A player's turn
 
 A player writes what they want in plain words. The agent turns that into rules
@@ -571,10 +579,15 @@ a table more than it gives.
 **Opportunity attacks** are the one piece of combat the app rules on without
 being asked. Leaving an enemy's reach provokes one, because the alternative is a
 grid that is only a diagram: walking past a thing has to cost something or where
-anybody stands stops mattering. Start and end squares, not every square of the
-path; one reaction each per round, held as the round it was spent in rather than
-a flag somebody has to remember to clear. Sides are player characters against
-everything else, which is crude and is not a form to fill in before a fight.
+anybody stands stops mattering. Checked one square of the walk at a time
+(`grid.steps_between`, the same line the move is animated along) rather than
+only where it starts and ends, so a creature who cuts straight through an
+ogre's reach on the way to somewhere else — never adjacent at either end of the
+move — still gets swung at. One reaction each per round, held as the round it
+was spent in rather than a flag somebody has to remember to clear, and one per
+watcher no matter how many times a single walk crosses in and out of its
+reach. Sides are player characters against everything else, which is crude and
+is not a form to fill in before a fight.
 
 ---
 

@@ -315,6 +315,11 @@ class GridMap(QWidget):
         #: What the map is waiting for after a wedge was picked: "move" for a
         #: square, "attack" for a creature, or None.
         self._awaiting: Choice | None = None
+        #: The walk to wherever the pointer is, while a move is awaited. Shown
+        #: rather than left to the imagination, because "how many squares is
+        #: that corner" is exactly the question a grid is supposed to answer
+        #: without anybody counting on their fingers.
+        self._hover_path: list[tuple[int, int]] = []
         #: The square something is being dragged over, outlined so the drop
         #: lands where the pointer says it will.
         self._hover: tuple[int, int] | None = None
@@ -511,6 +516,7 @@ class GridMap(QWidget):
         self._choices = []
         self._hovering = None
         self._awaiting = None
+        self._hover_path = []
         self.setMouseTracking(False)
         if was:
             self.radial_changed.emit(False)
@@ -707,6 +713,21 @@ class GridMap(QWidget):
             cell,
         )
 
+    def _path_to(self, square: tuple[int, int] | None) -> list[tuple[int, int]]:
+        """The walk from whoever is moving to ``square``, or nothing.
+
+        The same step-by-step walk the host sends when a move actually
+        happens (:func:`grid.steps_between`), so what is previewed is what
+        would be taken -- not a client's own idea of a line that might
+        disagree with the one that gets animated.
+        """
+        if square is None or self._selected is None:
+            return []
+        mover = next((t for t in self._drawable() if t.id == self._selected), None)
+        if mover is None or (mover.x, mover.y) == square:
+            return []
+        return grid.steps_between((mover.x, mover.y), square)
+
     def _token_at(self, x: int, y: int) -> Token | None:
         for token in self._tokens:
             if token.x == x and token.y == y:
@@ -776,6 +797,7 @@ class GridMap(QWidget):
             self._draw_token(painter, token, at, cell, origin, now)
 
         self._draw_preview(painter, cell, origin)
+        self._draw_move_preview(painter, cell, origin)
         self._draw_radial(painter, cell, origin, now)
         self._draw_numbers(painter, cell, origin, now)
 
@@ -938,6 +960,59 @@ class GridMap(QWidget):
             self._draw_sword(
                 painter, self._at(*self._preview.target, cell, origin), cell
             )
+
+    def _draw_move_preview(self, painter: QPainter, cell: int, origin: QPoint) -> None:
+        """The walk to wherever the pointer is, while a move is being lined up.
+
+        Drawn rather than left to be counted: "how many squares is that
+        corner" is exactly the question a grid exists to answer, and making
+        the DM count it by eye is the grid failing at its one job. The line
+        follows :func:`grid.steps_between` -- the same walk the host would
+        actually send -- so what is previewed is never a different line from
+        what gets animated once the square is clicked.
+
+        The part beyond what this turn has left turns the warning colour, the
+        same one a spent reaction is marked in: a DM should see a move refused
+        before clicking it, not after.
+        """
+        if len(self._hover_path) < 2:
+            return
+        mover = next((t for t in self._drawable() if t.id == self._selected), None)
+        if mover is None:
+            return
+
+        steps = len(self._hover_path) - 1
+        reach = mover.squares_left if mover.is_turn else steps
+        centres = [self._at(x, y, cell, origin).center() for x, y in self._hover_path]
+
+        def _segment(points: list[QPoint], colour: QColor) -> None:
+            if len(points) < 2:
+                return
+            painter.setPen(QPen(colour, max(2, cell // 12), Qt.PenStyle.DashLine))
+            for a, b in zip(points, points[1:]):
+                painter.drawLine(a, b)
+
+        _segment(centres[: reach + 1], _PLAN)
+        _segment(centres[reach:], _HURT)
+
+        # A dot on every square walked through, not only the ends -- the count
+        # of them is the distance, and a distance is easier to see than to add.
+        painter.setPen(Qt.PenStyle.NoPen)
+        for index, point in enumerate(centres[1:-1], start=1):
+            painter.setBrush(_PLAN if index <= reach else _HURT)
+            radius = max(2, cell // 10)
+            painter.drawEllipse(point, radius, radius)
+
+        end = self._hover_path[-1]
+        ghost = QColor(_OURS if mover.ours else _THEIRS)
+        ghost.setAlpha(110)
+        box = self._at(*end, cell, origin).adjusted(
+            cell // 8, cell // 8, -cell // 8, -cell // 8
+        )
+        ring = _HURT if steps > reach else _PLAN
+        painter.setPen(QPen(ring, max(1, cell // 16), Qt.PenStyle.DashLine))
+        painter.setBrush(ghost)
+        painter.drawEllipse(box)
 
     @staticmethod
     def _draw_sword(painter: QPainter, square, cell: int) -> None:
@@ -1291,7 +1366,11 @@ class GridMap(QWidget):
         self._choices = []
         self._hovering = None
         self._awaiting = choice
-        self.setMouseTracking(False)
+        self._hover_path = []
+        # Kept on only for a move: that is the one answer worth previewing
+        # before it is clicked, and tracking costs nothing while the map is
+        # otherwise idle waiting for the pointer.
+        self.setMouseTracking(choice.kind == "move")
         self.radial_changed.emit(False)
         self.update()
 
@@ -1305,6 +1384,8 @@ class GridMap(QWidget):
         """
         choice, combatant = self._awaiting, self._selected
         self._awaiting = None
+        self._hover_path = []
+        self.setMouseTracking(False)
         if choice is None or combatant is None:
             self.update()
             return
@@ -1336,11 +1417,25 @@ class GridMap(QWidget):
                 self._hovering = over
                 self.update()
             return
+        if self._awaiting is not None and self._awaiting.kind == "move":
+            square = self._square_at(event.position().toPoint())
+            path = self._path_to(square)
+            if path != self._hover_path:
+                self._hover_path = path
+                self.update()
+            return
         if self._dragging is None:
             return
         square = self._square_at(event.position().toPoint())
         if square is not None and square != self._drag_to:
             self._drag_to = square
+            self.update()
+
+    def leaveEvent(self, _event) -> None:  # noqa: N802 - Qt's name
+        # The pointer left without landing on a square, so there is nothing
+        # left to preview a walk toward.
+        if self._hover_path:
+            self._hover_path = []
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt's name

@@ -5,10 +5,14 @@ wizard behind it, and the ogre may only watch -- so standing next to something
 means nothing, and neither does choosing where to stand. This is the rule that
 makes the map a map.
 
-The version here is the one people play rather than the one that is written:
-the squares somebody starts and ends on, not every square in between. Stepping
-around an enemy and back into its reach has not really left it, and a rule that
-fired anyway would punish moving at all.
+Every square of the walk is checked, not only where it starts and ends --
+found with the same step-by-step line the move is animated along
+(`grid.steps_between`). Checking only the ends missed a creature who cut
+straight through an ogre's reach on the way to somewhere else, never adjacent
+at either end of the move. Stepping around an enemy and back into its reach,
+by contrast, has not really left it, and a rule that fired on every wobble
+would punish moving at all -- "did you leave, at any point during the walk" is
+the version people actually play, and that is the one checked here.
 """
 
 from __future__ import annotations
@@ -163,6 +167,38 @@ def test_a_dm_arranging_the_board_provokes_nothing(fight, monkeypatch):
     before = _hp(repos, hero)
 
     server._do_move(tokens["hero"].id, 0, 4, spending=False)
+
+    assert _hp(repos, hero) == before
+
+
+def test_cutting_through_reach_without_stopping_still_provokes(fight, monkeypatch):
+    """Never adjacent at the start, never adjacent at the end -- and still hit.
+
+    Start-and-end-only missed exactly this: a walk that enters an enemy's
+    reach and leaves it again inside one move, with nothing at either end to
+    show for it.
+    """
+    monkeypatch.setattr(server_module, "roll", _Rolls(19, 5))
+    server, repos, _encounter, tokens, hero, _goblin, _archer = fight
+    # The goblin stays at 1,0. A straight walk up column 0 passes within one
+    # square of it at y=-1,0,1 and is nowhere near it at either end.
+    repos.encounters.place(tokens["hero"].id, 0, -3)
+    before = _hp(repos, hero)
+
+    server._do_move(tokens["hero"].id, 0, 3, spending=True)
+
+    assert _hp(repos, hero) < before, "walking straight through reach was free"
+
+
+def test_never_getting_close_enough_provokes_nothing(fight, monkeypatch):
+    """The other half of the same check: a walk that never enters is not a leave."""
+    monkeypatch.setattr(server_module, "roll", _Rolls(19, 5))
+    server, repos, _encounter, tokens, hero, _goblin, _archer = fight
+    # Column -3 stays four squares from the goblin at 1,0 the whole way.
+    repos.encounters.place(tokens["hero"].id, -3, -3)
+    before = _hp(repos, hero)
+
+    server._do_move(tokens["hero"].id, -3, 3, spending=True)
 
     assert _hp(repos, hero) == before
 

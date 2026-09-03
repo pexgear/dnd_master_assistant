@@ -1884,12 +1884,19 @@ class SessionServer(QObject):
         return one.team_id != other.team_id
 
     def _opportunity_attacks(self, mover, to_x: int, to_y: int) -> None:
-        """Everybody whose reach this creature is walking out of gets a swing.
+        """Everybody whose reach this creature walks out of gets a swing.
 
-        Start and end squares only -- not every square of the path. A creature
-        that steps around an ogre and back into its reach has not really left
-        it, and a rule that fired anyway would punish moving at all. The
-        version people play at a table is "did you leave", and this is that.
+        Evaluated one square of the walk at a time
+        (:func:`grid.steps_between`, the same walk the move is animated
+        along) rather than only the start and the end. Start-and-end alone
+        missed the creature who was never adjacent when it *started* but
+        crossed straight through an ogre's reach on the way to somewhere
+        else -- entered and left in the same move, with nothing at either
+        end to show for it. Squeezing along the *edge* of a reach and back
+        out the same side, by contrast, is still not really leaving it: a
+        rule that fired on every wobble would punish moving at all. The
+        version people play at a table is "did you leave, at any point
+        during the walk", and checking each step is that.
         """
         encounter = self._the_running_fight()
         if encounter is None or mover.id is None:
@@ -1901,6 +1908,7 @@ class SessionServer(QObject):
         # before the first step anybody takes -- not at the next publish.
         self.repos.encounters.sort_into_teams(encounter.id)
         mover = self.repos.encounters.combatant(mover.id) or mover
+        path = grid.steps_between((mover.x, mover.y), (to_x, to_y))
 
         resting = self._resting()
         for other in self.repos.encounters.combatants(encounter.id):
@@ -1915,18 +1923,28 @@ class SessionServer(QObject):
             watcher = self._entity_of(other.id)
             if watcher is None:
                 continue
-
             sheet = (watcher.data or {}).get("sheet") or {}
-            was = attack.squares_between((other.x, other.y), (mover.x, mover.y))
-            now = attack.squares_between((other.x, other.y), (to_x, to_y))
-            if not attack.threatens(sheet, self.content, was):
-                continue
-            if attack.threatens(sheet, self.content, now):
-                continue  # still in reach: they have not got away with anything
-
             weapon = attack.melee_weapon(sheet, self.content)
             if weapon is None:
                 continue
+
+            # The first step of the walk where this watcher's reach is behind
+            # rather than ahead -- the exact square the walk leaves it from,
+            # found rather than assumed to be the last one. `break` the moment
+            # it is found: this watcher has one reaction regardless of whether
+            # the rest of the walk crosses back through its reach again.
+            left_at = None
+            for here, there in zip(path, path[1:]):
+                was = attack.squares_between((other.x, other.y), here)
+                now = attack.squares_between((other.x, other.y), there)
+                if attack.threatens(sheet, self.content, was) and not attack.threatens(
+                    sheet, self.content, now
+                ):
+                    left_at = there
+                    break
+            if left_at is None:
+                continue
+
             self.repos.encounters.use_reaction(other.id, encounter.round)
             self._broadcast_system(
                 f"{moving.name} leaves {watcher.name}'s reach: "

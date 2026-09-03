@@ -17,6 +17,10 @@ What changed, from the point of view of someone running a game. See
   on the felt. But a turn now travels as one plan rather than as two separate
   events, so lining a whole turn up before committing to it is a change to
   *when* the plan is handed over rather than a rewrite.
+- **Picking Move and hovering a square shows the walk to it**, before you
+  click. The part beyond what the turn has left turns the same warning colour a
+  spent reaction is marked in, so a move that would be refused reads as
+  refused before it is clicked rather than after.
 
 ### A map you can zoom
 
@@ -49,6 +53,18 @@ What changed, from the point of view of someone running a game. See
 
 **Everyone at a table needs this version.** The wire moved to 8 — whether a
 creature has spent its reaction is a new thing said over it.
+
+### Opportunity attacks now catch a walk straight through
+
+- **A creature that cuts through an enemy's reach on the way to somewhere
+  else is swung at, even when it is never adjacent at either end of the
+  move.** Opportunity attacks were checked at only the start and the end
+  square of a walk, which missed exactly this: entering and leaving reach
+  inside one move, with nothing at either end to show for it. Every square
+  of the walk is checked now, using the same line the move is animated
+  along, so what is enforced and what is shown agree. Squeezing along the
+  *edge* of a reach and back out the same side is still not a leave — a rule
+  that fired on every wobble would punish moving at all.
 
 ### A fight works with nobody connected
 
