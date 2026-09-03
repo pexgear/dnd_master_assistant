@@ -830,8 +830,11 @@ class TableWidget(QWidget):
                 self._ctx.repos, self._ctx.campaign_id, parent=self
             )
             # Nothing is sent anywhere -- there is nowhere to send it -- but the
-            # DM's own map still has to hear that the fight moved.
+            # DM's own map still has to hear that the fight moved, and how: a
+            # walk or a swing is an animation, not just a database row that
+            # changed underneath it.
             self._alone.encounter_applied.connect(self._on_agent_moved)
+            self._alone.played.connect(self._ctx.bus.play)
         return self._alone
 
     def _on_turn_taken(self, turn: dict) -> None:
@@ -1016,6 +1019,10 @@ class TableWidget(QWidget):
         # A character handed over, or handed back, is a change to the
         # fight -- so this is where a stand-in starts and stops.
         server.encounter_applied.connect(self._mind_the_stand_ins)
+        # Normally the wire carries this, through our own loopback join below
+        # -- but that join has not completed the instant hosting starts, and
+        # this covers the narrow window before it has.
+        server.played.connect(self._ctx.bus.play)
         if not server.start(port):
             server.deleteLater()
             return

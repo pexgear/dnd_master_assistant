@@ -160,6 +160,41 @@ def test_the_map_is_told(alone, qtbot):
         widget._on_turn_taken({"combatant": tokens["hero"].id, "move": [1, 1]})
 
 
+def test_a_move_is_animated_with_nobody_connected(alone, qtbot):
+    """The whole point of the referee existing offline: not a silent teleport.
+
+    ``_show`` only ever sent PLAY frames to connected sessions, so a token
+    moved without any -- exactly the offline case -- never got an animation
+    at all. It just jumped, because nothing told the map it had walked there.
+    """
+    widget, repos, enc, tokens = alone
+
+    # Straight up column 0 -- the goblin at 1,0 is never actually on the path,
+    # only ever adjacent to it, so nothing here should be refused as blocked.
+    with qtbot.waitSignal(widget._ctx.bus.play) as caught:
+        widget._on_turn_taken({"combatant": tokens["hero"].id, "move": [0, 3]})
+
+    event = caught.args[0]
+    assert event["kind"] == "move"
+    assert event["combatant"] == tokens["hero"].id
+    assert event["path"][0] == [0, 0]
+    assert event["path"][-1] == [0, 3]
+
+
+def test_a_swing_is_animated_with_nobody_connected(alone, qtbot):
+    widget, repos, enc, tokens = alone
+
+    with qtbot.waitSignal(widget._ctx.bus.play) as caught:
+        widget._on_turn_taken(
+            {"combatant": tokens["hero"].id, "target": tokens["goblin"].id}
+        )
+
+    event = caught.args[0]
+    assert event["kind"] == "attack"
+    assert event["combatant"] == tokens["hero"].id
+    assert event["target"] == tokens["goblin"].id
+
+
 def test_going_online_retires_the_lone_referee(alone):
     """Two referees is two sets of dice, and one of them is wrong."""
     from canon_keeper.net.server import SessionServer

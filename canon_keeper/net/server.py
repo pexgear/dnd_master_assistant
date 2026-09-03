@@ -153,6 +153,12 @@ class SessionServer(QObject):
     #: agent on autopilot. Same reason as above: the DM's map is read from the
     #: database, so it does not know until it is told.
     encounter_applied = Signal()
+    #: A move or a swing happened, for whoever is watching with nobody
+    #: connected to send it to. Everyone connected -- including the DM's own
+    #: loopback join while hosting -- gets this over the wire instead, from
+    #: :meth:`_show`; this is only for the fight run alone, where there is no
+    #: wire and the DM's own map would otherwise just teleport tokens around.
+    played = Signal(dict)
 
     def __init__(
         self,
@@ -1412,9 +1418,22 @@ class SessionServer(QObject):
         Filtered like the map itself. A token you were never sent does not
         acquire an animation -- that would be the one thing projection exists
         to prevent, arriving as a moving dot.
+
+        With nobody connected at all -- not even our own loopback join, which
+        means we are not hosting -- there is no wire for this to travel, and
+        the DM's own map would otherwise just teleport tokens around. Emitted
+        locally in that one case only: hosting always joins ourselves as a
+        session, so this and the wire never fire for the same move.
         """
         if combatant is None:
             return
+        if not self._sessions:
+            payload = dict(detail)
+            payload["kind"] = kind
+            payload["combatant"] = combatant.id
+            if target is not None:
+                payload["target"] = target.id
+            self.played.emit(payload)
         for socket, session in self._sessions.items():
             visible = visible_entity_ids(self.repos, self.campaign_id, session.viewer)
             if not self._can_see(combatant, session, visible):
@@ -1778,6 +1797,15 @@ class SessionServer(QObject):
         # A DM dragging a token is arranging the board, which is not a turn and
         # has never had a rule about it.
         entity = self._entity_of(combatant_id)
+        if session.is_agent and entity is not None and x is not None and y is not None:
+            blocked = self._blocked_path(combatant, entity, x, y)
+            if blocked:
+                # Also not bendable: a body in the way is a fact about the
+                # map, the same tier as a square already taken or off the
+                # edge of it, not a rule the DM can wave through.
+                self._send_refusal(socket, blocked)
+                return
+
         if session.is_agent and entity is not None:
             reason = self._breaks_a_rule(
                 encounter, combatant, entity, [x, y] if x is not None else None
@@ -2178,6 +2206,34 @@ class SessionServer(QObject):
             f"{entity.name} has {left} squares left this turn "
             f"({left * 5} feet{already}), and {x},{y} is {steps} away."
         )
+
+    def _blocked_path(self, combatant, entity, x: int, y: int) -> str:
+        """Whether somebody is standing in the way of this walk, or nobody is.
+
+        Checked one square at a time along the same line the move animates
+        along and opportunity attacks are checked against (`grid.steps_between`)
+        -- three rules reading the same walk the same way rather than three
+        slightly different ideas of it. Only the squares in between: the
+        destination's own occupant is refused by ``place`` regardless of this,
+        and the square already stood on cannot be occupied by somebody else.
+
+        The fallen do not block it -- ``at`` already excludes them -- because
+        stepping over a body is a thing people do, and a corpse that closed a
+        corridor would turn the end of every fight into an obstacle course.
+        """
+        if not combatant.on_map:
+            return ""
+        encounter = self._the_running_fight()
+        if encounter is None:
+            return ""
+        path = grid.steps_between((combatant.x, combatant.y), (x, y))
+        for square in path[1:-1]:
+            occupant = self.repos.encounters.at(encounter.id, *square)
+            if occupant is not None and occupant.id != combatant.id:
+                blocker = self._entity_of(occupant.id)
+                name = blocker.name if blocker is not None else "something"
+                return f"{name} is in {entity.name}'s way, at {square[0]},{square[1]}."
+        return ""
 
     def _spent_this_turn(self, combatant) -> int:
         encounter = self._the_running_fight()
@@ -2812,6 +2868,9 @@ class SessionServer(QObject):
             short = self._too_far(combatant, entity, x, y)
             if short:
                 return short
+            blocked = self._blocked_path(combatant, entity, x, y)
+            if blocked:
+                return blocked
             if not self._do_move(combatant_id, x, y, spending=True):
                 return f"{x},{y} is taken, or something is in the way."
 
@@ -2846,12 +2905,14 @@ class SessionServer(QObject):
             # measuring from may not be the one they were standing on.
             standing = self.repos.encounters.combatant(action["combatant"])
             entity = self._entity_of(action["combatant"])
-            reason = (
-                self._too_far(standing, entity, x, y)
-                if standing is not None and entity is not None
-                and not action.get("bending")
-                else ""
-            )
+            reason = ""
+            if standing is not None and entity is not None:
+                # The speed limit is a rule and "bending" waives it. A body in
+                # the way is not a rule -- it is a fact about the map, the same
+                # tier as a square already taken -- so bending does not touch it.
+                reason = self._blocked_path(standing, entity, x, y)
+                if not reason and not action.get("bending"):
+                    reason = self._too_far(standing, entity, x, y)
             moved = not reason and self._do_move(
                 action["combatant"], x, y, spending=True
             )

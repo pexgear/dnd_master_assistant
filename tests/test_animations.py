@@ -27,6 +27,7 @@ from canon_keeper.panels.encounter.grid import (
     STEP_MS,
     GridMap,
     Token,
+    eased,
 )
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC, Entity
 from canon_keeper_protocol import Played, grid
@@ -105,6 +106,43 @@ def test_a_walk_of_one_square_is_not_animated(map_widget):
     """There is nothing between the two squares to show."""
     map_widget.play({"kind": Played.MOVE.value, "combatant": 1, "path": [[0, 0]]})
     assert map_widget._effects == []
+
+
+def test_a_step_is_slow_enough_to_watch(map_widget):
+    """Fast enough and a walk is a teleport with extra steps."""
+    assert STEP_MS >= 200
+
+
+# ------------------------------------------------------------------ easing
+
+
+def test_the_walk_starts_and_ends_at_a_standstill():
+    """A creature leans into a run and settles out of it -- it is not dragged."""
+    assert eased(0.0) == pytest.approx(0.0)
+    assert eased(1.0) == pytest.approx(1.0)
+    # Barely moving at either end, and past halfway by the middle.
+    assert eased(0.05) < 0.05
+    assert eased(0.95) > 0.95
+    assert eased(0.5) == pytest.approx(0.5)
+
+
+def test_easing_never_goes_backwards():
+    seen = [eased(step / 20) for step in range(21)]
+    assert seen == sorted(seen)
+
+
+def test_easing_stays_inside_the_walk():
+    """Overshooting would draw a token past the square it was walking to."""
+    assert eased(-1.0) == pytest.approx(0.0)
+    assert eased(2.0) == pytest.approx(1.0)
+
+
+def test_the_middle_of_a_walk_is_brisker_than_its_ends(map_widget):
+    """Eased over the whole walk, not each square -- or it stutters between them."""
+    early = eased(0.2) - eased(0.1)
+    middle = eased(0.55) - eased(0.45)
+
+    assert middle > early
 
 
 def test_the_token_is_drawn_along_the_way_not_at_the_end(map_widget):

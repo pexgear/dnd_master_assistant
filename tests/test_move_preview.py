@@ -201,6 +201,56 @@ def test_drawing_a_path_beyond_the_turns_reach_does_not_raise(battlefield):
     battlefield.grab()
 
 
+# ------------------------------------------------------- somebody in the way
+
+
+def test_a_body_in_the_way_stops_the_preview_there(battlefield):
+    """The host refuses to walk through anybody, so the line must say so.
+
+    A clean line drawn straight through the goblin would be promising a move
+    that is about to be taken back.
+    """
+    _awaiting_a_move(battlefield)
+
+    # The goblin stands at 1,0, squarely between 0,0 and 3,0.
+    _hover(battlefield, _centre_of(battlefield, 3, 0))
+
+    assert battlefield._first_body_in(battlefield._hover_path) == 1
+    battlefield.grab()  # must not raise
+
+
+def test_a_clear_line_is_not_stopped(battlefield):
+    _awaiting_a_move(battlefield)
+
+    _hover(battlefield, _centre_of(battlefield, 0, 3))
+
+    assert battlefield._first_body_in(battlefield._hover_path) is None
+
+
+def test_the_fallen_are_not_in_the_way(battlefield):
+    """The same exception the host makes: stepping over a body is ordinary."""
+    battlefield.set_tokens(
+        [
+            Token(id=1, label="Brok", x=0, y=0, ours=True, is_turn=True, squares_left=3),
+            Token(id=2, label="Yeemik", x=1, y=0, down=True),
+        ]
+    )
+    battlefield.select(1)
+    _awaiting_a_move(battlefield)
+
+    _hover(battlefield, _centre_of(battlefield, 3, 0))
+
+    assert battlefield._first_body_in(battlefield._hover_path) is None
+
+
+def test_you_are_never_in_your_own_way(battlefield):
+    _awaiting_a_move(battlefield)
+
+    _hover(battlefield, _centre_of(battlefield, 0, 2))
+
+    assert battlefield._first_body_in(battlefield._hover_path) is None
+
+
 def test_a_creature_not_on_its_own_turn_gets_no_reach_cap(qtbot):
     """squares_left is only ever populated for whoever is up (see the panel);
     a path drawn for anyone else must not silently read it as zero and turn

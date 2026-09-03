@@ -54,6 +54,30 @@ What changed, from the point of view of someone running a game. See
 **Everyone at a table needs this version.** The wire moved to 8 — whether a
 creature has spent its reaction is a new thing said over it.
 
+### Nobody walks through anybody
+
+- **A creature standing in the way stops a walk.** Only the destination square
+  was ever checked, so a move across the room went straight through whoever
+  was between as long as it ended somewhere empty. Every square of the walk
+  is checked now, and the hover preview turns the warning colour from the
+  blocker onward, so it reads as refused before you click rather than after.
+  Allies block too — two bodies still cannot share a square. The fallen do
+  not: stepping over somebody is ordinary, and a corpse that closed a corridor
+  would be worse than the rule it enforced.
+- It is not a rule the DM can waive for autopilot. Going too far is a rule and
+  can be bent; a body in the way is a fact about the map, in the same bracket
+  as a square already taken.
+
+### The fight moves again instead of jumping
+
+- **Walks and swings are animated with nobody connected.** Since combat
+  started working offline, the referee described every move to a wire that
+  was not there — so tokens teleported and the dice landed in silence. The
+  DM's own map is now told directly when nothing else is listening.
+- **A walk is slower and eases in and out of a run**, rather than sliding at a
+  flat speed and stopping dead. Half a second of that is the difference
+  between a piece being dragged across a board and somebody walking.
+
 ### Opportunity attacks now catch a walk straight through
 
 - **A creature that cuts through an enemy's reach on the way to somewhere

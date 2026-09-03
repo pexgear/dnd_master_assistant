@@ -438,8 +438,9 @@ While a move is being lined up, hovering a square shows the walk to it —
 walk the host sends when a move actually happens. Drawn rather than left to be
 counted: "how many squares is that corner" is the question a grid exists to
 answer. The part beyond `Token.squares_left` turns the same warning colour a
-spent reaction is marked in, so a move that would be refused reads as refused
-before it is clicked rather than after.
+spent reaction is marked in, and so does everything past somebody standing in
+the way, so a move that would be refused reads as refused before it is clicked
+rather than after.
 
 ### A player's turn
 
@@ -509,7 +510,16 @@ Two consequences worth knowing before changing it:
 
 Effects are timed against the clock, not counted in frames: a laptop that drops
 frames should show a shorter animation rather than a slower one, or two screens
-fall out of step within a round.
+fall out of step within a round. A walk is eased over its whole length rather
+than per square (`eased`, a smoothstep) — easing each square would be a creature
+stopping to think between every one of them.
+
+**With nobody connected there is no wire, and `_show` used to be the only way
+an animation was ever raised.** A fight run alone therefore teleported its
+tokens: the referee exists offline, but everything it described went to a
+session dict that was empty. `SessionServer.played` is the bypass, emitted only
+when there are no sessions at all — hosting always joins the DM's own client, so
+the signal and the wire never both fire for the same move.
 
 ### Bending the rules
 
@@ -575,6 +585,18 @@ handed their turn on purpose: the death save happens at the start of it. Skip
 them and they neither die nor recover, which is worse than either. Monsters get
 no saves — three more d20s to confirm the orc is finished is a rule that costs
 a table more than it gives.
+
+**Nobody walks through anybody.** `place` only ever checked the destination
+square, so a walk across the room went straight through whoever stood between
+as long as it ended somewhere empty. `_blocked_path` checks the squares in
+between, one at a time along the same `grid.steps_between` line the move
+animates along and opportunity attacks are checked against — three rules
+reading one walk the same way. It sits in the same tier as "that square is
+taken" and "that square is off the map": **not** a rule the DM can bend for an
+agent, because no amount of authority makes two creatures share a square. The
+fallen do not block it, which is the same exception `_occupant` already made so
+a corpse could not close a corridor. Dragging a token is untouched — that
+gesture means "put it there", not "walk there".
 
 **Opportunity attacks** are the one piece of combat the app rules on without
 being asked. Leaving an enemy's reach provokes one, because the alternative is a

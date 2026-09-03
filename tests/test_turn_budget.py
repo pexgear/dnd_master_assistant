@@ -116,18 +116,20 @@ def test_a_dm_cannot_walk_further_than_the_speed(fight):
 def test_within_the_speed_goes_through(fight):
     server, repos, enc, tokens, *_ = fight
 
-    assert server.take_turn(tokens["hero"].id, move=[3, 0]) == ""
+    # Straight down column 0. The goblin at 1,0 is beside that line, never on
+    # it -- this is about the allowance, not about walking through anybody.
+    assert server.take_turn(tokens["hero"].id, move=[0, 3]) == ""
 
     moved = repos.encounters.combatant(tokens["hero"].id)
-    assert (moved.x, moved.y) == (3, 0)
+    assert (moved.x, moved.y) == (0, 3)
 
 
 def test_the_allowance_is_spent_across_two_moves(fight):
     """Three squares, then four more, is seven -- and seven is too many."""
     server, repos, enc, tokens, *_ = fight
-    assert server.take_turn(tokens["hero"].id, move=[3, 0]) == ""
+    assert server.take_turn(tokens["hero"].id, move=[0, 3]) == ""
 
-    problem = server.take_turn(tokens["hero"].id, move=[7, 0])
+    problem = server.take_turn(tokens["hero"].id, move=[0, 7])
 
     assert "squares left" in problem
 

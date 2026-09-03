@@ -83,11 +83,28 @@ _BLADE = QColor(210, 90, 60)
 #: How long each part of an action takes to show. Constants rather than numbers
 #: on the wire: every client at a table runs the same build -- the protocol
 #: version says so at the door -- so they agree without being told.
-STEP_MS = 130      #: one square of walking
+STEP_MS = 220      #: one square of walking
 LUNGE_MS = 300     #: leaning in for a swing, and back
 FLOAT_MS = 1100    #: the damage rising off a token
 DOWN_MS = 650      #: a creature going down where it stands
 FRAME_MS = 33      #: about thirty a second, which is enough for a token
+
+
+def eased(fraction: float) -> float:
+    """Smoothstep: out of a standstill and back into one.
+
+    A walk drawn at a flat speed reads as a token being *dragged* across the
+    board by something outside the fight -- it starts at full pace and stops
+    dead. A creature leans into a run and settles out of it, and half a
+    second of that is the whole difference between a piece sliding and
+    somebody walking.
+
+    Over the whole walk rather than each square, so the middle of a long one
+    is brisk and only the ends are gentle. Easing every square would be a
+    creature stopping to think between each of them.
+    """
+    fraction = min(1.0, max(0.0, fraction))
+    return fraction * fraction * (3.0 - 2.0 * fraction)
 
 #: Damage, and the word for when there is none. Red for what it costs; grey for
 #: a miss, which is still worth showing -- it is half of what happened.
@@ -961,6 +978,19 @@ class GridMap(QWidget):
                 painter, self._at(*self._preview.target, cell, origin), cell
             )
 
+    def _first_body_in(self, path: list[tuple[int, int]]) -> int | None:
+        """Where along this walk somebody is standing, if anybody is.
+
+        The same rule the host holds a move to, so the two agree about which
+        walks are possible. The fallen are not in the way -- stepping over a
+        body is a thing people do, and it is what the host says too.
+        """
+        for index, square in enumerate(path[1:], start=1):
+            standing = self._token_at(*square)
+            if standing is not None and standing.id != self._selected and not standing.down:
+                return index
+        return None
+
     def _draw_move_preview(self, painter: QPainter, cell: int, origin: QPoint) -> None:
         """The walk to wherever the pointer is, while a move is being lined up.
 
@@ -973,7 +1003,10 @@ class GridMap(QWidget):
 
         The part beyond what this turn has left turns the warning colour, the
         same one a spent reaction is marked in: a DM should see a move refused
-        before clicking it, not after.
+        before clicking it, not after. Somebody standing in the way ends the
+        walk the same way and for the same reason -- the host refuses to walk
+        through a body, so a preview that drew a clean line through one would
+        be promising something that is about to be taken back.
         """
         if len(self._hover_path) < 2:
             return
@@ -983,6 +1016,9 @@ class GridMap(QWidget):
 
         steps = len(self._hover_path) - 1
         reach = mover.squares_left if mover.is_turn else steps
+        stopped = self._first_body_in(self._hover_path)
+        if stopped is not None:
+            reach = min(reach, stopped - 1)
         centres = [self._at(x, y, cell, origin).center() for x, y in self._hover_path]
 
         def _segment(points: list[QPoint], colour: QColor) -> None:
@@ -1102,7 +1138,7 @@ class GridMap(QWidget):
 
         walking = self._effect_on(token.id, "move")
         if walking and len(walking.path) > 1:
-            done = walking.progress(now)
+            done = eased(walking.progress(now))
             steps = len(walking.path) - 1
             exact = done * steps
             index = min(steps - 1, int(exact))
