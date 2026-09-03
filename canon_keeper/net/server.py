@@ -2327,6 +2327,20 @@ class SessionServer(QObject):
         if not self._may_act_for(session, combatant):
             self._refuse_the_fight(socket)
             return
+        # A fight is laid out before it is started -- tokens placed, initiative
+        # rolled -- and starting it is the moment the rules come on. Placing a
+        # creature during that is arranging; swinging at one is not. A human DM
+        # may still do it, because a DM doing something surprising on purpose
+        # is a ruling rather than a bug.
+        if (session.is_agent or session.seat_for is not None) and (
+            encounter is None or not encounter.has_begun
+        ):
+            self._send_refusal(
+                socket,
+                "The fight has not started yet. Nothing swings until it does.",
+            )
+            return
+
         if (
             encounter is None
             or combatant is None

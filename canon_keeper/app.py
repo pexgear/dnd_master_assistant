@@ -12,9 +12,10 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from canon_keeper import __version__, campaigns, config, credentials
+from canon_keeper import __version__, assets, campaigns, config, credentials
 from canon_keeper.bus import Bus
 from canon_keeper.db import connect, migrate
 from canon_keeper.naming import PanelNames
@@ -186,10 +187,31 @@ def _remember_choices(launch: Launch) -> None:
             campaigns.clear_autostart()
 
 
+#: What Windows files this application under. Without it a Python app is
+#: grouped in the taskbar as *python.exe* and shown with Python's icon, however
+#: carefully the window icon was set.
+APP_ID = "pexgear.CanonKeeper"
+
+
+def _own_the_taskbar_entry(log: logging.Logger) -> None:
+    """Tell Windows this is its own application. A no-op everywhere else."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception:  # noqa: BLE001 - a cosmetic call is never worth a crash
+        log.debug("could not claim a taskbar identity", exc_info=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     log = config.setup_logging(logging.DEBUG if args.verbose else logging.INFO)
     log.info("Canon Keeper %s starting", __version__)
+    # Before anything Qt: Windows decides which taskbar button a process owns
+    # the first time it puts one there, and it does not revisit the question.
+    _own_the_taskbar_entry(log)
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Canon Keeper")
@@ -197,6 +219,13 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName(config.APP_AUTHOR)
     # Fusion keeps the three platforms looking like the same application.
     app.setStyle("Fusion")
+    # Set on the application rather than per window, so every window, dialog
+    # and undocked panel carries it without anybody remembering to.
+    icon = QIcon(str(assets.icon_path()))
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+    else:
+        log.warning("the application icon did not load from %s", assets.icon_path())
 
     # The chooser appears before any campaign is open, so its appearance comes
     # from the profile -- otherwise a dark-mode user gets a flash of white.

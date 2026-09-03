@@ -50,7 +50,7 @@ from canon_keeper.panels.table import rolls
 from canon_keeper.panels.table.dialogs import AccountsDialog, HostDialog, JoinDialog
 from canon_keeper.panels.table.dice_overlay import RollDialog
 from canon_keeper.plugin import AppContext
-from canon_keeper.rules import death
+
 
 class _FunnelSignals(QObject):
     done = Signal(object)  # funnel.Result
@@ -96,6 +96,10 @@ class TableWidget(QWidget):
         super().__init__()
         self._ctx = ctx
         self._server: SessionServer | None = None
+        #: The referee for an evening run with nobody connected: the same host,
+        #: never started. Built on the first turn, and put away the moment a
+        #: real one exists, so there is never a second set of dice.
+        self._alone: SessionServer | None = None
         #: True while the join this app was launched with is still unresolved.
         #: The shell is waiting on it before showing the window.
         self._launching = False
@@ -807,13 +811,31 @@ class TableWidget(QWidget):
         if self._server is not None and self._server.is_running:
             self._server.publish_encounter()
 
-    def _on_turn_taken(self, turn: dict) -> None:
-        if self._server is None or not self._server.is_running:
-            self._ctx.bus.status_message.emit(
-                "Go online first -- the dice and the hit points are the host's."
+    def _referee(self):
+        """Whoever is holding the dice. Always somebody, online or not.
+
+        A fight is rolls and hit points before it is a network, and plenty of
+        evenings are run with the laptop on the table and nobody connected to
+        it. So the same host code runs either way: hosting is *other people
+        being able to reach* the referee, not the referee existing.
+
+        Built on the first turn rather than at start-up, because it opens a
+        session in the log, and a campaign you only came in to rename should
+        not get an evening it never had.
+        """
+        if self._server is not None:
+            return self._server
+        if self._alone is None:
+            self._alone = SessionServer(
+                self._ctx.repos, self._ctx.campaign_id, parent=self
             )
-            return
-        problem = self._server.take_turn(
+            # Nothing is sent anywhere -- there is nowhere to send it -- but the
+            # DM's own map still has to hear that the fight moved.
+            self._alone.encounter_applied.connect(self._on_agent_moved)
+        return self._alone
+
+    def _on_turn_taken(self, turn: dict) -> None:
+        problem = self._referee().take_turn(
             int(turn.get("combatant") or 0),
             move=turn.get("move"),
             target=turn.get("target"),
@@ -825,40 +847,14 @@ class TableWidget(QWidget):
     def _on_turn_requested(self, action: str) -> None:
         """The DM's Combat panel passing the turn.
 
-        Through the host when there is one, because a dying character's death
-        save is rolled as the turn passes and dice are the host's. With nobody
-        hosting there is no save to roll and no table to tell, so the order is
-        walked here -- still stepping over whoever is out of the fight, so that
-        laying an encounter out alone behaves like running one.
+        Through the referee either way, because a dying character's death save
+        is rolled as the turn passes and dice are the referee's -- and a fight
+        run alone must behave like a fight run for four people, or the rules
+        quietly become two sets of rules.
         """
-        if self._server is not None and self._server.is_running:
-            problem = self._server.run_turn(action)
-            if problem:
-                self._ctx.bus.status_message.emit(problem)
-            return
-
-        encounters = self._ctx.repos.encounters
-        encounter = encounters.running(self._ctx.campaign_id)
-        if encounter is None:
-            return
-        if action == "next":
-            combatants = encounters.combatants(encounter.id)
-            encounters.advance(
-                encounter.id,
-                passing_over=death.resting(
-                    combatants,
-                    lambda c: (
-                        self._ctx.repos.entities.get(c.entity_id)
-                        if c.entity_id is not None
-                        else None
-                    ),
-                ),
-            )
-        elif action == "begin":
-            encounters.begin(encounter.id)
-        elif action == "end":
-            encounters.end(encounter.id)
-        self._ctx.bus.encounter_changed.emit()
+        problem = self._referee().run_turn(action)
+        if problem:
+            self._ctx.bus.status_message.emit(problem)
 
     def _mind_the_stand_ins(self) -> None:
         """Keep the running stand-ins matching the handed-over characters.
@@ -1025,6 +1021,11 @@ class TableWidget(QWidget):
             return
 
         self._server = server
+        if self._alone is not None:
+            # One referee at a time. The stand-in one held no state worth
+            # keeping -- the fight is in the database, not in it.
+            self._alone.deleteLater()
+            self._alone = None
         self._ctx.repos.settings.set("session_name", name)
         self._append_system(f"Hosting {session_name!r} on port {server.port}.")
         # Join our own server like anyone else, so there is one path through the

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QByteArray, Qt, QUrl
+from PySide6.QtCore import QByteArray, QEvent, Qt, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -32,6 +32,16 @@ from canon_keeper.templates import build
 from canon_keeper.shell.loader import LoadedPanel, LoadError
 from canon_keeper.shell.rename_panels import RenamePanelsDialog
 from canon_keeper.shell.theme import Theme, ThemeController
+
+#: A dock coming or going. Four events rather than two because a dock closed
+#: before the window is on screen never gets a Show -- only a ShowToParent --
+#: and the menus are set up before the window is shown.
+_APPEARING = (
+    QEvent.Type.Show,
+    QEvent.Type.Hide,
+    QEvent.Type.ShowToParent,
+    QEvent.Type.HideToParent,
+)
 
 #: Bumped if the set of docks changes in a way that makes old saved states
 #: meaningless. Qt refuses to restore a state saved under a different version,
@@ -254,6 +264,16 @@ class MainWindow(QMainWindow):
         act_show_all.triggered.connect(self._show_all_panels)
         panels_menu.addAction(act_show_all)
 
+        # --- One menu per panel that has anything to offer -------------------
+        #
+        # After Panels, before View, so the things you *do* sit together and
+        # the things that shape the window sit together. A panel with nothing
+        # to declare gets no menu rather than an empty one.
+        self._panel_menus: dict[str, object] = {}
+        for panel_id in self._docks:
+            self._build_panel_menu(bar, panel_id)
+        self._follow_panel_visibility()
+
         # --- View -----------------------------------------------------------
         view_menu = bar.addMenu("&View")
         theme_menu = view_menu.addMenu("&Theme")
@@ -296,6 +316,85 @@ class MainWindow(QMainWindow):
             return default
         return self._ctx.names.resolve(panel_id)
 
+    def _build_panel_menu(self, bar, panel_id: str) -> None:
+        """A menu for one panel, if its widget has anything to put in it.
+
+        Built from the widget rather than the plugin because the actions are
+        bound methods: "New fight" is a thing *this* Combat panel does, holding
+        the campaign it is looking at.
+
+        A widget that raises while listing its actions gets no menu and does
+        not stop the window opening -- the same rule the panel loader follows,
+        for the same reason.
+        """
+        entry = self._panels.get(panel_id)
+        dock = self._docks.get(panel_id)
+        widget = dock.widget() if dock is not None else None
+        lister = getattr(widget, "panel_actions", None)
+        if lister is None:
+            return
+        try:
+            wanted = list(lister() or ())
+        except Exception:  # noqa: BLE001 - a bad panel is not fatal
+            self._log.exception("%s could not list its menu actions", panel_id)
+            return
+        if not wanted:
+            return
+
+        default = entry.plugin.title if entry is not None else panel_id
+        menu = bar.addMenu(self._panel_title(panel_id, default))
+        menu.setObjectName(f"menu_{panel_id}")
+        for item in wanted:
+            action = QAction(item.label, self)
+            if item.shortcut:
+                action.setShortcut(item.shortcut)
+            action.setEnabled(bool(item.enabled))
+            action.triggered.connect(
+                lambda _checked=False, run=item.run, which=panel_id: self._run_panel_action(
+                    which, run
+                )
+            )
+            menu.addAction(action)
+        self._panel_menus[panel_id] = menu
+
+    def _follow_panel_visibility(self) -> None:
+        """A closed panel takes its menu with it.
+
+        A menu for something that is not on screen is a menu whose items act on
+        a panel you cannot see them act on -- "New fight" quietly filling a list
+        nobody is looking at. Closing a panel is how you say you are not doing
+        that right now, so the menu goes too, and comes back when it does.
+        """
+        for panel_id, dock in self._docks.items():
+            if panel_id not in self._panel_menus:
+                continue
+            # Watched rather than wired to ``toggleViewAction``: that action is
+            # only in step once the window is on screen, and the docks are
+            # arranged before it ever is.
+            dock.installEventFilter(self)
+            self._sync_panel_menu(panel_id)
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt's name
+        if event.type() in _APPEARING:
+            for panel_id, dock in self._docks.items():
+                if dock is watched:
+                    self._sync_panel_menu(panel_id)
+                    break
+        return super().eventFilter(watched, event)
+
+    def _sync_panel_menu(self, panel_id: str) -> None:
+        menu = self._panel_menus.get(panel_id)
+        dock = self._docks.get(panel_id)
+        if menu is not None and dock is not None:
+            menu.menuAction().setVisible(not dock.isHidden())
+
+    def _run_panel_action(self, panel_id: str, run) -> None:
+        """One menu item, with its failure kept to itself."""
+        try:
+            run()
+        except Exception:  # noqa: BLE001 - a bad panel is not fatal
+            self._log.exception("%s failed to carry out a menu action", panel_id)
+
     def _retitle_docks(self) -> None:
         """Re-label every dock after a rename, keeping objectName untouched.
 
@@ -309,6 +408,11 @@ class MainWindow(QMainWindow):
             if self._ctx.names is not None:
                 dock.toggleViewAction().setText(dock.windowTitle())
                 dock.setToolTip(self._ctx.names.describe(panel_id))
+            # The panel's own menu carries the same name, so renaming a panel
+            # renames it in both places rather than leaving them disagreeing.
+            menu = getattr(self, "_panel_menus", {}).get(panel_id)
+            if menu is not None:
+                menu.setTitle(dock.windowTitle())
 
     def _rename_panels(self) -> None:
         if self._ctx.names is None:

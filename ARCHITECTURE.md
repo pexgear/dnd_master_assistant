@@ -374,6 +374,14 @@ a token, passing the turn, setting an initiative and building a fight alike.
 The DM always has it. An agent has it exactly while autopilot is on — the same
 gate its chat goes through, enforced on the host. A player has it never.
 
+**The referee exists whether or not anybody can reach it.** `SessionServer`
+holds the dice, the armour class and the hit points, and the Table panel builds
+one on the first turn even with nobody hosting (`_referee`). Going online is
+other people being able to *reach* the referee, not the referee coming into
+being: everything that broadcasts walks a session dict that is simply empty.
+The alternative — a second, simpler path for playing alone — is how a rule
+comes to mean one thing at a table and another over the wire.
+
 The order is a pure function of the rows: initiative down, Dexterity tiebreak
 down, id up. Nothing stores an ordinal, so nothing can drift, and a template
 that states its initiatives lays out identically every time it is started.
@@ -390,6 +398,26 @@ not move: push the north wall out and the goblin at 3,-2 is still at 3,-2.
 An even-sided map cannot be perfectly centred, so the extra square goes right
 and down. That is arbitrary and fixed, and it is why growing a map by one adds
 a column on alternating sides.
+
+### Taking a turn from the map
+
+Whoever is up is selected on the map when the turn moves — not on every redraw,
+or a DM who clicked somebody else to read their hit points is dragged back a
+second later. Space then asks the panel what that creature can do
+(`radial_wanted`), because the map has never seen a character sheet, and the
+panel answers with one `Choice` for moving and one per weapon (`offer`).
+
+A wedge is picked and then *pointed at* something: a square for a move, a
+creature for a swing. What comes out is a single `TurnPlan`, emitted the moment
+it is complete and turned into the same `turn_taken` dict the Attack dialog
+sends — one path to the referee, so a turn taken from the map and a turn taken
+from a dialog cannot come to mean different things.
+
+`TurnPlan` is an object rather than two arguments on purpose. Today it is posted
+immediately and cannot be taken back, which is the deal at a table once the die
+is on the felt. Lining a whole turn up before committing to it is then a change
+to *when* the plan is handed over, in one method, rather than a rewrite of how
+the map works.
 
 ### A player's turn
 
@@ -771,6 +799,7 @@ canon_keeper/
   audio/            capture, transcription, dictation
   panels/           characters, cities, transcript, table, encounter
   templates/        one-shots: the format, the builder, and the bundled JSON
+  assets/           files read at runtime; the application icon
 ```
 
 ---

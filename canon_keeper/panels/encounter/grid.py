@@ -17,6 +17,7 @@ can find, and it is still that square after the map grows.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -133,6 +134,50 @@ class Preview:
     target: tuple[int, int] | None = None
 
 
+@dataclass(frozen=True)
+class Choice:
+    """One wedge of the wheel: something this creature could do now."""
+
+    #: "move", or "attack" with a weapon named.
+    kind: str
+    label: str
+    weapon: str = ""
+
+
+@dataclass
+class TurnPlan:
+    """What a creature is about to do, as a thing rather than as a side effect.
+
+    Right now each choice is carried out the moment it is picked, and there is
+    no going back -- which is the same deal a person gets at a table once the
+    die is on the felt. But a turn is a *sequence*, and the difference between
+    "do it now" and "line it up and confirm" should be a change to when this is
+    handed over, not a rewrite of how the map works.
+
+    So the map builds one of these even though it currently posts it
+    immediately. The future -- previewing a whole turn, taking a step back
+    before anything is committed -- is a matter of holding it a little longer.
+    """
+
+    combatant: int
+    #: Where they would end up, if the plan includes moving.
+    move: tuple[int, int] | None = None
+    #: Who they would hit, and with what.
+    target: int | None = None
+    weapon: str = ""
+
+    @property
+    def is_empty(self) -> bool:
+        return self.move is None and self.target is None
+
+
+#: How big the wheel is, as a fraction of the map's smaller side, and where its
+#: ring sits. Kept in one place because a wedge that is drawn and a wedge that
+#: is hit-tested disagreeing is the sort of bug nobody sees until they misclick.
+RADIAL_INNER = 0.9
+RADIAL_OUTER = 2.6
+
+
 @dataclass
 class _Effect:
     """One thing being shown, and how far through it is.
@@ -180,6 +225,15 @@ class GridMap(QWidget):
     #: of the map itself, because "the room is bigger than that" is a thought
     #: you have while looking at the room.
     resize_requested = Signal(int, int)
+    #: A turn somebody lined up on the map: see :class:`TurnPlan`. Emitted when
+    #: it is complete -- a move with a square, an attack with a target.
+    planned = Signal(object)
+    #: The wheel opened or closed, so a panel can say what is being asked.
+    radial_changed = Signal(bool)
+    #: Space was pressed on a token. The panel knows what that creature can do
+    #: -- its weapons come off a sheet this widget has never seen -- so it
+    #: answers with :meth:`offer`.
+    radial_wanted = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -205,12 +259,25 @@ class GridMap(QWidget):
         self._drag_from: tuple[int, int] | None = None
         self._drag_to: tuple[int, int] | None = None
         self._selected: int | None = None
+        #: The wheel, when it is open: the combatant it belongs to and what it
+        #: is offering. None when it is not.
+        self._radial: int | None = None
+        self._choices: list[Choice] = []
+        #: Which wedge the mouse is over, so the wheel answers the pointer.
+        self._hovering: int | None = None
+        #: What the map is waiting for after a wedge was picked: "move" for a
+        #: square, "attack" for a creature, or None.
+        self._awaiting: Choice | None = None
         #: The square something is being dragged over, outlined so the drop
         #: lands where the pointer says it will.
         self._hover: tuple[int, int] | None = None
         self.setMinimumSize(220, 180)
         self.setMouseTracking(False)
         self.setAcceptDrops(True)
+        #: The map takes the keyboard, because the wheel opens on Space and the
+        #: whole idea is that your attention never leaves the battlefield. Click
+        #: focus rather than tab focus: nobody tabs their way onto a map.
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         #: What is being shown right now. Empty almost always, and the timer
         #: only runs while it is not.
@@ -384,6 +451,69 @@ class GridMap(QWidget):
                 return token.x, token.y
         return None
 
+
+    # ------------------------------------------------------------- the wheel
+    #
+    # Space opens a ring of choices around whoever is up. The point is that
+    # your hand is already on the map: the alternative is a dialog somewhere
+    # else, which means looking away from the thing you are deciding about.
+
+    def offer(self, combatant_id: int, choices: list[Choice]) -> None:
+        """Open the wheel around one token. No choices means no wheel."""
+        if not choices or not any(t.id == combatant_id for t in self._drawable()):
+            return
+        self._radial = combatant_id
+        self._choices = list(choices)
+        self._hovering = None
+        self._awaiting = None
+        # Only while the wheel is up: the rest of the time a move event per
+        # pixel is work for nothing.
+        self.setMouseTracking(True)
+        self.radial_changed.emit(True)
+        self.update()
+
+    def close_radial(self) -> None:
+        was = self._radial is not None or self._awaiting is not None
+        self._radial = None
+        self._choices = []
+        self._hovering = None
+        self._awaiting = None
+        self.setMouseTracking(False)
+        if was:
+            self.radial_changed.emit(False)
+        self.update()
+
+    @property
+    def radial_open(self) -> bool:
+        return self._radial is not None
+
+    @property
+    def awaiting(self) -> Choice | None:
+        """What the map is waiting to be pointed at, having been asked."""
+        return self._awaiting
+
+    def _radial_centre(self, cell: int, origin: QPoint) -> QPoint | None:
+        for token in self._drawable():
+            if token.id == self._radial:
+                square = self._at(token.x, token.y, cell, origin)
+                return square.center()
+        return None
+
+    def _wedge_at(self, point: QPoint, cell: int, origin: QPoint) -> int | None:
+        """Which wedge the point falls in, or None for outside the ring."""
+        centre = self._radial_centre(cell, origin)
+        if centre is None or not self._choices:
+            return None
+        dx = point.x() - centre.x()
+        dy = point.y() - centre.y()
+        away = math.hypot(dx, dy)
+        if not (cell * RADIAL_INNER <= away <= cell * RADIAL_OUTER):
+            return None
+        # Straight up is the first wedge, and they run clockwise, because that
+        # is the order the labels are read in.
+        angle = (math.degrees(math.atan2(dx, -dy)) + 360.0) % 360.0
+        return int(angle // (360.0 / len(self._choices)))
+
     def select(self, combatant_id: int | None) -> None:
         self._selected = combatant_id
         self.update()
@@ -539,8 +669,93 @@ class GridMap(QWidget):
             self._draw_token(painter, token, at, cell, origin, now)
 
         self._draw_preview(painter, cell, origin)
+        self._draw_radial(painter, cell, origin, now)
         self._draw_numbers(painter, cell, origin, now)
         painter.end()
+
+    def _draw_radial(
+        self, painter: QPainter, cell: int, origin: QPoint, now: float
+    ) -> None:
+        """The wheel of choices, around whoever it belongs to.
+
+        Drawn over the map on purpose. It covers a few squares while it is
+        open, and it is open for about a second: the alternative is putting the
+        choices somewhere with room for them, which means somewhere that is not
+        where you are looking.
+        """
+        centre = self._radial_centre(cell, origin)
+        if centre is None or not self._choices:
+            return
+
+        inner = cell * RADIAL_INNER
+        outer = cell * RADIAL_OUTER
+        box = QRect(
+            int(centre.x() - outer),
+            int(centre.y() - outer),
+            int(outer * 2),
+            int(outer * 2),
+        )
+        hole = QRect(
+            int(centre.x() - inner),
+            int(centre.y() - inner),
+            int(inner * 2),
+            int(inner * 2),
+        )
+        span = 360.0 / len(self._choices)
+
+        palette = self.palette()
+        font = QFont(painter.font())
+        font.setPixelSize(max(9, min(14, cell // 3)))
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+
+        for index, choice in enumerate(self._choices):
+            # Qt measures from three o'clock anticlockwise in sixteenths of a
+            # degree; the wheel reads from twelve o'clock clockwise. Hence 90.
+            start = 90.0 - (index + 1) * span
+            fill = QColor(palette.window().color())
+            fill.setAlpha(235)
+            if index == self._hovering:
+                fill = QColor(palette.highlight().color())
+                fill.setAlpha(235)
+            painter.setBrush(fill)
+            painter.setPen(QPen(QColor(palette.text().color()), 1))
+            painter.drawPie(box, int(start * 16), int(span * 16) - 12)
+
+            middle = math.radians(start + span / 2.0)
+            reach = (inner + outer) / 2.0
+            label = metrics.elidedText(
+                choice.label,
+                Qt.TextElideMode.ElideRight,
+                int((outer - inner) * 1.6),
+            )
+            where = QPoint(
+                int(centre.x() + math.cos(middle) * reach),
+                int(centre.y() - math.sin(middle) * reach),
+            )
+            painter.setPen(
+                QPen(
+                    palette.highlightedText().color()
+                    if index == self._hovering
+                    else palette.text().color()
+                )
+            )
+            painter.drawText(
+                QRect(where.x() - 60, where.y() - 10, 120, 20),
+                Qt.AlignmentFlag.AlignCenter,
+                label,
+            )
+
+        # Punch the token back out of the middle, so the wheel never hides the
+        # creature it belongs to: whose turn this is has to stay readable while
+        # you are deciding what they do.
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(palette.base())
+        painter.drawEllipse(hole)
+        for token in self._drawable():
+            if token.id == self._radial:
+                self._draw_token(painter, token, None, cell, origin, now)
+                break
 
     def _draw_numbers(
         self, painter: QPainter, cell: int, origin: QPoint, now: float
@@ -782,11 +997,48 @@ class GridMap(QWidget):
 
     # ------------------------------------------------------------------ mouse
 
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt's name
+        """Space opens the wheel on whoever is selected; Escape puts it away.
+
+        Only for the map that can act. A player's copy is read-only, and a
+        wheel that offered choices it could not carry out would be a worse lie
+        than no wheel.
+        """
+        if event.key() == Qt.Key.Key_Escape:
+            self.close_radial()
+            return
+        if event.key() == Qt.Key.Key_Space and not self.read_only:
+            if self._radial is not None or self._awaiting is not None:
+                self.close_radial()
+            elif self._selected is not None:
+                self.radial_wanted.emit(self._selected)
+            return
+        super().keyPressEvent(event)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt's name
         if self.frozen:
             return
         square = self._square_at(event.position().toPoint())
         token = self._token_at(*square) if square else None
+
+        # The wheel gets the click before the board does, so picking a wedge
+        # over a token does not also select that token.
+        if self._radial is not None:
+            if event.button() == Qt.MouseButton.LeftButton:
+                chosen = self._wedge_at(
+                    event.position().toPoint(), self._cell(), self._origin()
+                )
+                if chosen is not None:
+                    self._picked_wedge(self._choices[chosen])
+                    return
+            self.close_radial()
+            return
+
+        # Having been asked for a square or a creature, the next click answers.
+        if self._awaiting is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._answer_with(square, token)
+            return
 
         # Ctrl-click builds the room: something in the way, or no longer. Held
         # rather than moded, because a DM adding one rock should not have to
@@ -820,7 +1072,49 @@ class GridMap(QWidget):
         if square is not None:
             self.square_clicked.emit(square[0], square[1])
 
+
+    def _picked_wedge(self, choice: Choice) -> None:
+        """A wedge was chosen. Now the map waits to be pointed at something."""
+        self._radial = None
+        self._choices = []
+        self._hovering = None
+        self._awaiting = choice
+        self.setMouseTracking(False)
+        self.radial_changed.emit(False)
+        self.update()
+
+    def _answer_with(self, square, token) -> None:
+        """The click that completes what a wedge started.
+
+        Nothing is asked twice: a plan goes out, and whether it is carried out
+        immediately or held for confirmation is the panel's to decide. Clicking
+        nothing useful puts the wheel away rather than leaving the map in a
+        mode somebody has to guess their way out of.
+        """
+        choice, combatant = self._awaiting, self._selected
+        self._awaiting = None
+        if choice is None or combatant is None:
+            self.update()
+            return
+
+        if choice.kind == "move" and square is not None:
+            self.planned.emit(TurnPlan(combatant=combatant, move=square))
+        elif choice.kind == "attack" and token is not None and token.id != combatant:
+            self.planned.emit(
+                TurnPlan(combatant=combatant, target=token.id, weapon=choice.weapon)
+            )
+        self.radial_changed.emit(False)
+        self.update()
+
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt's name
+        if self._radial is not None:
+            over = self._wedge_at(
+                event.position().toPoint(), self._cell(), self._origin()
+            )
+            if over != self._hovering:
+                self._hovering = over
+                self.update()
+            return
         if self._dragging is None:
             return
         square = self._square_at(event.position().toPoint())

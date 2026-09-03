@@ -94,7 +94,24 @@ class Stand_In:
             self._busy = False
 
     async def take_the_turn(self) -> None:
-        """Say what this character does. Somebody else works out the rules."""
+        """Say what this character does, and do it if nobody else will.
+
+        Two ways round, and which one applies is not this thing's preference:
+
+        **Autopilot is on.** Say it in words and wait. Autopilot turns the
+        sentence into rules and puts it back as a proposal, which is answered
+        in :meth:`on_action`. That is the path a person's turn takes and it is
+        the better one, because the DM sees the proposal.
+
+        **Autopilot is off.** There is nobody to translate, so the turn is
+        taken directly on the seat's own authority -- which the host grants for
+        this character, on its turn, and nothing else. Still said out loud
+        first, so the table reads the same sentence either way.
+
+        Handing a character over and handing the *table* over are two different
+        decisions. Somebody who has stepped out should not have their character
+        stand still because the DM is running the game themselves.
+        """
         mine = self.mine
         if mine is None:
             return
@@ -105,7 +122,37 @@ class Stand_In:
             await self._session.say("I hold where I am.")
             await self._session.turn_done()
             return
+
         await self._session.say(self.in_words(chosen))
+        if self.somebody_will_formalise():
+            return
+        await self.do_it(mine, chosen)
+
+    def somebody_will_formalise(self) -> bool:
+        """Whether anything is here to turn a sentence into a proposal.
+
+        Both halves matter. The switch being on is not enough -- it can be on
+        with no agent connected -- and an agent being connected is not enough,
+        because the host refuses its chat while the switch is off. Waiting for
+        something that is not coming is how a fight stops.
+        """
+        table = self._session.table
+        if not table.autopilot:
+            return False
+        return any(
+            getattr(member, "role", "") == "agent" for member in table.members
+        )
+
+    async def do_it(self, mine: dict, chosen: Decision) -> None:
+        """Take the turn on the seat's own authority, and end it."""
+        if chosen.move is not None:
+            await self._session.move(mine["id"], chosen.move[0], chosen.move[1])
+        # One attack a turn, and the host is the one counting.
+        if chosen.target is not None and not self.action_spent(
+            self._session.table.encounter or {}, mine
+        ):
+            await self._session.swing(mine["id"], chosen.target)
+        await self._session.turn_done()
 
     def in_words(self, chosen: Decision) -> str:
         """The turn as a person would type it, not as a rule would state it.

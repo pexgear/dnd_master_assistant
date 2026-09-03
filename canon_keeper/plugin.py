@@ -9,13 +9,17 @@ A plugin package declares itself in its own ``pyproject.toml``::
     weather = "my_pkg.panel:WeatherPanel"
 
 and provides a class satisfying :class:`PanelPlugin`.
+
+A panel's **widget** may also implement ``panel_actions()``, returning a list of
+:class:`PanelAction`. The shell gives any panel that does a menu of its own, so
+what a panel can do is reachable without going to look at the panel first.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
@@ -34,6 +38,32 @@ API_VERSION = 2
 
 #: The entry-point group scanned at startup.
 ENTRY_POINT_GROUP = "canonkeeper.panels"
+
+
+@dataclass(frozen=True)
+class PanelAction:
+    """One item in a panel's own menu.
+
+    A panel's buttons live inside it, which is fine while you are looking at
+    that panel and useless when you are not: starting a fight from the
+    Characters panel meant finding Combat first. A widget may list the things
+    it can do, and the shell gives it a menu of its own next to File and View.
+
+    ``run`` is called with no arguments and is a bound method of the widget, so
+    it has whatever state it needs. Keep ``label`` short -- it is a menu item,
+    not a sentence.
+    """
+
+    label: str
+    run: "Callable[[], None]"
+    #: A key sequence, e.g. "Ctrl+Shift+N". Empty for none. The shell does not
+    #: check for clashes: two panels claiming the same key is a thing their
+    #: authors have to sort out between them, and Qt shows both.
+    shortcut: str = ""
+    #: Shown greyed when False. Evaluated when the menu is built, so a panel
+    #: that wants this to change should say so on the bus and let the shell
+    #: rebuild rather than holding a reference to the action.
+    enabled: bool = True
 
 
 @dataclass(frozen=True)

@@ -38,9 +38,14 @@ from canon_keeper.panels.encounter.dialogs import (
     AttackDialog,
     FightDialog,
 )
-from canon_keeper.panels.encounter.grid import COMBATANT_MIME, GridMap, Token
+from canon_keeper.panels.encounter.grid import (
+    COMBATANT_MIME,
+    Choice,
+    GridMap,
+    Token,
+)
 from canon_keeper import entity_actions
-from canon_keeper.plugin import AppContext
+from canon_keeper.plugin import AppContext, PanelAction
 from canon_keeper.repo.encounters import MAX_SIZE, MIN_SIZE, Encounter
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC
 from canon_keeper import campaigns
@@ -93,6 +98,10 @@ class EncounterWidget(QWidget):
         self._entities: dict[int, object] = {}
         self._shared: set[int] = set()
         self._content = None
+        #: Whoever was up the last time we filled. Kept so that selecting the
+        #: creature whose turn it is happens when the turn moves, and not on
+        #: every redraw -- which would fight the DM for the selection.
+        self._following: int | None = None
         #: Set while we are the ones writing, so our own bus signal does not
         #: rebuild the list under the mouse mid-drag.
         self._loading = False
@@ -127,21 +136,11 @@ class EncounterWidget(QWidget):
         self._fights.activated.connect(self._switch_fight)
         bar.addWidget(self._fights, 1)
 
-        # No dialog. A fight is a grid and an empty order, and asking two
-        # questions before you can put anybody on it is two questions in the
-        # way of the thing you actually pressed the button for. Both answers
-        # are behind "Fight...", for when you want them.
-        self._new_button = QPushButton("New fight")
-        self._new_button.setToolTip(
-            "Start a fight on an empty grid. Name it or make it bigger later."
-        )
-        self._new_button.clicked.connect(self._new_fight)
-        bar.addWidget(self._new_button)
-
-        self._fight_button = QPushButton("Fight...")
-        self._fight_button.setToolTip("Give this fight a name, or change the grid")
-        self._fight_button.clicked.connect(self._edit_fight)
-        bar.addWidget(self._fight_button)
+        # Starting a fight and renaming one are in the Combat menu rather than
+        # on this bar. They are things you do once, and a row of buttons is
+        # worth spending on the things you press every turn -- whose turn it
+        # is, who swings, when it ends. The menu is also reachable from the
+        # panel you happen to be looking at, which the bar is not.
 
         self._add_button = QPushButton("Add...")
         self._add_button.setToolTip("Put characters and NPCs into this fight")
@@ -156,18 +155,26 @@ class EncounterWidget(QWidget):
         self._roll_button.clicked.connect(self._roll_initiative)
         bar.addWidget(self._roll_button)
 
-        self._turn_button = QPushButton("Start")
+        # One button for the whole life of the fight: it starts one, and once
+        # one is running it ends it. Two buttons meant reading both to find out
+        # which state you were in; one button *is* the state.
+        self._fight_button = QPushButton("Start fight")
+        self._fight_button.setToolTip(
+            "A fight is laid out first and started when everyone is ready. "
+            "Nothing takes a turn -- and no machine acts -- until it is."
+        )
+        self._fight_button.clicked.connect(self._start_or_end)
+        bar.addWidget(self._fight_button)
+
+        self._turn_button = QPushButton("Next turn")
         self._turn_button.clicked.connect(self._start_or_next)
         bar.addWidget(self._turn_button)
 
-        self._simulate_button = QPushButton("Simulate turn")
-        self._simulate_button.setToolTip(
-            "Hand the selected character to autopilot for this fight -- an "
-            "empty chair, or a player who has asked for it. Press again to "
-            "give them back. Everyone is told."
-        )
-        self._simulate_button.clicked.connect(self._simulate_selected)
-        bar.addWidget(self._simulate_button)
+        # Handing a character over is not on this bar. It is a thing you do to
+        # *one* character, and the place you are already pointing at that
+        # character is its right-click menu -- where it says who it hands them
+        # to. A button that acted on whatever happened to be selected was one
+        # more thing to aim before pressing.
 
         self._attack_button = QPushButton("Attack...")
         self._attack_button.setToolTip(
@@ -176,13 +183,6 @@ class EncounterWidget(QWidget):
         self._attack_button.clicked.connect(self._attack)
         bar.addWidget(self._attack_button)
 
-        self._end_button = QPushButton("End fight")
-        self._end_button.setToolTip(
-            "Stop the clock. Everyone stays where they are, so you can look at "
-            "how it finished."
-        )
-        self._end_button.clicked.connect(self._end)
-        bar.addWidget(self._end_button)
         outer.addLayout(bar)
 
         self._heading = QLabel("")
@@ -227,6 +227,8 @@ class EncounterWidget(QWidget):
         self._map.dropped.connect(self._on_dropped)
         self._map.obstacle_toggled.connect(self._on_obstacle)
         self._map.menu_requested.connect(self._on_map_menu)
+        self._map.radial_wanted.connect(self._offer_wheel)
+        self._map.planned.connect(self._carry_out)
         splitter.addWidget(self._map)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -238,6 +240,33 @@ class EncounterWidget(QWidget):
         outer.addWidget(self._hint)
 
     # ---------------------------------------------------------------- reading
+
+    def panel_actions(self) -> list[PanelAction]:
+        """What this panel can do, for a menu of its own.
+
+        The same things its buttons do. A DM who is looking at the Characters
+        panel when a fight starts should not have to find Combat first in order
+        to begin one -- the button is where the panel is, and the menu is where
+        they are.
+        """
+        running = self._encounter is not None
+        return [
+            PanelAction("&New fight", self._new_fight, "Ctrl+Shift+F"),
+            PanelAction("&Add to the fight...", self._add, enabled=running),
+            PanelAction("&Roll initiative", self._roll_initiative, enabled=running),
+            PanelAction("&Attack...", self._attack, enabled=running),
+            PanelAction(
+                "&Start the fight",
+                self._start_or_end,
+                enabled=running and not self._encounter.has_begun,
+            ),
+            PanelAction(
+                "&End the fight",
+                self._end,
+                enabled=running and self._encounter.has_begun,
+            ),
+            PanelAction("F&ight...", self._edit_fight, enabled=running),
+        ]
 
     def _refresh(self) -> None:
         if self._loading:
@@ -340,11 +369,30 @@ class EncounterWidget(QWidget):
     # ---------------------------------------------------------------- filling
 
     def _fill(self) -> None:
+        self._follow_the_turn()
         self._fill_fights()
         self._fill_order()
         self._fill_map()
         self._fill_heading()
         self._update_buttons()
+
+    def _follow_the_turn(self) -> None:
+        """Select whoever just came up, on the map and in the order.
+
+        Only when the turn *moves*, so a DM who clicked someone else to check
+        their hit points is not dragged back a second later. The point is that
+        Space is always about the right creature without anybody aiming first.
+        """
+        up = self._encounter.turn_combatant_id if self._encounter is not None else None
+        if up == self._following:
+            return
+        self._following = up
+        # A wheel left open for the last creature is about a turn that is over.
+        self._map.close_radial()
+        if up is not None:
+            # The order list follows the map: filling it reads the selection
+            # back, so there is one answer to "who is picked" rather than two.
+            self._map.select(up)
 
     def _fill_fights(self) -> None:
         self._fights.blockSignals(True)
@@ -511,19 +559,13 @@ class EncounterWidget(QWidget):
         has_fight = self._encounter is not None
         anyone = bool(self._combatants)
         self._add_button.setEnabled(has_fight)
-        self._fight_button.setEnabled(has_fight)
         self._roll_button.setEnabled(has_fight and anyone)
-        self._turn_button.setEnabled(has_fight and anyone)
-        self._attack_button.setEnabled(
-            has_fight and self._encounter.has_begun and len(self._combatants) > 1
-        )
-        self._simulate_button.setEnabled(has_fight and anyone)
-        self._end_button.setEnabled(
-            has_fight and (self._encounter.has_begun or self._encounter.running)
-        )
-        self._turn_button.setText(
-            "Next turn" if has_fight and self._encounter.has_begun else "Start"
-        )
+        begun = has_fight and self._encounter.has_begun
+        # Passing the turn only means anything once there are turns to pass.
+        self._turn_button.setEnabled(begun and anyone)
+        self._attack_button.setEnabled(begun and len(self._combatants) > 1)
+        self._fight_button.setEnabled(has_fight and (anyone or begun))
+        self._fight_button.setText("End fight" if begun else "Start fight")
 
     def _is_turn(self, combatant) -> bool:
         return (
@@ -625,6 +667,22 @@ class EncounterWidget(QWidget):
             self._ctx.repos.encounters.set_initiative(combatant.id, value)
             self._changed()
 
+    def _start_or_end(self) -> None:
+        """Start the fight, or end the one that is running.
+
+        A fight is made unstarted on purpose: laying it out is a job, and
+        nothing should be taking turns while tokens are still being dragged
+        about. Starting it is the moment the rules -- and the machines -- come
+        on.
+        """
+        if self._encounter is None:
+            return
+        if self._encounter.has_begun:
+            self._end()
+            return
+        self._ctx.repos.encounters.begin(self._encounter.id)
+        self._changed()
+
     def _start_or_next(self) -> None:
         if self._encounter is None:
             return
@@ -673,6 +731,70 @@ class EncounterWidget(QWidget):
         self._ctx.bus.turn_taken.emit(
             {"combatant": acting.id, "target": target, "weapon": weapon}
         )
+
+    # ------------------------------------------------------------- the wheel
+    #
+    # Space on the map opens a ring of choices around whoever is up. It is the
+    # same turn the Attack dialog sends -- one path to the host, so a turn
+    # taken from the map and a turn taken from a dialog cannot mean two
+    # different things -- but taken without looking away from the fight.
+
+    def _choices_for(self, combatant) -> list[Choice]:
+        """What this creature could do now: go somewhere, or hit somebody.
+
+        One wedge per weapon rather than one "attack" wedge that then asks
+        which: the question "what can they do" is answered by the wheel itself,
+        and a dagger and a longbow are not the same answer.
+        """
+        if self._condition_of(combatant) != death.UP:
+            return []
+        choices: list[Choice] = []
+        if combatant.on_map:
+            choices.append(Choice(kind="move", label="Move"))
+        for weapon in self._weapons_of(combatant):
+            choices.append(Choice(kind="attack", label=weapon, weapon=weapon))
+        return choices
+
+    def _offer_wheel(self, combatant_id: int) -> None:
+        combatant = self._by_id(combatant_id)
+        if combatant is None:
+            return
+        if self._encounter is None or not self._encounter.running:
+            self._ctx.bus.status_message.emit("The fight has not started.")
+            return
+        if not self._is_turn(combatant):
+            self._ctx.bus.status_message.emit(
+                f"It is not {self._name_of(combatant)}'s turn."
+            )
+            return
+        choices = self._choices_for(combatant)
+        if not choices:
+            self._ctx.bus.status_message.emit(
+                f"{self._name_of(combatant)} has nothing to do from here."
+            )
+            return
+        self._map.offer(combatant_id, choices)
+        self._hint.setText(
+            "Pick a wedge, then click a square to move or a creature to hit. "
+            "Escape puts the wheel away."
+        )
+
+    def _carry_out(self, plan) -> None:
+        """A turn lined up on the map, on its way to the host.
+
+        Sent the moment it is complete. The plan is a whole object rather than
+        two arguments precisely so that holding it -- previewing a turn before
+        committing to it -- is later a change to this method and nothing else.
+        """
+        if plan is None or plan.is_empty:
+            return
+        turn: dict = {"combatant": plan.combatant}
+        if plan.move is not None:
+            turn["move"] = list(plan.move)
+        if plan.target is not None:
+            turn["target"] = plan.target
+            turn["weapon"] = plan.weapon
+        self._ctx.bus.turn_taken.emit(turn)
 
     def _weapons_of(self, combatant) -> list[str]:
         entity = self._entities.get(combatant.entity_id)

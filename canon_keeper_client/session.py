@@ -223,15 +223,21 @@ class AgentSession:
     async def say(self, text: str) -> bool:
         """Speak at the table.
 
-        Returns False if the host refuses -- which it does, by design, whenever
-        autopilot is off. The refusal is the host's to make; asking first would
-        be the agent policing itself, which is not a guarantee.
+        The host refuses an *agent* speaking while autopilot is off, and that
+        refusal is the host's to make -- asking first would be the agent
+        policing itself, which is not a guarantee. This declines to ask only
+        because there is no reason to make it refuse something we already know
+        it will.
+
+        A **seat** is not covered by that rule and does not skip the ask. It is
+        a player, and a player may always speak: a character standing in for
+        somebody who has stepped out is at the table whether or not the DM has
+        handed the *table* to a machine. The two switches are separate, and
+        conflating them here is what would make them look joined.
         """
         if self._socket is None:
             return False
-        if not self.table.autopilot:
-            # Not a substitute for the host's check, just politeness: no reason
-            # to make it refuse something we already know it will.
+        if not self._seat and not self.table.autopilot:
             log.debug("not speaking: autopilot is off")
             return False
         await self._socket.send(encode(MessageType.CHAT, text=text))

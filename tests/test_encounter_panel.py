@@ -208,7 +208,9 @@ def test_starting_and_passing_the_turn(widget, ctx, fight):
     widget._start_or_next()
     assert ctx.repos.encounters.get(encounter.id).round == 1
     assert ctx.repos.encounters.get(encounter.id).turn_combatant_id == tokens["hero"].id
-    assert widget._turn_button.text() == "Next turn"
+    assert widget._fight_button.text() == "End fight", (
+        "once a fight is running, the same button ends it"
+    )
 
     asked: list[str] = []
     ctx.bus.turn_requested.connect(asked.append)
@@ -225,7 +227,8 @@ def test_ending_it_stops_the_clock(widget, ctx, fight):
     widget._start_or_next()
     widget._end()
     assert ctx.repos.encounters.get(encounter.id).round == 0
-    assert widget._turn_button.text() == "Start"
+    # One button for the fight's life: it offers to start one again.
+    assert widget._fight_button.text() == "Start fight"
 
 
 def test_rolling_initiative_gives_everyone_a_number(widget, ctx, fight):

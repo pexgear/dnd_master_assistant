@@ -244,21 +244,42 @@ def test_a_stand_in_is_not_shown_the_dms_secrets(table, qapp):
     _spin(qapp, go())
 
 
-def test_it_says_what_it_wants_rather_than_doing_it(table, qapp):
-    """The whole shape of it: a stand-in talks, it does not reach for the map.
+def test_it_plays_with_autopilot_off(table, qapp):
+    """Handing a character over and handing the *table* over are two decisions.
 
-    Autopilot turns the sentence into rules and puts it back as a proposal, and
-    the character does not move until that is accepted -- the same three steps
-    a person's turn takes.
+    Somebody who has stepped out should not have their character stand still
+    because the DM is running the game themselves. With nothing there to turn
+    a sentence into a proposal, the stand-in takes the turn on its own seat.
     """
     server, repos, enc, tokens, marla, _goblin, _hidden = table
+    assert not server.autopilot, "this is the case under test"
     assert repos.encounters.get(enc.id).turn_combatant_id == tokens["marla"].id
+
+    async def go():
+        _session, stand_in, task = await _sit(server, marla.id)
+        try:
+            assert stand_in.somebody_will_formalise() is False
+            await stand_in.take_the_turn()
+            for _ in range(60):
+                await asyncio.sleep(0.05)
+                if repos.encounters.combatant(tokens["marla"].id).x == 2:
+                    break
+        finally:
+            task.cancel()
+
+    _spin(qapp, go())
+    moved = repos.encounters.combatant(tokens["marla"].id)
+    assert (moved.x, moved.y) == (2, 0), "it closed to reach and stopped"
+
+
+def test_it_says_what_it_is_doing_either_way(table, qapp):
+    """The table reads the same sentence whichever path the turn took."""
+    server, _repos, _enc, _tokens, marla, _goblin, _hidden = table
     said = []
 
     async def go():
         session, stand_in, task = await _sit(server, marla.id)
         try:
-            assert stand_in.mine is not None, "it could not find its own character"
             session.say = lambda text: said.append(text) or _yes()
             await stand_in.take_the_turn()
         finally:
@@ -267,10 +288,7 @@ def test_it_says_what_it_wants_rather_than_doing_it(table, qapp):
     _spin(qapp, go())
 
     assert said, "it said nothing at all"
-    assert "Yeemik" in said[0], "it should name what it is going for"
     assert said[0].startswith("I "), "it speaks as the player would type"
-    still = repos.encounters.combatant(tokens["marla"].id)
-    assert (still.x, still.y) == (0, 0), "nothing moves until the turn is accepted"
 
 
 async def _yes() -> bool:
@@ -488,3 +506,76 @@ def test_it_does_not_ask_for_a_second_attack():
     stand_in = Stand_In(_StubSession(fight, {1: {"name": "Marla"}}, "Marla"))
 
     assert stand_in.action_spent(fight, mine) is True
+
+
+# ------------------------------------- the two switches are separate
+
+
+def _standing(autopilot: bool, members=()):
+    """A stand-in whose turn it is, with the table in a given state."""
+    mine = _one(1, 1, 0, 0, team=1, simulated=True)
+    goblin = _one(2, 2, 3, 0, team=2)
+    session = _StubSession(
+        _fight(mine, goblin, turn=1), {1: {"name": "Marla"}, 2: {"name": "Yeemik"}},
+        "Marla",
+    )
+    session.table.autopilot = autopilot
+    session.table.members = list(members)
+    return session, Stand_In(session, pause=0.0), mine
+
+
+class _Member:
+    def __init__(self, role: str) -> None:
+        self.role = role
+
+
+def test_autopilot_off_means_nobody_will_formalise():
+    _session, stand_in, _mine = _standing(autopilot=False)
+    assert stand_in.somebody_will_formalise() is False
+
+
+def test_the_switch_on_with_no_agent_is_still_nobody():
+    """The switch can be on with nothing connected. Waiting for something that
+    is not coming is how a fight stops."""
+    _session, stand_in, _mine = _standing(autopilot=True, members=[_Member("player")])
+    assert stand_in.somebody_will_formalise() is False
+
+
+def test_an_agent_with_the_switch_off_is_also_nobody():
+    """The host refuses an agent's chat while the switch is off, so it cannot
+    formalise anything even though it is sitting there."""
+    _session, stand_in, _mine = _standing(autopilot=False, members=[_Member("agent")])
+    assert stand_in.somebody_will_formalise() is False
+
+
+def test_both_together_means_somebody_will():
+    _session, stand_in, _mine = _standing(autopilot=True, members=[_Member("agent")])
+    assert stand_in.somebody_will_formalise() is True
+
+
+def test_it_waits_rather_than_acting_when_somebody_will_formalise():
+    """With autopilot there, the turn goes the long way round and the DM sees
+    the proposal before anything moves."""
+    session, stand_in, _mine = _standing(autopilot=True, members=[_Member("agent")])
+    done = []
+    stand_in.do_it = lambda *a: done.append(1) or _yes()
+
+    asyncio.run(stand_in.take_the_turn())
+
+    assert session.said, "it should still say what it wants"
+    assert done == [], "it acted instead of waiting for the proposal"
+
+
+def test_it_acts_when_nobody_will():
+    session, stand_in, _mine = _standing(autopilot=False)
+    done = []
+
+    async def acted(mine, chosen):
+        done.append(chosen)
+
+    stand_in.do_it = acted
+
+    asyncio.run(stand_in.take_the_turn())
+
+    assert session.said, "it should say what it is doing"
+    assert len(done) == 1, "it waited for a proposal nobody was going to make"

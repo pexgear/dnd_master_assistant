@@ -5,6 +5,35 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+### Run a fight from the map
+
+- **Whoever is up is selected on the map, and Space opens their choices around
+  their pin.** One wedge for moving, one for each weapon they are carrying.
+  Pick a wedge, then click a square or a creature. Running a fight used to mean
+  the map for moving and a dialog for everything else, which is a decision made
+  while looking away from the thing you are deciding about. Escape, or a click
+  in the middle, puts the wheel away.
+- Nothing can be taken back yet, which is the deal at a table once the die is
+  on the felt. But a turn now travels as one plan rather than as two separate
+  events, so lining a whole turn up before committing to it is a change to
+  *when* the plan is handed over rather than a rewrite.
+
+### A fight works with nobody connected
+
+- **Combat no longer answers "go online first".** Rolling, hit points and
+  passing the turn work with the laptop on the table and nobody joined. The
+  same referee runs the fight either way — hosting is other people being able
+  to reach it, not it existing at all — so a rule cannot come to mean one thing
+  played alone and another thing played over the wire.
+
+### Smaller
+
+- **The app has its own icon**, and its own place in the Windows taskbar rather
+  than being filed under Python.
+- **Closing a panel takes its menu with it**, and opening it brings the menu
+  back. A menu for a panel you cannot see acts on something you cannot watch it
+  act on.
+
 ## 0.6.0
 
 A character handed over is played by its own stand-in, which knows only what
