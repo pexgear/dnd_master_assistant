@@ -70,6 +70,7 @@ Issues = "https://github.com/pexgear/dnd_master_assistant/issues"
 canonkeeper = "canon_keeper.__main__:main"
 canonkeeper-server = "canon_keeper.server_main:main"
 canonkeeper-agent = "canon_keeper_dm_agent.__main__:main"
+canonkeeper-player = "canon_keeper_player_agent.__main__:main"
 canonkeeper-mcp = "canon_keeper_mcp.__main__:main"
 
 [project.gui-scripts]
@@ -96,6 +97,7 @@ packages = [
   "canon_keeper_protocol",
   "canon_keeper_client",
   "canon_keeper_dm_agent",
+  "canon_keeper_player_agent",
   "canon_keeper_mcp",
 ]
 

@@ -43,7 +43,9 @@ from canon_keeper import entity_actions
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.encounters import MAX_SIZE, MIN_SIZE, Encounter
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC
+from canon_keeper import campaigns
 from canon_keeper.rules import death
+from canon_keeper_protocol import robots
 
 
 def _header(name: str, palette) -> QListWidgetItem:
@@ -311,6 +313,19 @@ class EncounterWidget(QWidget):
             return f"{hp}/{max_hp}"
         return ""
 
+    def _stand_in_name(self, combatant) -> str:
+        """What the thing playing this character is called.
+
+        Named rather than labelled "autopilot", because there is one of these
+        per character and a table with three of them cannot tell them apart by
+        a word they all share.
+        """
+        if combatant.entity_id is None:
+            return "a machine"
+        return robots.name_for_character(
+            campaigns.campaign_key(self._ctx.repos), combatant.entity_id
+        )
+
     def _condition_of(self, combatant) -> str:
         entity = self._entities.get(combatant.entity_id)
         if entity is None:
@@ -375,7 +390,7 @@ class EncounterWidget(QWidget):
         if not combatant.on_map:
             parts.append("off the map")
         if combatant.simulated:
-            parts.append("autopilot")
+            parts.append(f"played by {self._stand_in_name(combatant)}")
         if self._unseen(combatant):
             parts.append("unshared")
         return " · ".join(parts)

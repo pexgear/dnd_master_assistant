@@ -27,7 +27,7 @@ from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 from canon_keeper import campaigns
 from canon_keeper.content import Content
 from canon_keeper.net import discovery
-from canon_keeper_protocol import auth, enrol, grid
+from canon_keeper_protocol import auth, enrol, grid, robots
 from canon_keeper_protocol.messages import Played
 from canon_keeper.repo.chat import (
     DEFAULT_LIMIT,
@@ -1375,7 +1375,7 @@ class SessionServer(QObject):
             return {}
         return project_encounter(
             encounter,
-            self.repos.encounters.combatants(encounter.id),
+            self._with_stand_ins(self.repos.encounters.combatants(encounter.id)),
             session.viewer,
             visible_entity_ids(self.repos, self.campaign_id, session.viewer),
             self.repos.encounters.obstacles(encounter.id),
@@ -2203,7 +2203,7 @@ class SessionServer(QObject):
         # somebody who has stepped out. Never the agent: it wrote the proposal,
         # and a proposal something can accept on your behalf is not a proposal.
         allowed = entity is not None and (
-            session.account_id == entity.owner_account_id
+            session.account_id == self._who_plays(entity)
             or (session.viewer.is_dm and not session.is_agent)
         )
         if not allowed:
@@ -2306,7 +2306,7 @@ class SessionServer(QObject):
         else:
             self.revoke_seat(entity.id)
         self._broadcast_system(
-            f"Autopilot is playing {entity.name}." if on
+            f"{self.stand_in_name(entity.id)} is playing {entity.name}." if on
             else f"{entity.name} is back with their player."
         )
         self.publish_encounter()
@@ -2583,10 +2583,54 @@ class SessionServer(QObject):
         """
         if combatant is None:
             return False
+        entity = self._entity_of(combatant.id)
+        if entity is None:
+            return False
+        # A stand-in sitting in the seat *is* somebody to ask. It says what the
+        # character does, autopilot works out the rules, and it answers the
+        # proposal -- the same three steps a person's turn takes, at the same
+        # pace. Treating that as "nobody will press anything" would hurry the
+        # turn along on the short clock and cut the exchange in half.
+        if self._seat_is_taken(entity.id):
+            return False
         if combatant.simulated:
             return True
-        entity = self._entity_of(combatant.id)
-        return entity is not None and self._who_plays(entity) is None
+        return self._who_plays(entity) is None
+
+    def stand_in_name(self, entity_id: int) -> str:
+        """What this character's stand-in is called.
+
+        The same every time for the same character, so it is a name people can
+        use rather than a label that changes when a process restarts.
+        """
+        return robots.name_for_character(self.campaign_key, entity_id)
+
+    def _with_stand_ins(self, combatants: list) -> list:
+        """Mark the ones a stand-in is actually connected for.
+
+        Handed over is a wish; this is whether it came true. Autopilot needs
+        the difference: it proposes a turn to a seat that can answer, and takes
+        it outright when nobody can. Without this a character whose stand-in
+        never started would be offered a turn nobody could accept, and the
+        fight would stop there.
+        """
+        for combatant in combatants:
+            combatant.stand_in = (
+                combatant.entity_id is not None
+                and self._seat_is_taken(combatant.entity_id)
+            )
+            combatant.stand_in_name = (
+                self.stand_in_name(combatant.entity_id)
+                if combatant.entity_id is not None and combatant.simulated
+                else ""
+            )
+        return combatants
+
+    def _seat_is_taken(self, entity_id: int) -> bool:
+        """Whether something is currently connected on this character's seat."""
+        return any(
+            session.seat_for == entity_id for session in self._sessions.values()
+        )
 
     def _an_agent_is_thinking(self) -> bool:
         return any(

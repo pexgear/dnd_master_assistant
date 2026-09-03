@@ -218,7 +218,9 @@ class PlayerEncounterWidget(QWidget):
         if not _placed(combatant):
             state.append("off the map")
         if combatant.get("simulated"):
-            state.append("autopilot")
+            state.append(
+                f"played by {combatant.get('stand_in_name') or 'a machine'}"
+            )
 
         item = QListWidgetItem(head + (f"\n{' · '.join(state)}" if state else ""))
         if combatant.get("id") == turn:

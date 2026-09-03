@@ -1043,9 +1043,16 @@ def test_a_player_can_hand_their_character_over(qtbot, fight):
             lambda: repos.encounters.combatant(tokens["hero"].id).simulated,
             timeout=5000,
         )
+        # Named rather than "autopilot": there is one stand-in per character,
+        # and a table with three of them cannot tell them apart by a word they
+        # all share.
+        told = [m.get("text", "") for m in server.history()]
         assert any(
-            "Autopilot is playing Brok" in m.get("text", "") for m in server.history()
+            "is playing Brok" in line for line in told
         ), "the table has to be told a machine is playing somebody"
+        assert any(
+            server.stand_in_name(_hero.id) in line for line in told
+        ), "and told which stand-in it is"
 
         player.send_simulate(tokens["hero"].id, False)
         qtbot.waitUntil(

@@ -529,10 +529,23 @@ It rolls its own attacks rather than describing them — the host rolls, and it
 narrates what came back — and it records what characters pick up onto their own
 sheets as it hands it over.
 
-**Simulate turn** hands a character to autopilot for the fight: an empty chair,
-or a player who has stepped out. Either of you can do it from the Combat panel,
-and either can take them back. Everyone is told, and the initiative order shows
-which of them is being played by a machine.
+**Simulate turn** hands a character over for the fight: an empty chair, or a
+player who has stepped out. Either of you can do it from the Combat panel, and
+either can take them back. Everyone is told, and the initiative order says who
+is playing them.
+
+**Each one gets its own stand-in, and its own name.** Not autopilot — a separate
+thing per character, called BRASS or SPINDLE or VERGE, the same name for that
+character every time. It matters more than it sounds: a stand-in is sent exactly
+what that player is sent, so it does not know where your ambush is. Played by
+autopilot, a handed-over character knew every secret in the campaign and walked
+around them, which looks like good play and is cheating.
+
+It plays the way a person does. It says what it wants in plain words — *"I close
+on Yeemik and swing"* — autopilot turns that into rules and puts it back as a
+proposal, and it answers. You see the proposal exactly as you would a player's,
+and nothing moves until it is accepted. It needs no API key and costs nothing to
+run.
 
 Start it with `--talk-only` if you would rather it kept its hands off the map.
 
@@ -635,11 +648,11 @@ model.
 
 ## Still to come
 
-**Simulated players, off the battlefield.** **Simulate turn** already fills an
-empty chair for a fight. What is missing is the rest of the evening: a character
-the app runs when there is no map — one that talks to the party, asks you
-things, and is approved as anyone else would be. The seat already exists;
-nothing new has to be invented for it to be safe.
+**Simulated players, off the battlefield.** A stand-in fills an empty chair for
+a *fight*. What is missing is the rest of the evening: a character that talks to
+the party between fights, asks you things, and is approved as anyone else would
+be. The seat and the stand-in both exist now; what it lacks is a model to think
+with, and a reason to speak when nobody is rolling initiative.
 
 **A simulated master** that invents rather than stands in: prep by playing your
 own scenario against something that argues back. Further off, and the harder of

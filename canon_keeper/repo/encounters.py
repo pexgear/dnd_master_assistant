@@ -73,6 +73,16 @@ class Combatant:
     down: bool = False
     #: Which side they are on, or None until somebody has asked.
     team_id: int | None = None
+    #: **Not a column.** Whether something is connected on this character's
+    #: seat right now, filled in by the host on the way out to a client. It is
+    #: the difference between handed over and actually being played, which
+    #: decides whether autopilot proposes a turn or takes it -- and a proposal
+    #: nobody can answer stops the fight.
+    stand_in: bool = False
+    #: **Not a column either.** What this character's stand-in is called, so a
+    #: table can say "BRASS moved" rather than "autopilot moved" when there are
+    #: three of them at once.
+    stand_in_name: str = ""
 
     @property
     def on_map(self) -> bool:

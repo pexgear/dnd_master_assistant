@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from canon_keeper import agent_runner, campaigns, credentials
+from canon_keeper import agent_runner, campaigns, credentials, stand_ins
 from canon_keeper.audio.dictation import Dictation
 from canon_keeper.net import discovery, funnel
 from canon_keeper.net.client import SessionClient
@@ -112,6 +112,9 @@ class TableWidget(QWidget):
         #: The agent we started, if we started one. An agent someone else
         #: is running is not ours to stop.
         self._agent_process = None
+        #: One process per character handed to autopilot. Kept matching the
+        #: handed-over characters whenever the fight changes.
+        self._stand_ins = stand_ins.StandIns()
         #: Who is composing right now, by label.
         self._busy: set[str] = set()
         #: Every line, shown or not, so the filter can be turned back on.
@@ -217,6 +220,10 @@ class TableWidget(QWidget):
         # A player handing their own character over. It goes to the host, which
         # decides whether it is theirs to hand.
         ctx.bus.simulate_requested.connect(self._client.send_simulate)
+        # The DM's Combat panel writes the flag straight to the database, so
+        # the host never hears about it -- this is how a stand-in starts for a
+        # handover the DM made themselves.
+        ctx.bus.encounter_changed.connect(self._mind_the_stand_ins)
         ctx.bus.theme_changed.connect(lambda _dark: self._refresh_colours())
         # Our own character arriving is what turns "Perception check" from text
         # into something clickable, and it arrives after the first lines do.
@@ -853,6 +860,14 @@ class TableWidget(QWidget):
             encounters.end(encounter.id)
         self._ctx.bus.encounter_changed.emit()
 
+    def _mind_the_stand_ins(self) -> None:
+        """Keep the running stand-ins matching the handed-over characters.
+
+        Cheap enough to call on every change: it compares two sets and only
+        does anything when they differ.
+        """
+        self._stand_ins.look(self._server)
+
     def _on_agent_moved(self) -> None:
         """A token moved on someone else's say-so. Tell the DM's own panels."""
         self._relaying_agent_move = True
@@ -1002,6 +1017,9 @@ class TableWidget(QWidget):
         server.failed.connect(self._on_failed)
         server.entity_applied.connect(self._on_player_edit_applied)
         server.encounter_applied.connect(self._on_agent_moved)
+        # A character handed over, or handed back, is a change to the
+        # fight -- so this is where a stand-in starts and stops.
+        server.encounter_applied.connect(self._mind_the_stand_ins)
         if not server.start(port):
             server.deleteLater()
             return
@@ -1547,6 +1565,9 @@ class TableWidget(QWidget):
         # Before the socket goes: an agent left running against a dead session
         # is a process nobody knows to kill.
         self._stop_agent()
+        # Before the socket goes: a stand-in left running against a dead
+        # session is a process nobody knows to kill.
+        self._stand_ins.stop_all()
         self._dictation_timer.stop()
         self._dictation.cancel()
         self._client.leave()

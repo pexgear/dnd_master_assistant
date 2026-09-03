@@ -170,15 +170,25 @@ class AgentSession:
         password: str,
         on_said: Callable[["AgentSession", Member, str], Awaitable[None]],
         on_encounter: Callable[["AgentSession"], Awaitable[None]] | None = None,
+        seat: str = "",
+        on_action: Callable[["AgentSession", dict], Awaitable[None]] | None = None,
     ) -> None:
         self._url = url
         self._username = username
         self._password = password
+        #: A seat token, for a machine standing in for one character. It arrives
+        #: as that player and sees what they see; there is no password, because
+        #: nobody -- not even their DM -- has one to give.
+        self._seat = seat
         self._on_said = on_said
         #: Called whenever the host says what the fight looks like. It is how
         #: an agent finds out the turn has come round to something it is
         #: running -- nobody says that out loud, so nothing would otherwise.
         self._on_encounter = on_encounter
+        #: A turn somebody worked out for a character of ours, waiting on a
+        #: yes. Only ever arrives on a connection that plays a character --
+        #: which, for a stand-in, is the whole of what it is here to answer.
+        self._on_action = on_action
         self._socket: Any = None
         self.table = Table()
         #: Set every time the host tells us what the fight looks like. A tool
@@ -283,6 +293,26 @@ class AgentSession:
     async def turn(self, action: str) -> bool:
         return await self.ask(MessageType.TURN, action=action)
 
+    async def answer(self, action_id: str, accept: bool, note: str = "") -> bool:
+        """Yes, no, or "I meant something else" to a turn put to us.
+
+        The same message a person's app sends when they press the button. A
+        stand-in answers its own character's turns and no others -- the host
+        checks that rather than trusting it.
+        """
+        return await self.ask(
+            MessageType.ACTED, id=action_id, accept=accept, note=note
+        )
+
+    async def turn_done(self) -> bool:
+        """"That is my turn." The one way a seat may pass the turn on.
+
+        Not ``turn("next")``: that is running the table, which a stand-in may
+        not do. This says only that *this* character has finished, which is the
+        same thing the player would have pressed.
+        """
+        return await self.ask(MessageType.DONE)
+
     async def swing(self, combatant_id: int, target_id: int, weapon: str = "") -> bool:
         """Attack. The host rolls it -- a result reported here would be ignored."""
         return await self.ask(
@@ -334,6 +364,9 @@ class AgentSession:
     # --------------------------------------------------------------- handshake
 
     async def _handshake(self, socket) -> None:
+        if self._seat:
+            await self._sit_down(socket)
+            return
         await socket.send(encode(MessageType.HELLO, username=self._username))
 
         async with asyncio.timeout(LOGIN_TIMEOUT):
@@ -363,6 +396,24 @@ class AgentSession:
                     await self._dispatch(message)
                     return
                 await self._dispatch(message)
+
+    async def _sit_down(self, socket) -> None:
+        """Log in on a seat token. One message, and no challenge to answer.
+
+        There is nothing to prove: the token *is* the proof, and it was minted
+        by the host for this one character. What it buys is deliberately small
+        -- see ``_may_act_for`` on the host -- so it is worth no more than the
+        handover it belongs to.
+        """
+        await socket.send(encode(MessageType.HELLO, seat=self._seat))
+        async with asyncio.timeout(LOGIN_TIMEOUT):
+            while True:
+                message = decode(await socket.recv(), max_bytes=MAX_HOST_FRAME_BYTES)
+                if message.type == MessageType.ERROR:
+                    raise LoginFailed(str(message.get("message", "refused")))
+                await self._dispatch(message)
+                if message.type == MessageType.WELCOME:
+                    return
 
     # ---------------------------------------------------------------- dispatch
 
@@ -455,6 +506,11 @@ class AgentSession:
                 ),
                 at=message.ts,
             )
+
+        elif message.type == MessageType.ACTION:
+            # `watching` is the DM's copy: something to see, not to answer.
+            if not message.get("watching") and self._on_action is not None:
+                await self._on_action(self, dict(message.payload))
 
         elif message.type == MessageType.ERROR:
             log.warning(

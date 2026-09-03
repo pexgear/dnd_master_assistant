@@ -5,6 +5,38 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.6.0
+
+A character handed over is played by its own stand-in, which knows only what
+its player knows.
+
+**Everyone at a table needs this version.** The wire moved to 7 — whether a
+stand-in is sitting in a seat, and what it is called, are new things said over
+it — and a mixed table is refused at the door with a readable reason rather
+than half-working. Campaign files are upgraded when you open them, and nothing
+needs converting by hand.
+
+### A character handed over is played by its own stand-in
+
+- **Simulate turn now starts something that only knows what your player knows.**
+  Until now a handed-over character was played by autopilot, which sees every
+  secret in the campaign — so it knew where the ambush was and walked around
+  it. That looks like good play and it is cheating. Each handed-over character
+  now gets its own process, connected on a seat of its own, sent exactly what
+  that player is sent. Two characters handed over are two of them, and neither
+  knows what the other was told.
+- **It plays the way a person does.** It says what it wants in plain words —
+  *"I close on Yeemik and swing"* — autopilot turns that into rules and puts it
+  back as a proposal, and it answers yes. Nothing moves until then, and you see
+  the proposal exactly as you would a player's.
+- **It reads the rules rather than guessing them.** How far it may walk and
+  whether its attack is spent come from the host, which is the same figure the
+  move will be judged against. A stand-in that guessed would spend its turns
+  being refused, and an empty chair does not argue with the referee.
+- It needs no API key and costs nothing to run: the decision is worked out from
+  the map. Taking the character back stops it and takes its seat away in the
+  same moment.
+
 ## 0.5.4
 
 Autopilot no longer takes your turn, and the release pipeline says something

@@ -29,7 +29,7 @@ Most of the design below is a consequence of taking those two seriously.
 
 ## The shape
 
-Five packages. The arrows only point one way, and nothing outside the app
+Six packages. The arrows only point one way, and nothing outside the app
 imports the app.
 
 ```
@@ -37,10 +37,10 @@ imports the app.
                  ▲                ▲
                  │                │
     canon_keeper_client        canon_keeper           PySide6
-       ▲            ▲             (the app, the host)
-       │            │
-  dm_agent        mcp
-  (anthropic)     (mcp)
+     ▲       ▲       ▲           (the app, the host)
+     │       │       │
+ dm_agent  player   mcp
+(anthropic) agent   (mcp)
 ```
 
 | Package | Is | Depends on |
@@ -48,8 +48,36 @@ imports the app.
 | `canon_keeper_protocol` | the wire contract: frames, login, dice | the standard library, nothing else |
 | `canon_keeper_client` | a headless connection to a session | `websockets` |
 | `canon_keeper` | the app, the host, the source of truth | PySide6, platformdirs, keyring |
-| `canon_keeper_dm_agent` | the autopilot agent | `anthropic` |
+| `canon_keeper_dm_agent` | the autopilot agent, answering for the DM | `anthropic` |
+| `canon_keeper_player_agent` | one character, played while its player is away | the standard library |
 | `canon_keeper_mcp` | one seat exposed over MCP | `mcp` |
+
+**The player agent is one per character, and that is the design.** It connects
+on a seat token, so it is sent what that player is sent and nothing else — two
+characters handed over are two processes with two views, and neither knows what
+the other was told. Before it existed, a handed-over character was played by the
+*DM's* agent, which sees every secret: it knew where the ambush was and walked
+around it, which looks like good play and is cheating.
+
+It also does not move anybody. It says what the character does in plain words,
+autopilot turns that into rules and proposes it, and the stand-in answers yes —
+the same three steps a person's turn takes. A second path that let a machine
+move a token directly would be the one nobody looks at again, and the one where
+a rule quietly stops being enforced. It has no model of its own yet: the
+decision is worked out from the map, so it costs nothing to run.
+
+`stand_ins.StandIns` starts and stops them, on the machine hosting the session,
+by comparing the handed-over characters against the running processes whenever
+the fight changes. The seat token goes through the **environment**, never the
+command line, which is readable by anyone who can list processes — the DM
+agent's password is passed the same way and for the same reason.
+
+**Handed over is a wish; a stand-in connected is whether it came true.** The
+projection carries both, because autopilot needs the difference: it proposes a
+turn to a seat that can answer and takes it outright when nobody can. Getting
+that wrong is not cosmetic — a proposal nobody can accept stops the fight, which
+is exactly what happened when the instruction to propose shipped before the
+thing that answers.
 
 **Why this split.** PySide6 is ~660 MB. An agent that only holds a socket should
 not need it, and a client that *can* import `canon_keeper` can open a campaign
@@ -136,7 +164,7 @@ so anything load-bearing belongs in a column.
 
 ## The wire
 
-Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 6`; a
+Newline-free JSON text frames over WebSocket. `PROTOCOL_VERSION = 7`; a
 mismatch is refused at the door with a readable reason rather than
 half-working.
 

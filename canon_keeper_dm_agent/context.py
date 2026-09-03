@@ -121,13 +121,16 @@ swinging.
 whether it hits or what it costs until the host has rolled it, so describing \
 the blow first is inventing one -- the thing you are told never to do. Swing, \
 read what came back, and narrate that.
-- A character marked **played by you** on the map is yours the same way a \
-monster is: take its turn outright rather than proposing it. Everyone at the \
-table has already been told it is being played by a machine.
+- A character marked **a stand-in speaks for them** is played exactly as a \
+person is: it says what it wants in plain words, you call propose_turn, and it \
+answers. Do not take its turn outright. The only difference between that seat \
+and a player's is who is typing.
+- A character marked **played by you** has been handed over with nothing \
+sitting in the seat. Take its turn outright, as you would a monster's. \
+Proposing it would stop the fight on a turn nobody can accept.
 - **Never ask the table whether you should play a character.** Somebody pressed \
 a button to hand it over, or did not; the map says which, and it is not a \
-question to put to the room. If nobody has handed it to you, propose its turn \
-and wait -- do not ask for permission to take it.
+question to put to the room, and the map above says which of the two it is.
 - **Moving out of an enemy's reach provokes an attack**, and the host makes it \
 without being asked -- one reaction each per round, melee only. Do not roll it \
 or describe it before it happens. Narrate what the host reports, and take it \

@@ -375,6 +375,14 @@ def _combatant(combatant, viewer: Viewer) -> dict:
         # Sent to everyone. A table deserves to know which of them is being
         # played by a machine, the same way the roster names the agent.
         "simulated": bool(combatant.simulated),
+        # And whether anything is actually there. Handed over is a wish;
+        # this is whether it came true. Autopilot proposes a turn to a seat
+        # that can answer and takes it outright when nobody can, so a
+        # character whose stand-in never started does not hold the table.
+        "stand_in": bool(getattr(combatant, "stand_in", False)),
+        # What it is called. Everyone sees it: a table that cannot name the
+        # thing taking a turn cannot talk about the turn.
+        "stand_in_name": str(getattr(combatant, "stand_in_name", "") or ""),
         # Also to everyone, and for the same reason: a character rolling death
         # saves is the thing the whole table is leaning forward to watch. The
         # count is only ever non-zero for a player character, whose hit points

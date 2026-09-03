@@ -21,7 +21,7 @@ from typing import Any
 #: Bumped when the contract grows, not only when it breaks. A build that does
 #: not know about encounters would connect happily and show a table no map --
 #: half-working, which is the state this number exists to prevent.
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 
 #: No O/0 or I/1 -- these get read aloud across a table.
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
