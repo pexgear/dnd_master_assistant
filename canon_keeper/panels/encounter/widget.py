@@ -46,7 +46,7 @@ from canon_keeper.panels.encounter.grid import (
 )
 from canon_keeper import entity_actions
 from canon_keeper.plugin import AppContext, PanelAction
-from canon_keeper.repo.encounters import MAX_SIZE, MIN_SIZE, Encounter
+from canon_keeper.repo.encounters import Encounter
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC
 from canon_keeper import campaigns
 from canon_keeper.rules import death
@@ -219,8 +219,6 @@ class EncounterWidget(QWidget):
         splitter.addWidget(left)
 
         self._map = GridMap()
-        self._map.limits = (MIN_SIZE, MAX_SIZE)
-        self._map.resize_requested.connect(self._on_resize)
         self._map.moved.connect(self._on_moved)
         self._map.picked.connect(self._on_picked)
         self._map.square_clicked.connect(self._on_square)
@@ -266,6 +264,11 @@ class EncounterWidget(QWidget):
                 enabled=running and self._encounter.has_begun,
             ),
             PanelAction("F&ight...", self._edit_fight, enabled=running),
+            # The map's own view. In the menu as well as on the wheel because a
+            # shortcut nobody can find is a shortcut nobody has.
+            PanelAction("Zoom &in", lambda: self._map.zoom_by(1), "Ctrl+="),
+            PanelAction("Zoom &out", lambda: self._map.zoom_by(-1), "Ctrl+-"),
+            PanelAction("&Whole map", self._map.fit, "Ctrl+0"),
         ]
 
     def _refresh(self) -> None:
@@ -918,29 +921,6 @@ class EncounterWidget(QWidget):
         if self._by_id(combatant_id) is None:
             return
         self._on_moved(combatant_id, x, y)
-
-    def _on_resize(self, columns: int, rows: int) -> None:
-        """A wall pushed out or pulled in, one square at a time.
-
-        Shrinking can strand people and terrain; the repository takes them off
-        the map rather than leaving them at a square that no longer exists, and
-        the panel says so instead of letting a token vanish quietly.
-        """
-        if self._encounter is None:
-            return
-        before = len([c for c in self._combatants if c.on_map])
-        self._ctx.repos.encounters.resize(
-            self._encounter.id,
-            self._encounter.width + columns,
-            self._encounter.height + rows,
-        )
-        self._refresh()
-        stranded = before - len([c for c in self._combatants if c.on_map])
-        if stranded > 0:
-            self._ctx.bus.status_message.emit(
-                f"{stranded} no longer fitted on the map, and came off it."
-            )
-        self._changed()
 
     def _on_obstacle(self, x: int, y: int) -> None:
         """Ctrl-click: a rock goes in, or comes out.

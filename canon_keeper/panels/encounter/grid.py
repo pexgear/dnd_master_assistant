@@ -23,20 +23,38 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QToolButton, QWidget
+from PySide6.QtWidgets import QWidget
 
 from canon_keeper_protocol import grid
 
-#: Below this a token is a coloured dot with no room for initials, which is
-#: worse than making the panel scroll.
+#: Below this a token is a coloured dot with no room for initials or pips.
+#: Fitting stops here and the map is panned instead, which is the better of the
+#: two: a board you scroll is usable, and a board of specks is not.
 MIN_CELL = 18
-#: Above it the map stops looking like a battlefield and starts looking like a
-#: chessboard for giants.
+#: Above it a map that fits the panel stops looking like a battlefield and
+#: starts looking like a chessboard for giants. Only the *automatic* size is
+#: held to it -- somebody who zooms in has said what they want.
 MAX_CELL = 64
 
-#: Room kept clear along the right and bottom edges for the grow/shrink
-#: buttons, so they sit beside the grid rather than on top of it.
-CONTROL_STRIP = 26
+#: How far a person may zoom, either way. Wider than the fitting range at both
+#: ends on purpose: zooming out past legibility is how you find the far corner
+#: of a big map, and zooming in past comfort is how you sort out four creatures
+#: standing on top of each other.
+ZOOM_MIN = 8
+ZOOM_MAX = 200
+#: One notch. Multiplicative, because a fixed number of pixels is a huge step
+#: when the squares are small and an imperceptible one when they are large.
+ZOOM_STEP = 1.2
+
+#: Which way each arrow key walks the view, in squares. A square at a time
+#: rather than a fixed pixel nudge, because the thing being looked for on a map
+#: is always "two along and one down".
+_ARROWS = {
+    Qt.Key.Key_Left: (-1, 0),
+    Qt.Key.Key_Right: (1, 0),
+    Qt.Key.Key_Up: (0, -1),
+    Qt.Key.Key_Down: (0, 1),
+}
 
 #: Room along the top and left for the coordinate rulers. Everyone gets these,
 #: players included: naming a square is how a table talks about a map.
@@ -244,7 +262,7 @@ class GridMap(QWidget):
     #: (columns, rows) to add -- negative to take away. The buttons on the edge
     #: of the map itself, because "the room is bigger than that" is a thought
     #: you have while looking at the room.
-    resize_requested = Signal(int, int)
+    zoom_changed = Signal()
     #: A turn somebody lined up on the map: see :class:`TurnPlan`. Emitted when
     #: it is complete -- a move with a square, an attack with a target.
     planned = Signal(object)
@@ -271,7 +289,16 @@ class GridMap(QWidget):
         self._read_only = False
         #: How small and how large the grid may get. Set by whoever owns the
         #: data; this widget only needs it to grey the right button out.
-        self.limits = (1, 999)
+        #: The size of a square in pixels when somebody has chosen one, and
+        #: None while the map is fitting itself to the panel. None rather than
+        #: a number equal to the fitted size, because "fit" has to survive the
+        #: panel being resized -- and a number would not.
+        self._zoom: int | None = None
+        #: How far the board has been dragged from the middle, in pixels. Only
+        #: ever non-zero when the board is bigger than the room for it.
+        self._pan = QPoint(0, 0)
+        #: Where a pan started, while one is happening.
+        self._panning_from: QPoint | None = None
         #: The token being dragged, and where the pointer currently is. Nothing
         #: is committed until the button comes back up, so a drag that ends
         #: somewhere impossible simply does not happen.
@@ -309,21 +336,6 @@ class GridMap(QWidget):
         self._frames.setInterval(FRAME_MS)
         self._frames.timeout.connect(self._next_frame)
 
-        self._wider = self._edge_button("+", "One more column", 1, 0)
-        self._narrower = self._edge_button("-", "One column fewer", -1, 0)
-        self._taller = self._edge_button("+", "One more row", 0, 1)
-        self._shorter = self._edge_button("-", "One row fewer", 0, -1)
-        self._arrange_buttons()
-
-    def _edge_button(self, label: str, tip: str, dx: int, dy: int) -> QToolButton:
-        button = QToolButton(self)
-        button.setText(label)
-        button.setToolTip(tip)
-        button.setAutoRaise(True)
-        button.setFixedSize(CONTROL_STRIP - 4, CONTROL_STRIP - 4)
-        button.clicked.connect(lambda: self.resize_requested.emit(dx, dy))
-        return button
-
     # ------------------------------------------------------------------ input
 
     @property
@@ -333,15 +345,16 @@ class GridMap(QWidget):
     @read_only.setter
     def read_only(self, value: bool) -> None:
         self._read_only = bool(value)
-        # A player has nothing to press. The strip is reclaimed for the grid
-        # rather than left blank, so their map is the bigger one.
-        self._arrange_buttons()
         self.update()
 
     def set_grid(self, width: int, height: int) -> None:
+        changed = (width, height) != (self._width, self._height)
         self._width = max(1, int(width))
         self._height = max(1, int(height))
-        self._arrange_buttons()
+        if changed:
+            # A different map is a different thing to be looking at, and the
+            # corner you had scrolled to is not a place on it.
+            self._pan = QPoint(0, 0)
         self.update()
 
     def set_tokens(self, tokens: list[Token]) -> None:
@@ -547,62 +560,131 @@ class GridMap(QWidget):
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt's name
         return QSize(RULER + self._width * 28, RULER + self._height * 28)
 
-    def _strip(self) -> int:
-        return 0 if self._read_only else CONTROL_STRIP
-
     @property
     def bounds(self) -> tuple[int, int, int, int]:
         return grid.bounds(self._width, self._height)
 
-    def _cell(self) -> int:
-        strip = self._strip()
-        by_width = (self.width() - strip - RULER) // max(1, self._width)
-        by_height = (self.height() - strip - RULER) // max(1, self._height)
+    def _fitted(self) -> int:
+        """The size of a square that would show the whole map at once."""
+        by_width = (self.width() - RULER) // max(1, self._width)
+        by_height = (self.height() - RULER) // max(1, self._height)
         return max(MIN_CELL, min(MAX_CELL, min(by_width, by_height)))
 
+    def _cell(self) -> int:
+        if self._zoom is None:
+            return self._fitted()
+        return max(ZOOM_MIN, min(ZOOM_MAX, self._zoom))
+
     def _origin(self) -> QPoint:
-        """Where the top-left *square* is drawn, in pixels."""
-        cell, strip = self._cell(), self._strip()
-        spare_x = self.width() - RULER - strip - cell * self._width
-        spare_y = self.height() - RULER - strip - cell * self._height
+        """Where the top-left *square* is drawn, in pixels.
+
+        Centred when the board fits, panned when it does not. The rulers do not
+        move: they are pinned to the edges and the board slides under them, the
+        way a spreadsheet keeps its column letters. Scrolling the coordinates
+        off the screen would take away the thing that makes a square sayable
+        out loud, which is the whole reason they are drawn.
+        """
+        cell = self._cell()
+        spare_x = self.width() - RULER - cell * self._width
+        spare_y = self.height() - RULER - cell * self._height
+        pan = self._clamped_pan(cell)
         return QPoint(
-            RULER + max(0, spare_x // 2),
-            RULER + max(0, spare_y // 2),
+            RULER + max(0, spare_x // 2) + pan.x(),
+            RULER + max(0, spare_y // 2) + pan.y(),
         )
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt's name
-        super().resizeEvent(event)
-        self._arrange_buttons()
+    def _clamped_pan(self, cell: int) -> QPoint:
+        """The pan, cut down to one that still leaves the board on screen.
 
-    def _arrange_buttons(self) -> None:
-        """Put the four controls on the edges of the board, not the widget.
-
-        On the board, because they are about the grid rather than about the
-        panel -- pressing the one at the right-hand edge should feel like
-        pushing that wall out.
+        Held here rather than at the point of dragging, because the panel gets
+        resized too -- and a pan that was legal in a wide dock must not strand
+        the board off the edge of a narrow one.
         """
-        for button in (self._wider, self._narrower, self._taller, self._shorter):
-            button.setVisible(not self._read_only)
-        if self._read_only:
+        room_x = self.width() - RULER - cell * self._width
+        room_y = self.height() - RULER - cell * self._height
+        # Nothing to pan when it all fits: centred is the only sensible answer,
+        # and a map that could be nudged around inside spare room would be a
+        # map that never sits still.
+        x = 0 if room_x >= 0 else max(room_x, min(0, self._pan.x()))
+        y = 0 if room_y >= 0 else max(room_y, min(0, self._pan.y()))
+        return QPoint(x, y)
+
+    # ------------------------------------------------------------------- zoom
+
+    @property
+    def zoom(self) -> int:
+        """The size of a square, in pixels, whether chosen or worked out."""
+        return self._cell()
+
+    @property
+    def fitting(self) -> bool:
+        """True while the map is sizing itself to the panel."""
+        return self._zoom is None
+
+    def zoom_by(self, notches: int, toward: QPoint | None = None) -> None:
+        """Zoom in or out, keeping ``toward`` over the same square.
+
+        Anchoring matters more than it sounds: zooming about the centre means
+        the thing you were looking at slides away as you close in on it, and
+        you chase it with two more gestures. Anchoring on the pointer -- or on
+        the middle when there is no pointer, as from a menu -- is what makes
+        one notch enough.
+        """
+        if not notches:
+            return
+        before = self._cell()
+        wanted = before * (ZOOM_STEP ** notches)
+        after = max(ZOOM_MIN, min(ZOOM_MAX, int(round(wanted))))
+        # Rounding can eat a whole notch when the squares are small, which
+        # reads as a wheel that does nothing.
+        if after == before:
+            after = max(ZOOM_MIN, min(ZOOM_MAX, before + (1 if notches > 0 else -1)))
+        if after == before:
             return
 
-        cell, origin = self._cell(), self._origin()
-        right = origin.x() + cell * self._width + 2
-        bottom = origin.y() + cell * self._height + 2
-        size = self._wider.width()
-        middle_y = origin.y() + (cell * self._height - size * 2) // 2
-        middle_x = origin.x() + (cell * self._width - size * 2) // 2
+        anchor = toward if toward is not None else self.rect().center()
+        origin = self._origin()
+        # Where the anchor sits on the board, in squares -- a fraction, so the
+        # square stays under the pointer rather than jumping to its corner.
+        away_x = (anchor.x() - origin.x()) / before
+        away_y = (anchor.y() - origin.y()) / before
 
-        self._narrower.move(right, max(origin.y(), middle_y))
-        self._wider.move(right, max(origin.y(), middle_y) + size)
-        self._shorter.move(max(origin.x(), middle_x), bottom)
-        self._taller.move(max(origin.x(), middle_x) + size, bottom)
+        self._zoom = after
+        # Solve for the pan that puts that same spot back under the anchor.
+        spare_x = self.width() - RULER - after * self._width
+        spare_y = self.height() - RULER - after * self._height
+        self._pan = QPoint(
+            int(anchor.x() - away_x * after - RULER - max(0, spare_x // 2)),
+            int(anchor.y() - away_y * after - RULER - max(0, spare_y // 2)),
+        )
+        self.zoom_changed.emit()
+        self.update()
 
-        smallest, largest = self.limits
-        self._narrower.setEnabled(self._width > smallest)
-        self._wider.setEnabled(self._width < largest)
-        self._shorter.setEnabled(self._height > smallest)
-        self._taller.setEnabled(self._height < largest)
+    def fit(self) -> None:
+        """Go back to showing the whole map, and stay fitted as the panel moves."""
+        self._zoom = None
+        self._pan = QPoint(0, 0)
+        self.zoom_changed.emit()
+        self.update()
+
+    def pan_by(self, dx: int, dy: int) -> None:
+        """Slide the board a square at a time. Does nothing when it all fits."""
+        cell = self._cell()
+        self._pan = self._clamped_pan(cell) + QPoint(-dx * cell, -dy * cell)
+        self._pan = self._clamped_pan(cell)
+        self.update()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt's name
+        """The wheel zooms. There is nothing else on a map for it to do."""
+        if self.frozen:
+            return
+        notches = event.angleDelta().y() / 120.0
+        if not notches:
+            return
+        self.zoom_by(
+            1 if notches > 0 else -1, event.position().toPoint()
+        )
+        event.accept()
 
     def _square_at(self, point: QPoint) -> tuple[int, int] | None:
         """Which square a pixel is in, in map coordinates."""
@@ -638,6 +720,13 @@ class GridMap(QWidget):
         cell = self._cell()
         origin = self._origin()
         board = QRect(origin.x(), origin.y(), cell * self._width, cell * self._height)
+
+        # Everything about the fight is kept out of the ruler strips. Once the
+        # board can be panned it runs under them, and a coordinate you cannot
+        # read is a square nobody can name out loud -- which is the one thing
+        # the rulers are for.
+        painter.save()
+        painter.setClipRect(self._viewport())
 
         painter.fillRect(board, palette.base())
 
@@ -676,8 +765,6 @@ class GridMap(QWidget):
             y = origin.y() + row * cell
             painter.drawLine(board.left(), y, board.right(), y)
 
-        self._draw_rulers(painter, cell, origin, board)
-
         if self._hover is not None:
             painter.setPen(QPen(self.palette().highlight().color(), max(2, cell // 8)))
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -691,7 +778,16 @@ class GridMap(QWidget):
         self._draw_preview(painter, cell, origin)
         self._draw_radial(painter, cell, origin, now)
         self._draw_numbers(painter, cell, origin, now)
+
+        painter.restore()
+        self._draw_rulers(painter, cell, origin)
         painter.end()
+
+    def _viewport(self) -> QRect:
+        """The part of the widget the board is allowed into."""
+        return QRect(
+            RULER, RULER, max(0, self.width() - RULER), max(0, self.height() - RULER)
+        )
 
     def _draw_radial(
         self, painter: QPainter, cell: int, origin: QPoint, now: float
@@ -867,17 +963,25 @@ class GridMap(QWidget):
             middle.x() - reach + guard * 2, middle.y() + reach - guard // 2,
         )
 
-    def _draw_rulers(
-        self, painter: QPainter, cell: int, origin: QPoint, board: QRect
-    ) -> None:
+    def _draw_rulers(self, painter: QPainter, cell: int, origin: QPoint) -> None:
         """The numbers along the top and left.
 
         This is what makes a square something people can say out loud. Every
         square is labelled when there is room; when there is not, every second
         or fifth, and 0 always -- the one anybody counts from.
+
+        Pinned to the edges of the panel rather than to the board, so panning
+        slides the columns along under a ruler that stays put -- the way a
+        spreadsheet keeps its column letters. Scrolling the coordinates off the
+        screen would take away the one thing they are for.
         """
         left, top, _right, _bottom = self.bounds
         step = 1 if cell >= 30 else 2 if cell >= 20 else 5
+        viewport = self._viewport()
+
+        # An opaque strip, because the board now runs underneath it.
+        painter.fillRect(QRect(0, 0, self.width(), RULER), self.palette().window())
+        painter.fillRect(QRect(0, 0, RULER, self.height()), self.palette().window())
 
         font = QFont(painter.font())
         font.setPixelSize(max(8, min(12, cell // 2)))
@@ -890,17 +994,21 @@ class GridMap(QWidget):
             here = left + column
             if here != 0 and here % step:
                 continue
+            x = origin.x() + column * cell
+            if x + cell <= viewport.left() or x >= viewport.right():
+                continue  # that column is off the side; its number would be too
             painter.drawText(
-                QRect(origin.x() + column * cell, board.top() - RULER, cell, RULER),
-                Qt.AlignmentFlag.AlignCenter,
-                str(here),
+                QRect(x, 0, cell, RULER), Qt.AlignmentFlag.AlignCenter, str(here)
             )
         for row in range(self._height):
             here = top + row
             if here != 0 and here % step:
                 continue
+            y = origin.y() + row * cell
+            if y + cell <= viewport.top() or y >= viewport.bottom():
+                continue
             painter.drawText(
-                QRect(board.left() - RULER, origin.y() + row * cell, RULER - 3, cell),
+                QRect(0, y, RULER - 3, cell),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 str(here),
             )
@@ -1087,6 +1195,23 @@ class GridMap(QWidget):
         if event.key() == Qt.Key.Key_Escape:
             self.close_radial()
             return
+
+        # Zoom from the keyboard too, since a laptop trackpad is a poor wheel.
+        # Both the main-row and the keypad keys, and Equal as well as Plus,
+        # because "the plus key" is three different keys depending on layout.
+        if event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self.zoom_by(1)
+            return
+        if event.key() in (Qt.Key.Key_Minus, Qt.Key.Key_Underscore):
+            self.zoom_by(-1)
+            return
+        if event.key() == Qt.Key.Key_0:
+            self.fit()
+            return
+        if event.key() in _ARROWS:
+            self.pan_by(*_ARROWS[event.key()])
+            return
+
         if event.key() == Qt.Key.Key_Space and not self.read_only:
             if self._radial is not None or self._awaiting is not None:
                 self.close_radial()
@@ -1135,6 +1260,14 @@ class GridMap(QWidget):
             self.menu_requested.emit(
                 token.id if token else -1, event.globalPosition().toPoint()
             )
+            return
+
+        # The middle button drags the board about. Its own button rather than a
+        # modifier on the left one, so panning can never be mistaken for the
+        # gesture that moves a creature.
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._panning_from = event.position().toPoint()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
             return
 
         if token is not None:
@@ -1186,6 +1319,15 @@ class GridMap(QWidget):
         self.update()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt's name
+        if self._panning_from is not None:
+            here = event.position().toPoint()
+            self._pan += here - self._panning_from
+            self._panning_from = here
+            # Written back clamped, so a drag that runs past the edge does not
+            # bank a pan you then have to unwind before the board moves again.
+            self._pan = self._clamped_pan(self._cell())
+            self.update()
+            return
         if self._radial is not None:
             over = self._wedge_at(
                 event.position().toPoint(), self._cell(), self._origin()
@@ -1202,6 +1344,10 @@ class GridMap(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt's name
+        if self._panning_from is not None:
+            self._panning_from = None
+            self.unsetCursor()
+            return
         if self._dragging is None:
             return
         combatant_id, target, start = self._dragging, self._drag_to, self._drag_from

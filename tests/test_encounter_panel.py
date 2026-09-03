@@ -301,51 +301,6 @@ def test_a_drop_onto_an_occupied_square_is_refused(widget, ctx, fight, qtbot):
     assert ctx.repos.encounters.combatant(tokens["hero"].id).x == -4
 
 
-def test_the_map_has_buttons_to_push_the_walls_out(widget, ctx, fight):
-    encounter, _tokens, _hero, _goblin = fight
-    widget._on_resize(1, 0)
-    assert ctx.repos.encounters.get(encounter.id).width == 11
-
-    widget._on_resize(0, 1)
-    assert ctx.repos.encounters.get(encounter.id).height == 9
-
-    widget._on_resize(-1, -1)
-    smaller = ctx.repos.encounters.get(encounter.id)
-    assert (smaller.width, smaller.height) == (10, 8)
-
-
-def test_shrinking_past_someone_says_they_came_off(widget, ctx, fight, qtbot):
-    _encounter, tokens, _hero, _goblin = fight
-    ctx.repos.encounters.place(tokens["hero"].id, 4, 3)
-    widget._refresh()
-
-    with qtbot.waitSignal(ctx.bus.status_message, timeout=1000) as blocker:
-        widget._on_resize(-5, -5)
-
-    assert "came off it" in blocker.args[0]
-    assert not ctx.repos.encounters.combatant(tokens["hero"].id).on_map
-
-
-def test_the_buttons_stop_at_the_limits(widget, ctx, fight):
-    from canon_keeper.repo.encounters import MAX_SIZE, MIN_SIZE
-
-    encounter, _tokens, _hero, _goblin = fight
-    ctx.repos.encounters.resize(encounter.id, MIN_SIZE, MIN_SIZE)
-    widget._refresh()
-    assert not widget._map._narrower.isEnabled()
-    assert widget._map._wider.isEnabled()
-
-    ctx.repos.encounters.resize(encounter.id, MAX_SIZE, MAX_SIZE)
-    widget._refresh()
-    assert not widget._map._wider.isEnabled()
-
-
-def test_a_player_gets_no_resize_buttons(player_map):
-    """Nothing to press, and the strip they would sit in goes to the grid."""
-    made, _shared = player_map
-    assert not made._map._wider.isVisible()
-
-
 def test_ctrl_clicking_a_square_puts_something_in_the_way(widget, ctx, fight):
     encounter, _tokens, _hero, _goblin = fight
     widget._on_obstacle(-2, 1)

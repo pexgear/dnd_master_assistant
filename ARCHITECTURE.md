@@ -399,6 +399,20 @@ An even-sided map cannot be perfectly centred, so the extra square goes right
 and down. That is arbitrary and fixed, and it is why growing a map by one adds
 a column on alternating sides.
 
+**Zoom is the absence of a size, not a number.** `GridMap._zoom` is None while
+the map is fitting itself to the panel, and an integer once somebody has
+chosen. A number equal to the fitted size would look identical and behave
+differently: fitting has to survive the dock being resized, and a number would
+not. Zooming is anchored on the pointer, because zooming about the centre
+slides the thing you were looking at away from you and you chase it with two
+more gestures.
+
+The rulers are pinned to the panel and the board slides underneath, the way a
+spreadsheet keeps its column letters. Everything about the fight is clipped to
+`_viewport()` so it cannot paint into the strips — a coordinate you cannot read
+is a square nobody can name out loud, which is the one thing the rulers are
+for.
+
 ### Taking a turn from the map
 
 Whoever is up is selected on the map when the turn moves — not on every redraw,

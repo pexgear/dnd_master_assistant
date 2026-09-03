@@ -362,8 +362,14 @@ to read it from. **Start**, **Next turn** and **End fight** keep the round.
 
 **Ctrl-click a square** to put something in the way — a rock, a pillar, an
 overturned cart. Nobody can stand there, and it is what a creature gets behind
-for cover. The **+ and −** buttons on the edges of the map push the walls in
-and out a row or a column at a time.
+for cover.
+
+**The wheel zooms**, on whatever the pointer is over, and the middle button
+drags the board about. `+` and `−` zoom from the keyboard, the arrows walk the
+view a square at a time, and `0` puts the whole map back on screen. Until you
+zoom, the map sizes itself to the panel and keeps doing so as you move the dock
+around. How big the room is belongs to the fight itself — **Fight…** in the
+Combat menu.
 
 Squares are numbered from the middle: **0,0 is the centre**, x to the right and
 y downwards, so "the one at minus three, two" is a square everybody can find —

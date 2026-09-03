@@ -18,6 +18,21 @@ What changed, from the point of view of someone running a game. See
   events, so lining a whole turn up before committing to it is a change to
   *when* the plan is handed over rather than a rewrite.
 
+### A map you can zoom
+
+- **The wheel zooms**, on whatever the pointer is over, so closing in on a
+  scrum does not slide it out from under you. The middle button drags the board
+  about, `+` and `−` zoom from the keyboard, the arrows walk the view a square
+  at a time, and `0` puts the whole map back. Until you zoom, the map still
+  sizes itself to the panel and keeps doing so as you move the dock around.
+- The coordinate rulers stay pinned while the board slides under them, the way
+  a spreadsheet keeps its column letters — a square you cannot name is a square
+  nobody can call out.
+- **The + and − buttons on the edges of the map are gone.** They changed the
+  fight when what you wanted was a closer look, and they left a big map in a
+  small dock as a board of specks with no way to get nearer. How big the room
+  is belongs to the fight itself, in **Fight…**.
+
 ### What a creature has left, on the map
 
 - **Pips under whoever is up show what is left of their turn** — one for
