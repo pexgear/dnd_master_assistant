@@ -1524,8 +1524,18 @@ class TableWidget(QWidget):
                 "so it is a plain d20."
             )
 
+        if prompt.kind == rolls.DEATH:
+            note = "No modifier: a death save is a bare d20."
+
         dialog = RollDialog(prompt.label, notation, note, prompt.dc, self)
-        dialog.roll_requested.connect(self._roll)
+        # A death save is not an ordinary roll that happens to be a d20. It is
+        # recorded against the character -- three of them either way decide it
+        # -- so it goes to the host as the thing it is, and the host checks
+        # that this login is in fact the one that owes it.
+        if prompt.kind == rolls.DEATH:
+            dialog.roll_requested.connect(lambda _n: self._client.send_death_save())
+        else:
+            dialog.roll_requested.connect(self._roll)
         self._roll_dialog = dialog
         try:
             dialog.exec()

@@ -95,6 +95,10 @@ class MessageType(StrEnum):
     DONE = "done"          # {} -- I have finished my turn, pass it on
     ALLOW = "allow"        # {id, allow} -- the DM answering a rule bend
     SWING = "swing"        # {combatant, target, weapon} -- roll an attack
+    #: {} -- the death save you owe. Carries nothing: the host already knows
+    #: which character this login plays and whether one is owed, and a client
+    #: that named its own would be a client choosing when to make one.
+    DEATH_SAVE = "death_save"
     SIMULATE = "simulate"  # {combatant, on} -- let autopilot play this one
     GIVE = "give"          # {entity, item} -- into somebody's inventory
 

@@ -224,13 +224,44 @@ def test_a_stand_in_has_a_name_of_its_own(table):
     """Three of these at once cannot all be called "autopilot"."""
     from canon_keeper_protocol import robots
 
-    server, _repos, _enc, _tokens, marla, brok, _goblin = table
+    server, _repos, _enc, _tokens, marla, _brok, _goblin = table
 
-    hers = server.stand_in_name(marla.id)
-    his = server.stand_in_name(brok.id)
+    assert server.stand_in_name(marla.id) in robots.NAMES
 
-    assert hers in robots.NAMES
-    assert hers != his, "two characters, two stand-ins, two names"
+
+def test_the_name_varies_with_the_character():
+    """The regression this guards is every stand-in getting the same one.
+
+    Asserted across a spread rather than on one pair, because the name is a
+    hash into a list of twenty-four and any *given* pair can collide -- see
+    :func:`test_two_characters_can_draw_the_same_name`.
+    """
+    from canon_keeper_protocol import robots
+
+    drawn = {robots.name_for_character("a-campaign", i) for i in range(1, 25)}
+
+    assert len(drawn) > 1
+
+
+def test_two_characters_can_draw_the_same_name():
+    """A known limit, written down so it is not mistaken for a broken test.
+
+    The name is a pure function of the campaign and the character, which is
+    what makes it the same in every process that works it out -- the host, the
+    DM's panel, and the stand-in itself -- without any of them coordinating.
+    The price is that two characters in one fight can land on the same word,
+    about once in twenty-five. Cosmetic, and confusing at a table when it
+    happens; fixing it means somebody deciding, which means coordination.
+    """
+    from canon_keeper_protocol import robots
+
+    clashes = [
+        key
+        for key in (f"campaign-{n}" for n in range(200))
+        if robots.name_for_character(key, 1) == robots.name_for_character(key, 2)
+    ]
+
+    assert clashes, "if this ever stops being true, the naming has been changed"
 
 
 def test_the_name_is_the_same_every_time(table):

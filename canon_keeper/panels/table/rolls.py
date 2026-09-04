@@ -65,6 +65,16 @@ ABILITIES: dict[str, str] = {
 #: not the same bonus.
 SKILL = "skill"
 SAVE = "save"
+#: Ten or better on a plain d20, and the number is not in the sentence: it is
+#: the rule rather than something a DM set. Repeated from
+#: :mod:`canon_keeper.rules.death` rather than imported, because this module
+#: runs in a player's app where the campaign's rules are somebody else's.
+DEATH_SAVE_DC = 10
+
+#: The one roll nobody chooses to make. Its own kind because it takes no
+#: modifier of any sort -- not proficiency, not Constitution, nothing -- which
+#: is the rule that makes it frightening at every level.
+DEATH = "death"
 ABILITY = "ability"
 INITIATIVE = "initiative"
 DICE = "dice"
@@ -113,6 +123,13 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
             + _TRAILING_DC,
             re.IGNORECASE,
         ),
+    ),
+    (
+        # Before the ability save below, which would otherwise never see it
+        # anyway -- "death" is not an ability -- but the order says which of
+        # the two this is meant to be.
+        DEATH,
+        re.compile(r"death\s+(?:saving\s+throw|save)s?", re.IGNORECASE),
     ),
     (
         SAVE,
@@ -165,7 +182,12 @@ def _prompt(kind: str, match: re.Match, text: str) -> Prompt:
 
     key = ""
     notation = "1d20"
-    if kind == SKILL:
+    if kind == DEATH:
+        # Ten or better, always. Nobody writes the DC out because it is not a
+        # DC anybody chose -- it is the rule -- so it is filled in here rather
+        # than read out of the sentence.
+        dc = dc or DEATH_SAVE_DC
+    elif kind == SKILL:
         key = SKILLS[groups["skill"].lower()]
     elif kind in (SAVE, ABILITY):
         key = ABILITIES[groups["ability"].lower()]
@@ -196,6 +218,12 @@ def bonus_for(prompt: Prompt, sheet: dict, content) -> int:
         return 0
 
     from canon_keeper.rules import derive
+
+    if prompt.kind == DEATH:
+        # No modifier of any kind. Not proficiency, not Constitution: a death
+        # save is a bare d20, and adding anything to it would be inventing a
+        # rule that makes the frightening part go away.
+        return 0
 
     try:
         if prompt.kind == SKILL:

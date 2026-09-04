@@ -216,6 +216,10 @@ class SessionServer(QObject):
         #: evening where everybody waits on one person, and the commonest
         #: reason for that wait is somebody who has stopped reading.
         self._waiting_on: int | None = None
+        #: Who owes a death save right now, if anybody. Runtime only, like
+        #: everything else about a turn in progress: a save owed when the
+        #: session ended is owed at a moment that has passed.
+        self._owed_by: int | None = None
         #: Things the agent was asked to do that the rules refuse, waiting on
         #: the human DM. Runtime only: a bend nobody answered is about a moment
         #: that has passed.
@@ -438,6 +442,8 @@ class SessionServer(QObject):
             self._handle_allow(socket, session, message)
         elif message.type == MessageType.SWING:
             self._handle_swing(socket, session, message)
+        elif message.type == MessageType.DEATH_SAVE:
+            self._handle_death_save(socket, session, message)
         elif message.type == MessageType.SIMULATE:
             self._handle_simulate(socket, session, message)
         elif message.type == MessageType.GIVE:
@@ -2270,16 +2276,23 @@ class SessionServer(QObject):
             "bending": bool(bending),
         }, False
 
-    def _breaks_a_rule(self, encounter, combatant, entity, square) -> str:
+    def _breaks_a_rule(self, encounter, combatant, entity, square, acting=False) -> str:
         """A rule the DM could waive tonight, or empty if nothing is broken.
 
         Only *rules* belong here. A square off the edge of the map, or one
         somebody is standing in, is not a rule -- it is a square that does not
         exist or is already taken -- and no amount of authority makes it
         otherwise. Those are refused outright, and never put to anybody.
+
+        ``acting`` asks about the *action*, ``square`` about the *movement*.
+        They are separate halves of a turn and must be asked about separately:
+        a creature that has swung may still walk, and one that has walked its
+        whole speed may still swing.
         """
         if encounter.has_begun and encounter.turn_combatant_id != combatant.id:
             return f"It is not {entity.name}'s turn."
+        if acting:
+            return self.already_acted(combatant, entity)
         if square is not None:
             return self._too_far(combatant, entity, square[0], square[1])
         return ""
@@ -2587,7 +2600,11 @@ class SessionServer(QObject):
             return
 
         wanted = str(message.get("weapon", ""))[:MAX_NAME_LENGTH]
-        reason = self._breaks_a_rule(encounter, combatant, entity, None)
+        # One action a turn, asked here as well as in `take_turn`. This door
+        # *spent* the action and never checked it, so anything coming over the
+        # wire could swing as many times as it liked -- which for a long while
+        # was only the agent, and is now a player's map as well.
+        reason = self._breaks_a_rule(encounter, combatant, entity, None, acting=True)
         if not reason:
             sheet = (entity.data or {}).get("sheet") or {}
             try:
@@ -2740,6 +2757,8 @@ class SessionServer(QObject):
             combatant = self.repos.encounters.combatant(encounter.turn_combatant_id)
             if combatant is None or not self._is_dying(combatant):
                 return
+            if self._ask_for_a_death_save(combatant):
+                return  # theirs to roll; the turn waits on them
             if self._roll_death_save(combatant):
                 return  # a natural twenty: awake, and the turn is theirs
 
@@ -2753,6 +2772,84 @@ class SessionServer(QObject):
         return death.condition(
             hp, entity.kind, combatant.death_successes, combatant.death_failures
         ) == death.DYING
+
+    def _ask_for_a_death_save(self, combatant) -> bool:
+        """Put the save to whoever plays them. True if it is now theirs to roll.
+
+        The rule asks, not autopilot. A death save is the one roll nobody
+        chooses to make and the loudest moment the game has, and the host
+        taking it quietly on their behalf -- which is what happened before --
+        left the player watching a number change in a list.
+
+        So it goes in the chat, from the host, where it becomes the roll they
+        press. Everybody sees it asked: at a table the whole room knows a death
+        save is owed, and that is most of what makes it one.
+
+        **Forced, not optional.** They may take their time and they may ignore
+        it, and when the clock runs out the host rolls it anyway -- see
+        :meth:`_nobody_answered`. There is no answer that makes it not happen,
+        because there is no such answer at a table either.
+
+        False when there is nobody to ask -- an unowned character, or one a
+        machine is playing. Then the host rolls it straight away, as it always
+        did: the rule happens either way, and only who presses the button is in
+        question.
+        """
+        entity = self._entity_of(combatant.id)
+        if entity is None or entity.owner_account_id is None:
+            return False
+        if self._machine_plays(combatant):
+            return False
+        if not any(
+            session.account_id == entity.owner_account_id
+            for session in self._sessions.values()
+        ):
+            return False  # nobody is there to be asked
+
+        self._owed_by = combatant.id
+        self._broadcast_system(
+            f"{entity.name} is dying, and owes a death saving throw."
+        )
+        self._waiting_on = combatant.id
+        self._turn_clock.start(STILL_YOUR_TURN_MS)
+        self._send_to_account(
+            entity.owner_account_id,
+            MessageType.YOUR_TURN,
+            combatant=combatant.id,
+            who=entity.name,
+            seconds=STILL_YOUR_TURN_MS // 1000,
+            waiting=True,
+        )
+        return True
+
+    def _handle_death_save(self, socket: QWebSocket, session: _Session, message) -> None:
+        """The save being rolled by the person who owes it.
+
+        Carries nothing and is trusted for nothing. The host has already
+        decided whose save is owed; this only says "now". A login that asks
+        for somebody else's, or for one that is not owed, is refused -- the
+        alternative is a client that can roll death saves into existence.
+        """
+        owed = self._owed_by
+        combatant = self.repos.encounters.combatant(owed) if owed else None
+        entity = self._entity_of(owed) if owed else None
+        if (
+            combatant is None
+            or entity is None
+            or entity.owner_account_id != session.account_id
+            or not self._is_dying(combatant)
+        ):
+            self._send_refusal(socket, "There is no death save owed by you.")
+            return
+
+        self._owed_by = None
+        self._stop_the_clock()
+        if not self._roll_death_save(combatant):
+            # Still down. The save was the whole of the turn, so it moves on.
+            self._advance_turn()
+            self._announce_turn("next")
+        self.publish_encounter()
+        self.encounter_applied.emit()
 
     def _roll_death_save(self, combatant) -> bool:
         """One death save, on the host's dice. True if they are back up.
@@ -2940,6 +3037,24 @@ class SessionServer(QObject):
             return  # the turn moved on by itself; nothing to do
 
         combatant = self.repos.encounters.combatant(combatant_id)
+        if self._owed_by == combatant_id and combatant is not None:
+            # This is what "forced" means. They were asked, they did not
+            # answer, and a death save nobody rolls is a character who neither
+            # dies nor recovers -- which is worse than either. The host rolls
+            # it, exactly as it did before anybody was asked at all.
+            self._owed_by = None
+            entity = self._entity_of(combatant_id)
+            self._broadcast_system(
+                f"{entity.name if entity else 'They'} does not answer; "
+                "the save is rolled for them."
+            )
+            if not self._roll_death_save(combatant):
+                self._advance_turn()
+                self._announce_turn("next")
+            self.publish_encounter()
+            self.encounter_applied.emit()
+            return
+
         if self._machine_plays(combatant) and self._an_agent_is_thinking():
             # A model call takes seconds, and a turn taken away mid-thought
             # comes back as an action on somebody else's. Thinking counts as

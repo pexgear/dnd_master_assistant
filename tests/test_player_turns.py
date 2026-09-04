@@ -178,6 +178,46 @@ def test_a_player_still_cannot_set_an_initiative(qtbot, table):
         marco.leave()
 
 
+def test_a_player_may_not_swing_twice(qtbot, table):
+    """One action a turn, on the wire as much as on the DM's own map.
+
+    This door spent the action and never checked it. For a long while only the
+    agent could reach it; the wheel on a player's map made it reachable by
+    everybody, and a character could swing until the goblin fell over.
+    """
+    server, repos, _encounter, tokens, _brok, _marla, goblin = table
+    repos.encounters.place(tokens["brok"].id, 7, 8)
+    marco = _join(qtbot, server, "marco", "goblin-teeth")
+    try:
+        marco.send_swing(tokens["brok"].id, tokens["goblin"].id, "Battleaxe")
+        qtbot.wait(600)
+        after_one = repos.entities.get(goblin.id).data["hp"]
+
+        with qtbot.waitSignal(marco.failed, timeout=5000):
+            marco.send_swing(tokens["brok"].id, tokens["goblin"].id, "Battleaxe")
+
+        assert repos.entities.get(goblin.id).data["hp"] == after_one
+    finally:
+        marco.leave()
+
+
+def test_having_swung_they_may_still_walk(qtbot, table):
+    """The two halves of a turn are separate. Spending one is not spending both."""
+    server, repos, _encounter, tokens, _brok, _marla, _goblin = table
+    repos.encounters.place(tokens["brok"].id, 7, 8)
+    marco = _join(qtbot, server, "marco", "goblin-teeth")
+    try:
+        marco.send_swing(tokens["brok"].id, tokens["goblin"].id, "Battleaxe")
+        qtbot.wait(600)
+
+        marco.send_move(tokens["brok"].id, 5, 8)
+        qtbot.waitUntil(
+            lambda: repos.encounters.combatant(tokens["brok"].id).x == 5, timeout=5000
+        )
+    finally:
+        marco.leave()
+
+
 # ---------------------------------------------------------- the same rules
 
 

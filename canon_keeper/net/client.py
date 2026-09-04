@@ -269,6 +269,15 @@ class SessionClient(QObject):
         """
         return self._send(MessageType.MOVE, combatant=combatant_id, x=x, y=y)
 
+    def send_death_save(self) -> bool:
+        """Roll the death save you owe. Says nothing about which one it is.
+
+        The host knows whose save is owed; this only says that the person who
+        owes it has pressed the button. Naming it here would be a client
+        choosing when a death save happens.
+        """
+        return self._send(MessageType.DEATH_SAVE)
+
     def send_swing(self, combatant_id: int, target_id: int, weapon: str = "") -> bool:
         """Ask the host to roll an attack. It rolls; nothing here does.
 
