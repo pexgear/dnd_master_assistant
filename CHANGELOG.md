@@ -5,6 +5,23 @@ What changed, from the point of view of someone running a game. See
 
 ## Unreleased
 
+## 0.6.1
+
+Fights are run on the map. Whoever is up is selected, Space opens what they can
+do around their own pin, and creatures walk round each other rather than
+through — players included, on their own turn.
+
+**Everyone at a table needs this version.** The wire moved to 8 — whether a
+creature has spent its reaction, and the death save it is owed, are new things
+said over it — and a mixed table is refused at the door with a readable reason
+rather than half-working. Campaign files are upgraded when you open them, and
+nothing needs converting by hand.
+
+**Dragging a token from square to square is gone**, for the DM as much as for
+anybody. It was a teleport: no turn, no movement spent, straight through walls
+and bodies. Creatures are placed onto the map and taken off it; in between they
+move by taking a turn.
+
 ### Run a fight from the map
 
 - **Whoever is up is selected on the map, and Space opens their choices around
@@ -49,9 +66,6 @@ What changed, from the point of view of someone running a game. See
   the app had counted the action since turn budgets existed and never read the
   count, so a second swing went straight through. The DM's own turns obey the
   movement allowance too.
-
-**Everyone at a table needs this version.** The wire moved to 8 — whether a
-creature has spent its reaction is a new thing said over it.
 
 ### Creatures walk round each other, and there is no teleport left
 
