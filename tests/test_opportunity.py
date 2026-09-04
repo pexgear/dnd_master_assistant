@@ -6,8 +6,8 @@ means nothing, and neither does choosing where to stand. This is the rule that
 makes the map a map.
 
 Every square of the walk is checked, not only where it starts and ends --
-found with the same step-by-step line the move is animated along
-(`grid.steps_between`). Checking only the ends missed a creature who cut
+found along the same route the move is animated along, round whatever is in
+the way (`grid.route_between`). Checking only the ends missed a creature who cut
 straight through an ogre's reach on the way to somewhere else, never adjacent
 at either end of the move. Stepping around an enemy and back into its reach,
 by contrast, has not really left it, and a rule that fired on every wobble
@@ -253,20 +253,82 @@ def test_the_reaction_comes_back_next_round(fight, monkeypatch):
 # --------------------------------------------------------------- falling over
 
 
-def test_dropped_on_the_way_out_you_never_arrive(fight, monkeypatch):
-    """You fall where you stood, which is where help will come looking."""
-    server, repos, _encounter, tokens, hero, _goblin, _archer = fight
+def _about_to_fall(repos, hero, monkeypatch) -> None:
+    """One hit point, and a swing that will certainly land."""
     entity = repos.entities.get(hero.id)
-    data = dict(entity.data)
-    data["hp"] = 1
-    entity.data = data
+    entity.data = {**dict(entity.data), "hp": 1}
     repos.entities.update(entity)
     monkeypatch.setattr(server_module, "roll", _Rolls(19, 6))
+
+
+def test_dropped_on_the_way_out_you_never_arrive(fight, monkeypatch):
+    """Dropped leaving somebody's reach, you do not reach where you were going."""
+    server, repos, _encounter, tokens, hero, _goblin, _archer = fight
+    _about_to_fall(repos, hero, monkeypatch)
 
     moved = server._do_move(tokens["hero"].id, 0, 4, spending=True)
 
     assert moved is False
     assert _hp(repos, hero) == 0
+    assert repos.encounters.combatant(tokens["hero"].id).y != 4
+
+
+def test_you_fall_on_the_square_the_blow_caught_you_on(fight, monkeypatch):
+    """Which is where you were standing, and where help will come looking."""
+    server, repos, _encounter, tokens, hero, _goblin, _archer = fight
+    _about_to_fall(repos, hero, monkeypatch)
+
+    server._do_move(tokens["hero"].id, 0, 4, spending=True)
+
+    fallen = repos.encounters.combatant(tokens["hero"].id)
+    assert fallen.on_map, "they did not vanish -- they fell"
+    # The goblin at 1,0 still reaches 0,1 diagonally, so the step that leaves
+    # its reach is the one arriving at 0,2. Not four squares away, and not
+    # back at the square they set off from.
+    assert (fallen.x, fallen.y) == (0, 2)
+
+
+def test_going_down_mid_walk_is_published_at_once(fight, monkeypatch):
+    """Everyone has to see the ghost now, not at whatever happens next.
+
+    This path used to return without telling anybody, so the creature stayed
+    drawn on its feet until something unrelated refreshed the map.
+    """
+    server, repos, _encounter, tokens, hero, _goblin, _archer = fight
+    _about_to_fall(repos, hero, monkeypatch)
+    told: list[int] = []
+    server.encounter_applied.connect(lambda: told.append(1))
+
+    server._do_move(tokens["hero"].id, 0, 4, spending=True)
+
+    assert told, "nobody was told the fight had changed"
+    assert repos.encounters.combatant(tokens["hero"].id).down is True
+
+
+def test_going_down_mid_walk_ends_your_turn(fight, monkeypatch):
+    """There is nothing an unconscious creature does with the rest of it."""
+    server, repos, encounter, tokens, hero, _goblin, _archer = fight
+    assert repos.encounters.get(encounter.id).turn_combatant_id == tokens["hero"].id
+    _about_to_fall(repos, hero, monkeypatch)
+
+    server._do_move(tokens["hero"].id, 0, 4, spending=True)
+
+    assert repos.encounters.get(encounter.id).turn_combatant_id != tokens["hero"].id
+
+
+def test_the_walk_shown_is_only_as_far_as_they_got(fight, monkeypatch):
+    """The whole walk had already been described. It has to be taken back."""
+    server, repos, _encounter, tokens, hero, _goblin, _archer = fight
+    _about_to_fall(repos, hero, monkeypatch)
+    walks: list[dict] = []
+    server.played.connect(
+        lambda event: walks.append(event) if event["kind"] == "move" else None
+    )
+
+    server._do_move(tokens["hero"].id, 0, 4, spending=True)
+
+    assert len(walks) == 2, "the full walk was described and never corrected"
+    assert [tuple(square) for square in walks[-1]["path"]] == [(0, 0), (0, 1), (0, 2)]
 
 
 def test_the_unconscious_do_not_swing_at_passers_by(fight, monkeypatch):

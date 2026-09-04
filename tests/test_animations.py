@@ -28,6 +28,7 @@ from canon_keeper.panels.encounter.grid import (
     GridMap,
     Token,
     eased,
+    when_eased,
 )
 from canon_keeper.repo.entities import KIND_NPC, KIND_PC, Entity
 from canon_keeper_protocol import Played, grid
@@ -143,6 +144,103 @@ def test_the_middle_of_a_walk_is_brisker_than_its_ends(map_widget):
     middle = eased(0.55) - eased(0.45)
 
     assert middle > early
+
+
+# ------------------------------------------- a swing partway along a walk
+
+
+def test_an_ordinary_swing_waits_for_nothing(map_widget):
+    map_widget.play(
+        {"kind": Played.ATTACK.value, "combatant": 1, "target": 2, "hit": True,
+         "damage": 4}
+    )
+    assert map_widget._effect_on(1, "lunge").delay == 0.0
+
+
+def test_a_swing_provoked_partway_along_a_walk_waits_for_it(map_widget):
+    """It lands as they leave the reach, not as they set off across the room.
+
+    The host says how far along it was provoked; the walk it belongs to is
+    already running by the time the swing arrives, so the delay is measured
+    against that walk rather than counted in squares.
+    """
+    walk = [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]]
+    map_widget.play({"kind": Played.MOVE.value, "combatant": 2, "path": walk})
+    map_widget.play(
+        {"kind": Played.ATTACK.value, "combatant": 1, "target": 2, "hit": True,
+         "damage": 4, "after": 3}
+    )
+
+    walking = map_widget._effect_on(2, "move")
+    lunge = map_widget._effect_on(1, "lunge")
+    assert 0.0 < lunge.delay < walking.duration
+    # Three squares of four, through the easing the walk itself uses.
+    assert lunge.delay == pytest.approx(when_eased(0.75) * walking.duration)
+
+
+def test_the_damage_waits_with_it(map_widget):
+    """The number floating off them is the same event as the blow."""
+    map_widget.play(
+        {"kind": Played.MOVE.value, "combatant": 2,
+         "path": [[0, 0], [0, 1], [0, 2]]}
+    )
+    map_widget.play(
+        {"kind": Played.ATTACK.value, "combatant": 1, "target": 2, "hit": True,
+         "damage": 4, "after": 1}
+    )
+
+    assert map_widget._effect_on(2, "float").delay > 0.0
+
+
+def test_nothing_of_a_waiting_swing_is_drawn_yet(map_widget):
+    map_widget.play(
+        {"kind": Played.MOVE.value, "combatant": 2,
+         "path": [[1, 0], [1, 1], [1, 2], [1, 3]]}
+    )
+    map_widget.play(
+        {"kind": Played.ATTACK.value, "combatant": 1, "target": 2, "hit": True,
+         "damage": 4, "after": 3}
+    )
+    lunge = map_widget._effect_on(1, "lunge")
+
+    assert lunge.waiting(time.monotonic()) is True
+    assert lunge.progress(time.monotonic()) == 0.0
+    # And it is not reaped as finished before it has even begun.
+    assert lunge.done(time.monotonic()) is False
+
+
+def test_a_waiting_swing_leans_in_once_its_moment_comes(map_widget):
+    map_widget.play(
+        {"kind": Played.MOVE.value, "combatant": 2,
+         "path": [[1, 0], [1, 1], [1, 2], [1, 3]]}
+    )
+    map_widget.play(
+        {"kind": Played.ATTACK.value, "combatant": 1, "target": 2, "hit": True,
+         "damage": 4, "after": 3}
+    )
+    cell, origin = map_widget._cell(), map_widget._origin()
+    lunge = map_widget._effect_on(1, "lunge")
+    token = map_widget._tokens[0]
+    home = map_widget._at(-3, 0, cell, origin)
+
+    # Still standing where it was while the walk is only starting.
+    waiting, _o = map_widget._where_to_draw(token, cell, origin, time.monotonic())
+    assert waiting.x() == home.x()
+
+    # Wound forward to halfway through the swing itself.
+    lunge.started = time.monotonic() - lunge.delay - lunge.duration / 2
+    leaning, _o = map_widget._where_to_draw(token, cell, origin, time.monotonic())
+    assert leaning.x() != home.x()
+
+
+def test_a_swing_with_no_walk_to_wait_for_happens_now(map_widget):
+    """A creature dropped before it set off never walks, so there is no delay."""
+    map_widget.play(
+        {"kind": Played.ATTACK.value, "combatant": 1, "target": 2, "hit": True,
+         "damage": 4, "after": 3}
+    )
+
+    assert map_widget._effect_on(1, "lunge").delay == 0.0
 
 
 def test_the_token_is_drawn_along_the_way_not_at_the_end(map_widget):
