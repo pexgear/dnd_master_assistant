@@ -48,25 +48,43 @@ What changed, from the point of view of someone running a game. See
 - **Exhausted means exhausted.** A second action in one turn is now refused —
   the app had counted the action since turn budgets existed and never read the
   count, so a second swing went straight through. The DM's own turns obey the
-  movement allowance too. Dragging a token is untouched: that gesture means
-  "put it there", not "walk there".
+  movement allowance too.
 
 **Everyone at a table needs this version.** The wire moved to 8 — whether a
 creature has spent its reaction is a new thing said over it.
 
-### Nobody walks through anybody
+### Creatures walk round each other, and there is no teleport left
 
-- **A creature standing in the way stops a walk.** Only the destination square
-  was ever checked, so a move across the room went straight through whoever
-  was between as long as it ended somewhere empty. Every square of the walk
-  is checked now, and the hover preview turns the warning colour from the
-  blocker onward, so it reads as refused before you click rather than after.
-  Allies block too — two bodies still cannot share a square. The fallen do
-  not: stepping over somebody is ordinary, and a corpse that closed a corridor
-  would be worse than the rule it enforced.
-- It is not a rule the DM can waive for autopilot. Going too far is a rule and
-  can be bent; a body in the way is a fact about the map, in the same bracket
-  as a square already taken.
+- **A move goes round what is in the way rather than through it.** Only the
+  destination square was ever checked, so a walk across the room went straight
+  through whoever stood between as long as it ended somewhere empty. Moves are
+  routed now — the shortest way that touches nobody and nothing — and the
+  hover preview draws that route, so you see the way round before you click.
+  The fallen are stepped over rather than gone round, because a corpse that
+  closed a corridor would be worse than the rule it enforced.
+- **The long way costs the long way.** Movement is charged along the route, so
+  going round a wall spends what going round it spends. Opportunity attacks
+  follow the route too: leaving somebody's reach at a corner the straight line
+  never went near still provokes one.
+- **Only being walled in is refused**, and it is refused outright rather than
+  put to the DM. Going too far is a rule and can be waived; a body in the way
+  is a fact about the map.
+- **Tokens can no longer be dragged from square to square — not even by the
+  DM.** That gesture was a teleport: it belonged to nobody's turn, walked
+  through walls and bodies, cost no movement and provoked nothing. It was the
+  last way round the rules on a live battlefield. Creatures are still *placed*
+  onto the map and *taken* off it; in between, they move by taking a turn.
+
+### Players take their turn on the map too
+
+- **The same wheel opens on a player's map**, for their own character and only
+  while it is their turn. Space, pick a wedge, click a square or a creature.
+  Describing the turn in words and accepting what autopilot works out still
+  does everything it did — this is the short way round for "I step back and
+  shoot".
+- It is a request like any other, and the host holds it to the same rules: the
+  route, the movement, the swings it provokes. It is not authority over the
+  fight — no passing the turn, no initiative, nobody else's creature.
 
 ### The fight moves again instead of jumping
 

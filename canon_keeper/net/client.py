@@ -269,6 +269,17 @@ class SessionClient(QObject):
         """
         return self._send(MessageType.MOVE, combatant=combatant_id, x=x, y=y)
 
+    def send_swing(self, combatant_id: int, target_id: int, weapon: str = "") -> bool:
+        """Ask the host to roll an attack. It rolls; nothing here does.
+
+        The other half of a turn taken from the map, and a request like the
+        move above: whether this login may swing for that creature is the
+        host's to answer, not ours to assume.
+        """
+        return self._send(
+            MessageType.SWING, combatant=combatant_id, target=target_id, weapon=weapon
+        )
+
     def send_answer(self, action_id: str, accept: bool, note: str = "") -> bool:
         """Accept a turn that was put to us, or refuse it and say what instead."""
         return self._send(

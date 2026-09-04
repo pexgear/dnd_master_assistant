@@ -90,22 +90,6 @@ DOWN_MS = 650      #: a creature going down where it stands
 FRAME_MS = 33      #: about thirty a second, which is enough for a token
 
 
-def eased(fraction: float) -> float:
-    """Smoothstep: out of a standstill and back into one.
-
-    A walk drawn at a flat speed reads as a token being *dragged* across the
-    board by something outside the fight -- it starts at full pace and stops
-    dead. A creature leans into a run and settles out of it, and half a
-    second of that is the whole difference between a piece sliding and
-    somebody walking.
-
-    Over the whole walk rather than each square, so the middle of a long one
-    is brisk and only the ends are gentle. Easing every square would be a
-    creature stopping to think between each of them.
-    """
-    fraction = min(1.0, max(0.0, fraction))
-    return fraction * fraction * (3.0 - 2.0 * fraction)
-
 #: Damage, and the word for when there is none. Red for what it costs; grey for
 #: a miss, which is still worth showing -- it is half of what happened.
 _HURT = QColor(215, 75, 65)
@@ -125,6 +109,35 @@ _REACTED = QColor(215, 95, 85)
 GHOST_OPACITY = 0.35
 #: And drained of its side's colour, because a body is not fighting for anybody.
 _GHOST = QColor(140, 140, 145)
+
+
+def eased(fraction: float) -> float:
+    """Smoothstep: out of a standstill and back into one.
+
+    A walk drawn at a flat speed reads as a token being *dragged* across the
+    board by something outside the fight -- it starts at full pace and stops
+    dead. A creature leans into a run and settles out of it, and half a
+    second of that is the whole difference between a piece sliding and
+    somebody walking.
+
+    Over the whole walk rather than each square, so the middle of a long one
+    is brisk and only the ends are gentle. Easing every square would be a
+    creature stopping to think between each of them.
+    """
+    fraction = min(1.0, max(0.0, fraction))
+    return fraction * fraction * (3.0 - 2.0 * fraction)
+
+
+def when_eased(distance: float) -> float:
+    """The other way round: how far through a walk a given square is reached.
+
+    A swing provoked four squares along has to be *drawn* four squares along,
+    and the token is not four squares along at four-tenths of the time -- it
+    was still getting going. Smoothstep inverts in closed form, so this is the
+    exact moment rather than a guess at it.
+    """
+    distance = min(1.0, max(0.0, distance))
+    return 0.5 - math.sin(math.asin(1.0 - 2.0 * distance) / 3.0)
 
 
 @dataclass(frozen=True)
@@ -246,6 +259,9 @@ class _Effect:
     combatant: int
     duration: float
     started: float = 0.0
+    #: Held back this long before it begins. A swing provoked partway along
+    #: somebody's walk waits until they get there.
+    delay: float = 0.0
     path: list[tuple[int, int]] = field(default_factory=list)
     toward: tuple[int, int] | None = None
     text: str = ""
@@ -254,17 +270,19 @@ class _Effect:
     def progress(self, now: float) -> float:
         if self.duration <= 0:
             return 1.0
-        return min(1.0, max(0.0, (now - self.started) / self.duration))
+        return min(1.0, max(0.0, (now - self.started - self.delay) / self.duration))
+
+    def waiting(self, now: float) -> bool:
+        """Not started yet. Nothing of it is drawn while this is true."""
+        return now < self.started + self.delay
 
     def done(self, now: float) -> bool:
-        return self.progress(now) >= 1.0
+        return not self.waiting(now) and self.progress(now) >= 1.0
 
 
 class GridMap(QWidget):
     """A grid of squares with tokens standing on them."""
 
-    #: (combatant id, x, y) -- someone dragged a token onto a square.
-    moved = Signal(int, int, int)
     #: A token was clicked. -1 when the click landed on empty floor.
     picked = Signal(int)
     #: An empty square was clicked: (x, y).
@@ -304,6 +322,11 @@ class GridMap(QWidget):
         #: taking clicks, so fiddling with it cannot be mistaken for answering.
         self.frozen = False
         self._read_only = False
+        #: The one creature a read-only map may still take a turn for: a
+        #: player's own character, while it is its turn. Read-only was never
+        #: quite the question -- a player may not build terrain or move the
+        #: fight about, and may absolutely move *themselves*.
+        self.acts_for: int | None = None
         #: How small and how large the grid may get. Set by whoever owns the
         #: data; this widget only needs it to grey the right button out.
         #: The size of a square in pixels when somebody has chosen one, and
@@ -316,12 +339,6 @@ class GridMap(QWidget):
         self._pan = QPoint(0, 0)
         #: Where a pan started, while one is happening.
         self._panning_from: QPoint | None = None
-        #: The token being dragged, and where the pointer currently is. Nothing
-        #: is committed until the button comes back up, so a drag that ends
-        #: somewhere impossible simply does not happen.
-        self._dragging: int | None = None
-        self._drag_from: tuple[int, int] | None = None
-        self._drag_to: tuple[int, int] | None = None
         self._selected: int | None = None
         #: The wheel, when it is open: the combatant it belongs to and what it
         #: is offering. None when it is not.
@@ -429,11 +446,17 @@ class GridMap(QWidget):
             hit = bool(event.get("hit"))
             damage = int(event.get("damage") or 0)
             target = event.get("target")
+            # An opportunity attack lands partway along somebody's walk, and
+            # the host says how far along. Held until they get there: a swing
+            # thrown as they set off looks like the watcher knew where they
+            # were going before they went.
+            wait = self._wait_for_step(target, event.get("after"))
             self._begin(
                 _Effect(
                     kind="lunge",
                     combatant=combatant,
                     duration=LUNGE_MS / 1000,
+                    delay=wait,
                     toward=self._square_of(target),
                 )
             )
@@ -443,6 +466,7 @@ class GridMap(QWidget):
                         kind="float",
                         combatant=target,
                         duration=FLOAT_MS / 1000,
+                        delay=wait,
                         text=f"-{damage}" if hit and damage else "miss",
                         colour=QColor(_HURT if hit and damage else _MISSED),
                     )
@@ -459,6 +483,23 @@ class GridMap(QWidget):
             self._begin(
                 _Effect(kind="down", combatant=combatant, duration=DOWN_MS / 1000)
             )
+
+    def _wait_for_step(self, walker, step) -> float:
+        """How long until ``walker`` is that many squares into its walk.
+
+        Nothing to wait for when there is no walk running -- an ordinary swing
+        on somebody standing still, or a walk that was never sent because the
+        blow that provoked it stopped them leaving. Timed against the walk
+        itself rather than counted in squares, because the walk eases in and
+        out: four squares along is not four-tenths of the way through the time.
+        """
+        if not isinstance(walker, int) or not isinstance(step, int) or step <= 0:
+            return 0.0
+        walking = self._effect_on(walker, "move")
+        if walking is None or len(walking.path) < 2:
+            return 0.0
+        squares = len(walking.path) - 1
+        return when_eased(min(1.0, step / squares)) * walking.duration
 
     def _begin(self, effect: _Effect) -> None:
         effect.started = time.monotonic()
@@ -538,6 +579,12 @@ class GridMap(QWidget):
         if was:
             self.radial_changed.emit(False)
         self.update()
+
+    def _may_act(self) -> bool:
+        """Whether this map may take a turn for whatever is selected."""
+        if not self.read_only:
+            return True
+        return self.acts_for is not None and self._selected == self.acts_for
 
     @property
     def radial_open(self) -> bool:
@@ -733,17 +780,38 @@ class GridMap(QWidget):
     def _path_to(self, square: tuple[int, int] | None) -> list[tuple[int, int]]:
         """The walk from whoever is moving to ``square``, or nothing.
 
-        The same step-by-step walk the host sends when a move actually
-        happens (:func:`grid.steps_between`), so what is previewed is what
-        would be taken -- not a client's own idea of a line that might
-        disagree with the one that gets animated.
+        The same walk the host works out when the move actually happens --
+        :func:`grid.route_between`, round whatever is in the way rather than
+        through it -- so what is previewed is what would be taken. Both ends
+        run the one function for exactly this reason: a client that found its
+        own way round the same rock would draw a walk that never happened.
+
+        Empty when there is no way at all, which draws nothing: a line to
+        somewhere unreachable would be a promise the host is about to break.
         """
         if square is None or self._selected is None:
             return []
         mover = next((t for t in self._drawable() if t.id == self._selected), None)
         if mover is None or (mover.x, mover.y) == square:
             return []
-        return grid.steps_between((mover.x, mover.y), square)
+        return grid.route_between(
+            (mover.x, mover.y), square, self._in_the_way(mover, square), self.bounds
+        )
+
+    def _in_the_way(self, mover: Token, destination) -> set[tuple[int, int]]:
+        """Squares the walk cannot go through: bodies and terrain alike.
+
+        The same set the host builds, down to the two exceptions -- the fallen
+        are walked over, and the destination is left out so that walking onto
+        an occupied square is refused as a taken square rather than reported as
+        unreachable.
+        """
+        blocked = set(self._obstacles)
+        for token in self._drawable():
+            if token.id != mover.id and not token.down:
+                blocked.add((token.x, token.y))
+        blocked.discard(destination)
+        return blocked
 
     def _token_at(self, x: int, y: int) -> Token | None:
         for token in self._tokens:
@@ -810,8 +878,7 @@ class GridMap(QWidget):
 
         now = time.monotonic()
         for token in self._drawable():
-            at = self._drag_to if token.id == self._dragging and self._drag_to else None
-            self._draw_token(painter, token, at, cell, origin, now)
+            self._draw_token(painter, token, None, cell, origin, now)
 
         self._draw_preview(painter, cell, origin)
         self._draw_move_preview(painter, cell, origin)
@@ -926,7 +993,7 @@ class GridMap(QWidget):
         painter.setFont(font)
 
         for effect in self._effects:
-            if effect.kind != "float":
+            if effect.kind != "float" or effect.waiting(now):
                 continue
             square = self._square_of(effect.combatant) or effect.toward
             if square is None:
@@ -978,19 +1045,6 @@ class GridMap(QWidget):
                 painter, self._at(*self._preview.target, cell, origin), cell
             )
 
-    def _first_body_in(self, path: list[tuple[int, int]]) -> int | None:
-        """Where along this walk somebody is standing, if anybody is.
-
-        The same rule the host holds a move to, so the two agree about which
-        walks are possible. The fallen are not in the way -- stepping over a
-        body is a thing people do, and it is what the host says too.
-        """
-        for index, square in enumerate(path[1:], start=1):
-            standing = self._token_at(*square)
-            if standing is not None and standing.id != self._selected and not standing.down:
-                return index
-        return None
-
     def _draw_move_preview(self, painter: QPainter, cell: int, origin: QPoint) -> None:
         """The walk to wherever the pointer is, while a move is being lined up.
 
@@ -1003,10 +1057,9 @@ class GridMap(QWidget):
 
         The part beyond what this turn has left turns the warning colour, the
         same one a spent reaction is marked in: a DM should see a move refused
-        before clicking it, not after. Somebody standing in the way ends the
-        walk the same way and for the same reason -- the host refuses to walk
-        through a body, so a preview that drew a clean line through one would
-        be promising something that is about to be taken back.
+        before clicking it, not after. Going round something rather than
+        through it is what makes that worth drawing at all -- the long way
+        costs the long way, and the line is where you find that out.
         """
         if len(self._hover_path) < 2:
             return
@@ -1016,9 +1069,6 @@ class GridMap(QWidget):
 
         steps = len(self._hover_path) - 1
         reach = mover.squares_left if mover.is_turn else steps
-        stopped = self._first_body_in(self._hover_path)
-        if stopped is not None:
-            reach = min(reach, stopped - 1)
         centres = [self._at(x, y, cell, origin).center() for x, y in self._hover_path]
 
         def _segment(points: list[QPoint], colour: QColor) -> None:
@@ -1153,7 +1203,7 @@ class GridMap(QWidget):
             )
 
         lunging = self._effect_on(token.id, "lunge")
-        if lunging and lunging.toward is not None:
+        if lunging and lunging.toward is not None and not lunging.waiting(now):
             done = lunging.progress(now)
             # Out and back, so it reads as a swing rather than a step.
             reach = (1.0 - abs(done * 2 - 1.0)) * 0.4
@@ -1202,8 +1252,6 @@ class GridMap(QWidget):
             else (_OURS if token.ours else _THEIRS)
         )
         fill.setAlphaF(fill.alphaF() * opacity)
-        if token.id == self._dragging:
-            fill.setAlpha(150)
 
         if token.unseen:
             pen = QPen(fill.darker(160), max(1, cell // 14), Qt.PenStyle.DotLine)
@@ -1299,9 +1347,10 @@ class GridMap(QWidget):
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt's name
         """Space opens the wheel on whoever is selected; Escape puts it away.
 
-        Only for the map that can act. A player's copy is read-only, and a
-        wheel that offered choices it could not carry out would be a worse lie
-        than no wheel.
+        Only where there is something to act with. The DM's map can act for
+        anybody; a player's can act for their own character on its own turn and
+        for nothing else. A wheel that offered choices it could not carry out
+        would be a worse lie than no wheel.
         """
         if event.key() == Qt.Key.Key_Escape:
             self.close_radial()
@@ -1323,7 +1372,7 @@ class GridMap(QWidget):
             self.pan_by(*_ARROWS[event.key()])
             return
 
-        if event.key() == Qt.Key.Key_Space and not self.read_only:
+        if event.key() == Qt.Key.Key_Space and self._may_act():
             if self._radial is not None or self._awaiting is not None:
                 self.close_radial()
             elif self._selected is not None:
@@ -1384,10 +1433,6 @@ class GridMap(QWidget):
         if token is not None:
             self._selected = token.id
             self.picked.emit(token.id)
-            if not self.read_only:
-                self._dragging = token.id
-                self._drag_from = (token.x, token.y)
-                self._drag_to = (token.x, token.y)
             self.update()
             return
 
@@ -1460,12 +1505,6 @@ class GridMap(QWidget):
                 self._hover_path = path
                 self.update()
             return
-        if self._dragging is None:
-            return
-        square = self._square_at(event.position().toPoint())
-        if square is not None and square != self._drag_to:
-            self._drag_to = square
-            self.update()
 
     def leaveEvent(self, _event) -> None:  # noqa: N802 - Qt's name
         # The pointer left without landing on a square, so there is nothing
@@ -1478,24 +1517,6 @@ class GridMap(QWidget):
         if self._panning_from is not None:
             self._panning_from = None
             self.unsetCursor()
-            return
-        if self._dragging is None:
-            return
-        combatant_id, target, start = self._dragging, self._drag_to, self._drag_from
-        self._dragging = None
-        self._drag_to = None
-        self._drag_from = None
-        square = self._square_at(event.position().toPoint())
-        self.update()
-        # Released outside the grid: nothing happens. Taking a token off the
-        # map is a decision with a menu item, not something a slipped mouse
-        # should be able to do in the middle of a fight.
-        if square is None or target is None or square != target:
-            return
-        # A click that selected a token is not a move to where it already is.
-        if square == start:
-            return
-        self.moved.emit(combatant_id, square[0], square[1])
 
     # ----------------------------------------------------------------- dropping
 

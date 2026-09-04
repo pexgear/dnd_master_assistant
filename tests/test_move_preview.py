@@ -4,9 +4,9 @@ Picking "Move" off the wheel used to leave the DM staring at an empty grid
 until they clicked -- "how many squares is that corner" is exactly the
 question a grid is supposed to answer, and making somebody count squares by
 eye is the grid failing at its one job. So the map now shows the walk as soon
-as the pointer is over a square, using :func:`grid.steps_between` -- the same
-walk the host actually sends -- so the preview is never a different line from
-what gets animated once the click lands.
+as the pointer is over a square, using :func:`grid.route_between` -- the same
+walk the host actually sends, round whatever is in the way -- so the preview is
+never a different line from what gets animated once the click lands.
 
 The part beyond what the turn has left turns the same warning colour a spent
 reaction is marked in, so a DM sees a move would be refused before clicking it
@@ -66,9 +66,9 @@ def _awaiting_a_move(grid) -> None:
 def test_hovering_a_square_draws_a_path(battlefield):
     _awaiting_a_move(battlefield)
 
-    _hover(battlefield, _centre_of(battlefield, 2, 0))
+    _hover(battlefield, _centre_of(battlefield, 0, 2))
 
-    assert battlefield._hover_path == [(0, 0), (1, 0), (2, 0)]
+    assert battlefield._hover_path == [(0, 0), (0, 1), (0, 2)]
 
 
 def test_nothing_is_awaited_yet_means_no_path(battlefield):
@@ -100,8 +100,8 @@ def test_hovering_your_own_square_shows_nothing(battlefield):
 def test_the_path_updates_as_the_pointer_moves(battlefield):
     _awaiting_a_move(battlefield)
 
-    _hover(battlefield, _centre_of(battlefield, 2, 0))
-    assert battlefield._hover_path[-1] == (2, 0)
+    _hover(battlefield, _centre_of(battlefield, 0, 2))
+    assert battlefield._hover_path[-1] == (0, 2)
 
     _hover(battlefield, _centre_of(battlefield, 2, 2))
     assert battlefield._hover_path[-1] == (2, 2)
@@ -204,30 +204,29 @@ def test_drawing_a_path_beyond_the_turns_reach_does_not_raise(battlefield):
 # ------------------------------------------------------- somebody in the way
 
 
-def test_a_body_in_the_way_stops_the_preview_there(battlefield):
-    """The host refuses to walk through anybody, so the line must say so.
-
-    A clean line drawn straight through the goblin would be promising a move
-    that is about to be taken back.
-    """
+def test_the_preview_goes_round_a_body(battlefield):
+    """The host routes round rather than refusing, so the line must too."""
     _awaiting_a_move(battlefield)
 
     # The goblin stands at 1,0, squarely between 0,0 and 3,0.
     _hover(battlefield, _centre_of(battlefield, 3, 0))
 
-    assert battlefield._first_body_in(battlefield._hover_path) == 1
+    assert (1, 0) not in battlefield._hover_path
+    assert battlefield._hover_path[-1] == (3, 0)
     battlefield.grab()  # must not raise
 
 
-def test_a_clear_line_is_not_stopped(battlefield):
+def test_a_clear_line_is_left_alone(battlefield):
+    from canon_keeper_protocol import grid as protocol_grid
+
     _awaiting_a_move(battlefield)
 
     _hover(battlefield, _centre_of(battlefield, 0, 3))
 
-    assert battlefield._first_body_in(battlefield._hover_path) is None
+    assert battlefield._hover_path == protocol_grid.steps_between((0, 0), (0, 3))
 
 
-def test_the_fallen_are_not_in_the_way(battlefield):
+def test_the_fallen_are_walked_over(battlefield):
     """The same exception the host makes: stepping over a body is ordinary."""
     battlefield.set_tokens(
         [
@@ -240,7 +239,7 @@ def test_the_fallen_are_not_in_the_way(battlefield):
 
     _hover(battlefield, _centre_of(battlefield, 3, 0))
 
-    assert battlefield._first_body_in(battlefield._hover_path) is None
+    assert (1, 0) in battlefield._hover_path
 
 
 def test_you_are_never_in_your_own_way(battlefield):
@@ -248,7 +247,7 @@ def test_you_are_never_in_your_own_way(battlefield):
 
     _hover(battlefield, _centre_of(battlefield, 0, 2))
 
-    assert battlefield._first_body_in(battlefield._hover_path) is None
+    assert battlefield._hover_path[-1] == (0, 2)
 
 
 def test_a_creature_not_on_its_own_turn_gets_no_reach_cap(qtbot):

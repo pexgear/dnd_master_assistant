@@ -421,6 +421,16 @@ second later. Space then asks the panel what that creature can do
 (`radial_wanted`), because the map has never seen a character sheet, and the
 panel answers with one `Choice` for moving and one per weapon (`offer`).
 
+**Players get the same wheel**, for one creature and one moment: their own
+character while it is its turn (`GridMap.acts_for`, and `_may_act_for` on the
+host). Read-only was never quite the question — a player builds no terrain and
+moves nobody about, and may absolutely move themselves. Their turn leaves on
+the same `turn_taken` signal the DM's does; the Table panel sends it over the
+wire instead of to a local referee, and the host applies the identical rules to
+both. The seat is deliberately excluded from that branch: it is minted against
+the owner's account and would otherwise inherit the authority the moment its
+handover ended.
+
 A wedge is picked and then *pointed at* something: a square for a move, a
 creature for a swing. What comes out is a single `TurnPlan`, emitted the moment
 it is complete and turned into the same `turn_taken` dict the Attack dialog
@@ -586,17 +596,29 @@ them and they neither die nor recover, which is worse than either. Monsters get
 no saves — three more d20s to confirm the orc is finished is a rule that costs
 a table more than it gives.
 
-**Nobody walks through anybody.** `place` only ever checked the destination
-square, so a walk across the room went straight through whoever stood between
-as long as it ended somewhere empty. `_blocked_path` checks the squares in
-between, one at a time along the same `grid.steps_between` line the move
-animates along and opportunity attacks are checked against — three rules
-reading one walk the same way. It sits in the same tier as "that square is
-taken" and "that square is off the map": **not** a rule the DM can bend for an
-agent, because no amount of authority makes two creatures share a square. The
-fallen do not block it, which is the same exception `_occupant` already made so
-a corpse could not close a corridor. Dragging a token is untouched — that
-gesture means "put it there", not "walk there".
+**A move is a route, and there is no teleport.** `grid.route_between` finds the
+shortest way that touches nothing solid — creatures standing and terrain alike,
+eight ways, one square a step. It returns the straight line unchanged whenever
+that line is clear, which is the ordinary case, and nothing at all when a
+creature is walled in; only *that* is refused, and it is refused outright
+rather than put to the DM, because no ruling makes a body passable. The fallen
+are walked over, the same exception `_occupant` already made so a corpse could
+not close a corridor.
+
+The route is one function in the protocol package because three things follow
+from it and all three must agree: what the walk **costs** (`spend_movement` and
+`_too_far` measure along it, so going round a wall costs going round it), who
+gets a **swing** at it (`_opportunity_attacks` walks it a square at a time), and
+what is **drawn** — both the animation the host sends and the preview a client
+draws while the move is being lined up. A client that found its own way round
+the same rock would show a walk that never happened.
+
+**Once a fight is running, every move is a walk, whoever asks.** There is no
+gesture left that slides a creature from one square to another: dragging a
+token on the map is gone, and `_handle_move` treats a live fight as walking for
+the DM's own client as much as for an agent. What remains is *placing* somebody
+onto the map and *taking* them off it, neither of which is a walk. Before a
+fight begins the board is arranged freely, locally, through `place`.
 
 **Opportunity attacks** are the one piece of combat the app rules on without
 being asked. Leaving an enemy's reach provokes one, because the alternative is a

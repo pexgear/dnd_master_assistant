@@ -838,8 +838,27 @@ class TableWidget(QWidget):
         return self._alone
 
     def _on_turn_taken(self, turn: dict) -> None:
+        """A turn taken from a map, from whichever end of the wire that map is.
+
+        A player's app has no referee of its own -- their campaign lives on
+        somebody else's machine -- so theirs is asked for, in the two messages
+        it is made of. The host applies the very same rules either way: it is
+        the one holding the dice, and which door the turn came through is not
+        one of the things it takes into account.
+        """
+        combatant = int(turn.get("combatant") or 0)
+        if self._ctx.role != "dm":
+            if turn.get("move"):
+                x, y = turn["move"]
+                self._client.send_move(combatant, int(x), int(y))
+            if turn.get("target") is not None:
+                self._client.send_swing(
+                    combatant, int(turn["target"]), str(turn.get("weapon", ""))
+                )
+            return
+
         problem = self._referee().take_turn(
-            int(turn.get("combatant") or 0),
+            combatant,
             move=turn.get("move"),
             target=turn.get("target"),
             weapon=str(turn.get("weapon", "")),

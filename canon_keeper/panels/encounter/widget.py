@@ -219,7 +219,6 @@ class EncounterWidget(QWidget):
         splitter.addWidget(left)
 
         self._map = GridMap()
-        self._map.moved.connect(self._on_moved)
         self._map.picked.connect(self._on_picked)
         self._map.square_clicked.connect(self._on_square)
         self._map.dropped.connect(self._on_dropped)
@@ -904,23 +903,30 @@ class EncounterWidget(QWidget):
 
     # ----------------------------------------------------------------- moving
 
-    def _on_moved(self, combatant_id: int, x: int, y: int) -> None:
+    def _on_dropped(self, combatant_id: int, x: int, y: int) -> None:
+        """Dragged off the initiative order and onto a square.
+
+        Putting somebody *on* the map, which is the one thing dragging still
+        does. There is no gesture that slides a token from one square to
+        another any more: that was a teleport, it belonged to nobody's turn,
+        it walked through walls and bodies and cost no movement, and it was the
+        last way round the rules left on the board. Creatures move by taking a
+        turn -- Space on the map -- and come off it by the menu.
+        """
+        combatant = self._by_id(combatant_id)
+        if combatant is None:
+            return
+        if combatant.on_map:
+            self._ctx.bus.status_message.emit(
+                f"{self._name_of(combatant)} is already on the map. "
+                "Press Space on them to take their turn."
+            )
+            return
         if not self._ctx.repos.encounters.place(combatant_id, x, y):
             self._ctx.bus.status_message.emit("Someone is already standing there.")
             self._refresh()
             return
         self._changed()
-
-    def _on_dropped(self, combatant_id: int, x: int, y: int) -> None:
-        """Dragged off the initiative order and onto a square.
-
-        The same write as any other move, so dropping someone already on the map
-        walks them there rather than being a different kind of event with its own
-        rules to get wrong.
-        """
-        if self._by_id(combatant_id) is None:
-            return
-        self._on_moved(combatant_id, x, y)
 
     def _on_obstacle(self, x: int, y: int) -> None:
         """Ctrl-click: a rock goes in, or comes out.

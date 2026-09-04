@@ -16,8 +16,9 @@ and Transcript panels; local speech-to-text; one-shots that start the same way
 every time; and LAN sessions with logins, shared chat and dice, and
 role-filtered sharing.
 
-**Combat** is an initiative order and a shared grid your players watch: you
-place and move everyone, and they see exactly the creatures you have shared.
+**Combat** is an initiative order and a shared grid your players watch: turns
+are taken on the map, creatures walk round each other rather than through, and
+players see exactly the ones you have shared.
 
 **Autopilot** hands the table to an agent when you want it, and takes it back
 when you press the button again — and while it has the table it can run a fight
@@ -356,9 +357,21 @@ parented to a place, so every location knows who is standing in it.
 
 **Combat** — an initiative order and a grid, side by side. **New fight** makes
 one straight away; **Add…** puts characters and NPCs into it; drag a name out of
-the order and onto the map to place them, and drag a token to move it. **Roll
-initiative** rolls for everyone and adds their Dexterity where there is a sheet
-to read it from. **Start**, **Next turn** and **End fight** keep the round.
+the order and onto the map to place them. **Roll initiative** rolls for everyone
+and adds their Dexterity where there is a sheet to read it from. **Start**,
+**Next turn** and **End fight** keep the round.
+
+**Whoever is up is selected, and Space opens what they can do around their own
+pin** — one wedge for moving, one for each weapon they carry. Pick a wedge,
+then click a square to walk to or a creature to hit; hovering shows the walk
+first, round anything in the way, in the colour that says whether the turn has
+the movement for it. Escape puts the wheel away. Players get the same wheel on
+their own map, for their own character, on their own turn.
+
+There is no dragging a token from one square to another: that was a teleport,
+free of everybody's turn and of every rule. Creatures go **onto** the map by
+being dropped there and come **off** it by the right-click menu; in between,
+they move by taking a turn.
 
 **Ctrl-click a square** to put something in the way — a rock, a pillar, an
 overturned cart. Nobody can stand there, and it is what a creature gets behind

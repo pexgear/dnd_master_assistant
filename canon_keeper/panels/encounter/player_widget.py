@@ -5,9 +5,11 @@ database this app does not have. So the reason a player cannot see the goblin
 in the corner is not that this widget declines to draw it: the goblin is not in
 the bytes.
 
-Read-only is not a disabled button here, it is the absence of a way to ask.
-Moving a token is a message this widget never sends, and the host would refuse
-it if it did.
+Read-only is about the *fight*: a player builds no terrain, moves nobody about
+and cannot touch the order. Their own character on their own turn is not that
+-- Space opens the same wheel the DM gets, for that one creature and only while
+it is theirs to act with. Everything it asks for goes to the host as a request
+like any other, and the host applies the same rules to it as to anybody.
 
 While a turn is waiting on you, this panel and the chat box are held -- and
 deliberately nothing else. Your character sheet, the places you know and the
@@ -29,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from canon_keeper.panels.encounter.grid import GridMap, Preview, Token
+from canon_keeper.panels.encounter.grid import Choice, GridMap, Preview, Token
 from canon_keeper.plugin import AppContext
 from canon_keeper.repo.entities import KIND_PC
 from canon_keeper.rules import death
@@ -56,6 +58,11 @@ class PlayerEncounterWidget(QWidget):
 
         self._map = GridMap()
         self._map.read_only = True
+        # Read-only is about the *fight*: a player builds no terrain and moves
+        # nobody about. Their own character on their own turn is not that, and
+        # taking your turn on the map is the whole point of there being one.
+        self._map.radial_wanted.connect(self._offer_wheel)
+        self._map.planned.connect(self._carry_out)
         splitter.addWidget(self._map)
         splitter.setStretchFactor(1, 1)
         outer.addWidget(splitter, 1)
@@ -98,6 +105,9 @@ class PlayerEncounterWidget(QWidget):
 
         #: The turn we are being asked about, if any.
         self._pending: dict | None = None
+        #: SRD rules, for reading the weapons off your own sheet. Built on
+        #: first use: most of a session never opens the wheel.
+        self._srd = None
         ctx.bus.action_proposed.connect(self._on_offered)
         ctx.bus.action_withdrawn.connect(self._on_withdrawn)
 
@@ -166,6 +176,7 @@ class PlayerEncounterWidget(QWidget):
                 if isinstance(c.get("x"), int) and isinstance(c.get("y"), int)
             ]
         )
+        self._mind_the_wheel(combatants, turn)
 
         self._order.clear()
         for team in teams:
@@ -273,6 +284,78 @@ class PlayerEncounterWidget(QWidget):
         )
         self._budget.setText(label)
         self._budget.setVisible(True)
+
+    # ------------------------------------------------------------- the wheel
+
+    def _mind_the_wheel(self, combatants: list[dict], turn) -> None:
+        """Whether the map may take a turn right now, and for whom.
+
+        One creature, on one turn: your own character while it is theirs. Any
+        other moment and the map is what it always was, something to look at.
+        Selected as well as permitted, so that Space works without anybody
+        aiming first -- the same way the DM's map follows whoever is up.
+        """
+        mine = self._mine_in_the_fight(combatants)
+        acting = (
+            mine is not None
+            and mine.get("id") == turn
+            and not mine.get("simulated")
+            and not mine.get("down")
+        )
+        self._map.acts_for = int(mine["id"]) if acting else None
+        if acting:
+            self._map.select(int(mine["id"]))
+        else:
+            self._map.close_radial()
+
+    def _offer_wheel(self, combatant_id: int) -> None:
+        """Space, on your own character. What they could do, round their pin."""
+        if self._map.acts_for != combatant_id:
+            return
+        choices: list[Choice] = [Choice(kind="move", label="Move")]
+        for weapon in self._my_weapons():
+            choices.append(Choice(kind="attack", label=weapon, weapon=weapon))
+        self._map.offer(combatant_id, choices)
+
+    def _my_weapons(self) -> list[str]:
+        """What your character is carrying, off the sheet you were sent.
+
+        Your own sheet arrives whole -- it is yours -- so this needs nothing
+        the host has not already told this login.
+        """
+        own = self._ctx.shared.own_character() if self._ctx.shared is not None else None
+        sheet = ((own or {}).get("data") or {}).get("sheet") or {}
+        from canon_keeper.rules import attack
+
+        try:
+            return [w.name for w in attack.weapons_of(sheet, self._content())]
+        except Exception:  # noqa: BLE001 - a broken sheet is not worth a crash
+            return []
+
+    def _content(self):
+        if self._srd is None:
+            from canon_keeper.content import Content
+
+            self._srd = Content(self._ctx.repos.settings)
+        return self._srd
+
+    def _carry_out(self, plan) -> None:
+        """A turn lined up on the map, on its way to the host.
+
+        Through the same bus signal the DM's map uses. Where it goes from
+        there -- to a referee in this app or over the wire to somebody else's
+        -- is the Table panel's to know, and the host's rules are the same
+        either way.
+        """
+        if plan is None or plan.is_empty:
+            return
+        turn: dict = {"combatant": plan.combatant}
+        if plan.move is not None:
+            turn["move"] = list(plan.move)
+        if plan.target is not None:
+            turn["target"] = plan.target
+            turn["weapon"] = plan.weapon
+        self._ctx.bus.turn_taken.emit(turn)
 
     def _mine_in_the_fight(self, combatants: list[dict]) -> dict | None:
         for combatant in combatants:

@@ -1513,7 +1513,35 @@ class SessionServer(QObject):
         """
         if self._may_run_the_table(session):
             return True
-        if session.seat_for is None or combatant is None:
+        if combatant is None:
+            return False
+
+        # Your own character, on its own turn. Narrow in exactly the way the
+        # seat below is, and for the same reason: this is the door a player's
+        # map takes their turn through, and it must not become a door onto
+        # anybody else's. It cannot pass the turn, set an initiative or touch
+        # the fight -- it can move and swing, as themselves, while it is
+        # theirs to do.
+        #
+        # Not for a seat, which is minted against the owner's account and would
+        # otherwise inherit this the moment its handover ended -- the one thing
+        # the seat rules below exist to prevent.
+        encounter = self._the_running_fight()
+        if (
+            session.seat_for is None
+            and encounter is not None
+            and encounter.turn_combatant_id == combatant.id
+        ):
+            theirs = self._entity_of(combatant.id)
+            if (
+                theirs is not None
+                and session.account_id is not None
+                and theirs.owner_account_id == session.account_id
+                and not combatant.simulated
+            ):
+                return True
+
+        if session.seat_for is None:
             return False
         if not combatant.simulated:
             return False
@@ -1793,24 +1821,36 @@ class SessionServer(QObject):
             self._send_refusal(socket, f"{x},{y} is off the map.")
             return
 
-        # An agent moving a creature is taking its turn, so its speed applies.
-        # A DM dragging a token is arranging the board, which is not a turn and
-        # has never had a rule about it.
+        # Once the fight is running, moving a creature *is* that creature
+        # walking, whoever asked: round what is in the way, charged against
+        # what the turn has left, and swung at by anybody whose reach it
+        # leaves. Before it starts there is no turn to spend and nobody to
+        # walk past, so a drag is what it looks like -- arranging the board.
         entity = self._entity_of(combatant_id)
-        if session.is_agent and entity is not None and x is not None and y is not None:
-            blocked = self._blocked_path(combatant, entity, x, y)
-            if blocked:
-                # Also not bendable: a body in the way is a fact about the
-                # map, the same tier as a square already taken or off the
-                # edge of it, not a rule the DM can wave through.
-                self._send_refusal(socket, blocked)
+        walking = session.is_agent or encounter.has_begun
+        if walking and entity is not None and x is not None and y is not None:
+            nowhere = self._no_way_through(combatant, entity, x, y)
+            if nowhere:
+                # Also not bendable: a creature walled in by bodies and rock
+                # has nowhere to walk to, which is the same tier as a square
+                # already taken, not a rule the DM can wave through.
+                self._send_refusal(socket, nowhere)
                 return
 
-        if session.is_agent and entity is not None:
+        # The rules of a walk bind whoever is walking. This used to be asked
+        # only of the agent, because for a long time the agent was the only
+        # thing that walked -- everybody else either arranged the board or
+        # could not move at all. A player taking their own turn on their own
+        # map is neither of those, and without this they walked nine squares
+        # on a speed of six.
+        if walking and entity is not None:
             reason = self._breaks_a_rule(
                 encounter, combatant, entity, [x, y] if x is not None else None
             )
-            if reason:
+            if reason and session.is_agent:
+                # An agent's is put to the DM, who may well say yes. Nobody
+                # else has that conversation: a player is not asking for a
+                # ruling, they are taking their turn.
                 self._ask_the_dm_to_bend(
                     {"kind": "move", "combatant": combatant_id, "x": x, "y": y,
                      "what": f"move {entity.name} to {x},{y}"},
@@ -1822,8 +1862,11 @@ class SessionServer(QObject):
                     "narrate it as though it happened."
                 )
                 return
+            if reason:
+                self._send_refusal(socket, reason)
+                return
 
-        if not self._do_move(combatant_id, x, y, spending=session.is_agent):
+        if not self._do_move(combatant_id, x, y, spending=walking):
             self._send(
                 socket,
                 MessageType.ERROR,
@@ -1851,47 +1894,98 @@ class SessionServer(QObject):
         one of them uses up somebody's movement.
         """
         before = self.repos.encounters.combatant(combatant_id)
-        if (
+        # Worked out before anything moves, because it is the way round the map
+        # as it stands now -- and used for all three of the things a walk is:
+        # who gets a swing at it, how far it costs, and what is drawn.
+        route: list[tuple[int, int]] = []
+        if before is not None and before.on_map and x is not None and y is not None:
+            route = self.route_for(before, x, y) or grid.steps_between(
+                (before.x, before.y), (x, y)
+            )
+
+        walking = (
             spending
             and before is not None
             and before.on_map
             and x is not None
             and y is not None
-        ):
-            self._opportunity_attacks(before, x, y)
+        )
+        if walking:
+            # Sent *before* the swings, so every screen already has the walk to
+            # time them against: a swing provoked five squares along has to
+            # land five squares along, not the moment the creature sets off.
+            self._show(
+                Played.MOVE.value, before, path=[list(square) for square in route]
+            )
+            reached = self._opportunity_attacks(before, x, y, route)
             # The swings happen as they leave, so a creature dropped by one
-            # never arrives. It falls where it was standing, which is also
-            # where anybody coming to help it will look.
+            # never arrives. It falls on the square the blow caught it on --
+            # which is where it was standing, and where anybody coming to help
+            # it will look.
             still_up = self.repos.encounters.combatant(combatant_id)
             if still_up is None or not still_up.on_map or still_up.down:
+                self._fell_on_the_way(combatant_id, before, route, reached)
                 return False
 
         if not self.repos.encounters.place(combatant_id, x, y):
             return False
 
         encounter = self._the_running_fight()
-        if x is not None and before is not None and before.on_map:
-            # Shown as a walk rather than a jump, and worked out here so every
-            # screen walks the same line.
-            self._show(
-                Played.MOVE.value,
-                before,
-                path=[list(square) for square in
-                      grid.steps_between((before.x, before.y), (x, y))],
-            )
+        if x is not None and before is not None and before.on_map and route:
+            if not walking:
+                # Shown as a walk rather than a jump, and worked out here so
+                # every screen walks the same line -- round the same rock, too.
+                self._show(
+                    Played.MOVE.value,
+                    before,
+                    path=[list(square) for square in route],
+                )
             if (
                 spending
                 and encounter is not None
                 and encounter.turn_combatant_id == combatant_id
             ):
-                self.repos.encounters.spend_movement(
-                    encounter.id, attack.squares_between((before.x, before.y), (x, y))
-                )
+                # Charged along the way walked. Going round something costs
+                # what going round it costs.
+                self.repos.encounters.spend_movement(encounter.id, len(route) - 1)
 
         self.publish_encounter()
         # The DM's own map reads the database, so it does not know yet.
         self.encounter_applied.emit()
         return True
+
+    def _fell_on_the_way(self, combatant_id: int, before, route, reached: int) -> None:
+        """A walk that ended in the walker going down partway along it.
+
+        Three things all had to be put right here, and all three were the same
+        omission: this used to return without telling anybody. The creature
+        stayed drawn on its feet at the square it set off from, because nothing
+        was published; the walk that had already been described ran its full
+        length, because nothing corrected it; and the turn went on belonging to
+        somebody unconscious, because nothing passed it.
+
+        So: they are put on the square they got to, the walk is re-sent as the
+        shorter one that actually happened -- a second walk replaces the first
+        rather than drawing beside it -- and the turn moves on, because there
+        is nothing an unconscious creature is going to do with the rest of it.
+        """
+        walked = route[: max(1, reached) + 1] if route else []
+        if walked and len(walked) > 1:
+            self.repos.encounters.place(combatant_id, *walked[-1])
+            self._show(
+                Played.MOVE.value, before, path=[list(square) for square in walked]
+            )
+
+        self.publish_encounter()
+        self.encounter_applied.emit()
+
+        encounter = self._the_running_fight()
+        if encounter is not None and encounter.turn_combatant_id == combatant_id:
+            self._stop_the_clock()
+            self._advance_turn()
+            self._announce_turn("next")
+            self.publish_encounter()
+            self.encounter_applied.emit()
 
     def _are_enemies(self, one, other) -> bool:
         """Whether these two combatants are on opposite sides of this fight.
@@ -1911,12 +2005,15 @@ class SessionServer(QObject):
             return False
         return one.team_id != other.team_id
 
-    def _opportunity_attacks(self, mover, to_x: int, to_y: int) -> None:
+    def _opportunity_attacks(self, mover, to_x: int, to_y: int, route=None) -> int:
         """Everybody whose reach this creature walks out of gets a swing.
 
-        Evaluated one square of the walk at a time
-        (:func:`grid.steps_between`, the same walk the move is animated
-        along) rather than only the start and the end. Start-and-end alone
+        Evaluated one square of the walk at a time -- the *route*, the way
+        actually taken round whatever was in the way, which is the same walk
+        the move is animated along -- rather than only the start and the end.
+        Going the long way round a pillar means leaving somebody's reach
+        somewhere the straight line never went, and they get their swing for
+        the walk that happened. Start-and-end alone
         missed the creature who was never adjacent when it *started* but
         crossed straight through an ogre's reach on the way to somewhere
         else -- entered and left in the same move, with nothing at either
@@ -1925,18 +2022,21 @@ class SessionServer(QObject):
         rule that fired on every wobble would punish moving at all. The
         version people play at a table is "did you leave, at any point
         during the walk", and checking each step is that.
+
+        Returns how far along the walk the creature got: the whole of it
+        normally, and the square a swing dropped it on when one did.
         """
         encounter = self._the_running_fight()
         if encounter is None or mover.id is None:
-            return
+            return 0
         moving = self._entity_of(mover.id)
         if moving is None:
-            return
+            return 0
         # Sides are read off the fight, so they have to have been worked out
         # before the first step anybody takes -- not at the next publish.
         self.repos.encounters.sort_into_teams(encounter.id)
         mover = self.repos.encounters.combatant(mover.id) or mover
-        path = grid.steps_between((mover.x, mover.y), (to_x, to_y))
+        path = route or grid.steps_between((mover.x, mover.y), (to_x, to_y))
 
         resting = self._resting()
         for other in self.repos.encounters.combatants(encounter.id):
@@ -1962,13 +2062,13 @@ class SessionServer(QObject):
             # it is found: this watcher has one reaction regardless of whether
             # the rest of the walk crosses back through its reach again.
             left_at = None
-            for here, there in zip(path, path[1:]):
+            for step, (here, there) in enumerate(zip(path, path[1:]), start=1):
                 was = attack.squares_between((other.x, other.y), here)
                 now = attack.squares_between((other.x, other.y), there)
                 if attack.threatens(sheet, self.content, was) and not attack.threatens(
                     sheet, self.content, now
                 ):
-                    left_at = there
+                    left_at = step
                     break
             if left_at is None:
                 continue
@@ -1981,12 +2081,15 @@ class SessionServer(QObject):
             self._swing(
                 {"combatant": other.id, "target": mover.id, "weapon": weapon.name},
                 checked=True,
+                at_step=left_at,
             )
             # Dropped on the way out. Nobody else gets a swing at somebody who
-            # is already on the floor.
+            # is already on the floor, and the walk ends where they fell.
             after = self._entity_of(mover.id)
             if after is not None and (after.data or {}).get("hp") == 0:
-                return
+                return left_at
+
+        return max(0, len(path) - 1)
 
     # ------------------------------------------------------------ taking a turn
     #
@@ -2192,11 +2295,22 @@ class SessionServer(QObject):
 
         Coming *onto* the map is not moving across it: a creature with no
         square yet is arriving, and there is nowhere to measure from.
+
+        Measured along the way actually walked, not across the room as the
+        crow flies. Going the long way round a pillar costs the long way: a
+        distance that ignored what the creature has to walk round would let a
+        move through a doorway at the far end of a wall look like three squares
+        when it is nine.
         """
         if not combatant.on_map:
             return ""
 
-        steps = attack.squares_between((combatant.x, combatant.y), (x, y))
+        route = self.route_for(combatant, x, y)
+        steps = (
+            len(route) - 1
+            if route
+            else attack.squares_between((combatant.x, combatant.y), (x, y))
+        )
         left = self.movement_left(entity, combatant)
         if steps <= left:
             return ""
@@ -2207,33 +2321,55 @@ class SessionServer(QObject):
             f"({left * 5} feet{already}), and {x},{y} is {steps} away."
         )
 
-    def _blocked_path(self, combatant, entity, x: int, y: int) -> str:
-        """Whether somebody is standing in the way of this walk, or nobody is.
+    def _in_the_way(self, encounter, mover, destination=None) -> set[tuple[int, int]]:
+        """Squares this creature cannot walk through: bodies and terrain alike.
 
-        Checked one square at a time along the same line the move animates
-        along and opportunity attacks are checked against (`grid.steps_between`)
-        -- three rules reading the same walk the same way rather than three
-        slightly different ideas of it. Only the squares in between: the
-        destination's own occupant is refused by ``place`` regardless of this,
-        and the square already stood on cannot be occupied by somebody else.
+        Neither can be shared, so neither is a route. The fallen are not in it
+        -- ``at`` already excludes them -- because stepping over a body is a
+        thing people do, and a corpse that closed a corridor would turn the end
+        of every fight into an obstacle course.
 
-        The fallen do not block it -- ``at`` already excludes them -- because
-        stepping over a body is a thing people do, and a corpse that closed a
-        corridor would turn the end of every fight into an obstacle course.
+        The destination is left out on purpose. Somebody standing on the square
+        being walked *to* is refused by ``place``, in its own words; counting it
+        here would instead report the square as unreachable, which is a
+        different and less useful thing to be told.
         """
+        blocked = set(self.repos.encounters.obstacles(encounter.id))
+        for other in self.repos.encounters.combatants(encounter.id):
+            if other.id == mover.id or not other.on_map or other.down:
+                continue
+            blocked.add((other.x, other.y))
+        blocked.discard(destination)
+        return blocked
+
+    def route_for(self, combatant, x: int, y: int) -> list[tuple[int, int]]:
+        """The way this creature would actually walk to that square.
+
+        Around whatever is in the way rather than through it, and the shortest
+        such way, because its length is what the turn's movement is charged.
+        Empty when there is no way at all.
+
+        One route, worked out here and sent, and the same function a client
+        uses to draw the walk before it is asked for. A client that found its
+        own way round the same rock would preview a walk that never happened.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None or not combatant.on_map:
+            return []
+        return grid.route_between(
+            (combatant.x, combatant.y),
+            (x, y),
+            self._in_the_way(encounter, combatant, destination=(x, y)),
+            within=encounter.bounds,
+        )
+
+    def _no_way_through(self, combatant, entity, x: int, y: int) -> str:
+        """Whether anything at all can be walked, or why nothing can."""
         if not combatant.on_map:
             return ""
-        encounter = self._the_running_fight()
-        if encounter is None:
+        if self.route_for(combatant, x, y):
             return ""
-        path = grid.steps_between((combatant.x, combatant.y), (x, y))
-        for square in path[1:-1]:
-            occupant = self.repos.encounters.at(encounter.id, *square)
-            if occupant is not None and occupant.id != combatant.id:
-                blocker = self._entity_of(occupant.id)
-                name = blocker.name if blocker is not None else "something"
-                return f"{name} is in {entity.name}'s way, at {square[0]},{square[1]}."
-        return ""
+        return f"There is no way through to {x},{y} for {entity.name}."
 
     def _spent_this_turn(self, combatant) -> int:
         encounter = self._the_running_fight()
@@ -2865,12 +3001,15 @@ class SessionServer(QObject):
             # free -- that gesture means "put it there", not "walk there" --
             # but a turn taken *as a turn* obeys the rules whoever takes it, or
             # the budget on screen is decorative.
+            # Asked first: a creature walled in has nowhere to walk at all,
+            # and being told the distance instead would be answering a
+            # question it did not ask.
+            nowhere = self._no_way_through(combatant, entity, x, y)
+            if nowhere:
+                return nowhere
             short = self._too_far(combatant, entity, x, y)
             if short:
                 return short
-            blocked = self._blocked_path(combatant, entity, x, y)
-            if blocked:
-                return blocked
             if not self._do_move(combatant_id, x, y, spending=True):
                 return f"{x},{y} is taken, or something is in the way."
 
@@ -2907,10 +3046,11 @@ class SessionServer(QObject):
             entity = self._entity_of(action["combatant"])
             reason = ""
             if standing is not None and entity is not None:
-                # The speed limit is a rule and "bending" waives it. A body in
-                # the way is not a rule -- it is a fact about the map, the same
-                # tier as a square already taken -- so bending does not touch it.
-                reason = self._blocked_path(standing, entity, x, y)
+                # The speed limit is a rule and "bending" waives it. Having
+                # nowhere to walk is not a rule -- it is a fact about the map,
+                # the same tier as a square already taken -- so bending does
+                # not touch it.
+                reason = self._no_way_through(standing, entity, x, y)
                 if not reason and not action.get("bending"):
                     reason = self._too_far(standing, entity, x, y)
             moved = not reason and self._do_move(
@@ -2968,8 +3108,15 @@ class SessionServer(QObject):
             return ""
         return f"that is {gap * 5} feet away -- too far for a {weapon.name}"
 
-    def _swing(self, action: dict, checked: bool = False) -> None:
-        """One weapon attack, rolled on the host and applied to the target."""
+    def _swing(self, action: dict, checked: bool = False, at_step: int = 0) -> None:
+        """One weapon attack, rolled on the host and applied to the target.
+
+        ``at_step`` is how far along the target's walk the swing lands, for an
+        opportunity attack. Sent so it can be *drawn* at that point rather than
+        at the moment the walk begins: a creature swings as somebody leaves its
+        reach, not as they set off from the other side of the room, and a lunge
+        that fired up front looked like it knew where they were going.
+        """
         attacker = self._entity_of(action["combatant"])
         target_combatant = self.repos.encounters.combatant(action["target"])
         target = (
@@ -3013,6 +3160,7 @@ class SessionServer(QObject):
             target=target_combatant,
             hit=result.hit,
             damage=result.damage,
+            **({"after": int(at_step)} if at_step else {}),
         )
         self._record(ROLLED, said, speaker=attacker.name, role=Role.DM.value)
         self._broadcast(

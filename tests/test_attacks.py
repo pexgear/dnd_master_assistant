@@ -1387,21 +1387,27 @@ def test_a_square_that_does_not_exist_is_not_a_rule(qtbot, fight):
         dm.leave()
 
 
-def test_the_dm_dragging_a_token_is_not_a_turn(qtbot, fight):
-    """Arranging the board has never had a speed limit, and must not gain one."""
+def test_once_the_fight_is_running_even_the_dm_is_walking(qtbot, fight):
+    """There is no teleport left on a live battlefield, not for anybody.
+
+    Arranging the board used to have no speed limit whoever did it, which
+    made the DM's own drag the last way to put a creature anywhere at all --
+    through walls, through bodies, for free, on nobody's turn. While a fight
+    is running a move is a walk, and it is held to the same rules as one.
+    """
     server, repos, _encounter, tokens, _hero, _goblin = fight
     dm = _join(qtbot, server, "gm", "run-the-game")
     asked: list[dict] = []
     dm.bend_requested.connect(asked.append)
     try:
-        dm.send_move(tokens["goblin"].id, -7, 3)
-        qtbot.waitUntil(
-            lambda: repos.encounters.combatant(tokens["goblin"].id).x == -7,
-            timeout=5000,
-        )
-        assert asked == []
+        with qtbot.waitSignal(dm.failed, timeout=5000):
+            dm.send_move(tokens["goblin"].id, -7, 3)
+
+        assert repos.encounters.combatant(tokens["goblin"].id).x == 1
+        assert asked == [], "the DM does not ask themselves for a ruling"
     finally:
         dm.leave()
+
 
 
 def test_a_waived_turn_is_not_refused_again_on_the_way_out(qtbot, fight):

@@ -145,19 +145,31 @@ def test_sharing_one_takes_the_mark_off(widget, ctx, fight):
     assert "unshared" not in labels
 
 
-def test_moving_a_token_writes_it_and_says_so(widget, ctx, fight, qtbot):
-    _encounter, tokens, _hero, _goblin = fight
-    with qtbot.waitSignal(ctx.bus.encounter_changed, timeout=1000):
-        widget._on_moved(tokens["hero"].id, 3, 1)
-    assert ctx.repos.encounters.combatant(tokens["hero"].id).x == 3
+def test_a_token_on_the_map_cannot_be_dragged_elsewhere(widget, ctx, fight, qtbot):
+    """There is no gesture that slides a creature from one square to another.
 
-
-def test_moving_onto_someone_is_refused_and_said(widget, ctx, fight, qtbot):
+    It was a teleport: it belonged to nobody's turn, walked through walls and
+    bodies, cost no movement and provoked nothing. Creatures move by taking a
+    turn, and the map has one way to do that.
+    """
     _encounter, tokens, _hero, _goblin = fight
     with qtbot.waitSignal(ctx.bus.status_message, timeout=1000) as blocker:
-        widget._on_moved(tokens["hero"].id, 2, 2)
-    assert "standing there" in blocker.args[0]
+        widget._on_dropped(tokens["hero"].id, 3, 1)
+
+    assert "already on the map" in blocker.args[0]
     assert ctx.repos.encounters.combatant(tokens["hero"].id).x == -4
+
+
+def test_dropping_somebody_onto_the_map_still_places_them(widget, ctx, fight, qtbot):
+    """Arriving is not walking, and it is the one thing dragging still does."""
+    _encounter, tokens, _hero, _goblin = fight
+    ctx.repos.encounters.place(tokens["hero"].id, None, None)
+    widget._refresh()
+
+    with qtbot.waitSignal(ctx.bus.encounter_changed, timeout=1000):
+        widget._on_dropped(tokens["hero"].id, 3, 1)
+
+    assert ctx.repos.encounters.combatant(tokens["hero"].id).x == 3
 
 
 def test_taking_one_off_the_map_keeps_it_in_the_order(widget, ctx, fight):
@@ -286,12 +298,6 @@ def test_dragging_someone_onto_the_map_places_them(widget, ctx, fight):
 
     placed = ctx.repos.encounters.combatant(tokens["hero"].id)
     assert (placed.x, placed.y) == (1, 3)
-
-
-def test_dragging_someone_already_on_the_map_walks_them(widget, ctx, fight):
-    _encounter, tokens, _hero, _goblin = fight
-    widget._on_dropped(tokens["hero"].id, 4, 0)
-    assert ctx.repos.encounters.combatant(tokens["hero"].id).x == 4
 
 
 def test_a_drop_onto_an_occupied_square_is_refused(widget, ctx, fight, qtbot):
