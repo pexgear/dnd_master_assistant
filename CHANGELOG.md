@@ -98,6 +98,12 @@ creature has spent its reaction is a new thing said over it.
   out the host rolls it for you and says so. A save nobody rolls is a character
   who neither dies nor recovers, which is worse than either. With nobody there
   to ask, it is rolled at once, as it always was.
+- **The line says what you need**: ten or better on a d20, no modifier. The
+  die that opens says DC 10 on it too.
+- **Autopilot waits for it rather than working round it.** A death save is not
+  a turn anybody chose to take, so there is nothing to formalise and nothing
+  to narrate — it is told to leave the turn alone and not to say how it comes
+  out.
 - The rules are unchanged and were already right: ten or better on a bare d20,
   no modifier of any kind, three either way, a natural twenty puts you back up
   on one hit point and a natural one costs two.

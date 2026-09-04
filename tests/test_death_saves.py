@@ -242,6 +242,83 @@ def test_a_machine_playing_them_is_not_asked(qtbot, fight, monkeypatch):
         marco.leave()
 
 
+def test_the_line_says_what_they_need(qtbot, fight, monkeypatch):
+    """Ten or better, in the sentence, because that is the whole question."""
+    server, _repos, _encounter, _tokens, *_ = fight
+    monkeypatch.setattr(server_module, "roll", _Rolls(15))
+    marco = _join(qtbot, server, "marco", "goblin-teeth")
+    try:
+        _to_broks_turn(server)
+        qtbot.wait(300)
+
+        asked = next(line for line in _said(server) if "death saving throw" in line)
+        assert str(death.DEATH_SAVE_DC) in asked
+        assert "no modifier" in asked
+    finally:
+        marco.leave()
+
+
+def test_a_fight_that_starts_on_somebody_dying_asks_too(qtbot, repos):
+    """`begin` puts the turn somewhere without walking the order to it."""
+    campaign = repos.campaigns.ensure_default("Down before it starts")
+    marco = repos.accounts.create(campaign.id, "marco", "goblin-teeth")
+    brok = repos.entities.create(
+        Entity(id=None, campaign_id=campaign.id, kind=KIND_PC, name="Brok",
+               data={"hp": 0, "max_hp": 28, "sheet": {"schema": 1, "level": 3}})
+    )
+    repos.entities.set_owner(brok.id, marco.id)
+    repos.accounts.set_character(marco.id, brok.id)
+    encounter = repos.encounters.create(campaign.id, "The cave", width=12, height=12)
+    token = repos.encounters.add(encounter.id, brok.id, initiative=20, x=0, y=0)
+
+    server = SessionServer(repos, campaign.id, "Starting session")
+    assert server.start(0, announce=False)
+    marco = _join(qtbot, server, "marco", "goblin-teeth")
+    try:
+        server.run_turn("begin")
+        qtbot.wait(300)
+
+        assert any("owes a death saving throw" in line for line in _said(server))
+        after = repos.encounters.combatant(token.id)
+        assert (after.death_successes, after.death_failures) == (0, 0)
+    finally:
+        marco.leave()
+        server.stop()
+
+
+def test_autopilot_is_told_to_wait_rather_than_act(qtbot, fight, monkeypatch):
+    """It is not a turn anybody chose, so there is nothing to formalise."""
+    server, _repos, _encounter, _tokens, *_ = fight
+    monkeypatch.setattr(server_module, "roll", _Rolls(15))
+    told: list[str] = []
+    monkeypatch.setattr(server, "_tell_the_agent", told.append)
+    server.set_autopilot(True, by="the DM")
+    marco = _join(qtbot, server, "marco", "goblin-teeth")
+    try:
+        _to_broks_turn(server)
+        qtbot.wait(300)
+
+        assert any("Take no turn for them" in line for line in told)
+        assert any("do not say how it comes out" in line for line in told)
+    finally:
+        marco.leave()
+
+
+def test_with_autopilot_off_it_is_told_nothing(qtbot, fight, monkeypatch):
+    server, _repos, _encounter, _tokens, *_ = fight
+    monkeypatch.setattr(server_module, "roll", _Rolls(15))
+    told: list[str] = []
+    monkeypatch.setattr(server, "_tell_the_agent", told.append)
+    marco = _join(qtbot, server, "marco", "goblin-teeth")
+    try:
+        _to_broks_turn(server)
+        qtbot.wait(300)
+
+        assert told == []
+    finally:
+        marco.leave()
+
+
 # ------------------------------------------------------------- whose save
 
 
@@ -255,6 +332,23 @@ def test_nobody_can_roll_a_save_that_is_not_owed(qtbot, fight, monkeypatch):
             marco.send_death_save()
         after = repos.encounters.combatant(tokens["brok"].id)
         assert (after.death_successes, after.death_failures) == (0, 0)
+    finally:
+        marco.leave()
+
+
+def test_a_save_cannot_be_rolled_once_the_turn_has_moved_on(qtbot, fight, monkeypatch):
+    """It belonged to that turn. The DM moving on takes it with them."""
+    server, repos, _encounter, tokens, *_ = fight
+    monkeypatch.setattr(server_module, "roll", _Rolls(15))
+    marco = _join(qtbot, server, "marco", "goblin-teeth")
+    try:
+        _to_broks_turn(server)
+        qtbot.wait(300)
+        server.run_turn("next")  # the DM does not wait for them
+        qtbot.wait(200)
+
+        with qtbot.waitSignal(marco.failed, timeout=5000):
+            marco.send_death_save()
     finally:
         marco.leave()
 

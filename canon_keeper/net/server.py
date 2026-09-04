@@ -1640,11 +1640,14 @@ class SessionServer(QObject):
         if encounter is None:
             return "There is no fight being run."
 
-        # The turn is moving whatever we were waiting for.
+        # The turn is moving whatever we were waiting for -- including a death
+        # save that was owed and never rolled. It belonged to that turn.
         self._stop_the_clock()
+        self._owed_by = None
 
         if action == "begin":
             self.repos.encounters.begin(encounter.id)
+            self._owe_a_save_if_dying()
         elif action == "next":
             self._advance_turn()
         elif action == "end":
@@ -2773,6 +2776,23 @@ class SessionServer(QObject):
             hp, entity.kind, combatant.death_successes, combatant.death_failures
         ) == death.DYING
 
+    def _owe_a_save_if_dying(self) -> None:
+        """Ask for a save if the turn has just landed on somebody at zero.
+
+        Called wherever the turn arrives somewhere other than by walking the
+        order -- starting a fight on a character who was already down, which
+        `_advance_turn` never sees. The save happens at the start of *each* of
+        their turns, and the first one is a turn like any other.
+        """
+        encounter = self._the_running_fight()
+        if encounter is None or encounter.turn_combatant_id is None:
+            return
+        combatant = self.repos.encounters.combatant(encounter.turn_combatant_id)
+        if combatant is None or not self._is_dying(combatant):
+            return
+        if not self._ask_for_a_death_save(combatant):
+            self._roll_death_save(combatant)
+
     def _ask_for_a_death_save(self, combatant) -> bool:
         """Put the save to whoever plays them. True if it is now theirs to roll.
 
@@ -2808,8 +2828,19 @@ class SessionServer(QObject):
 
         self._owed_by = combatant.id
         self._broadcast_system(
-            f"{entity.name} is dying, and owes a death saving throw."
+            f"{entity.name} is dying, and owes a death saving throw "
+            f"-- {death.DEATH_SAVE_DC} or better on a d20, no modifier."
         )
+        # Autopilot waits for this rather than working around it. There is
+        # nothing here for it to formalise: a death save is not a turn somebody
+        # chose to take, and the one thing it could do -- narrate the outcome
+        # -- is the one thing it must never do.
+        if self._autopilot:
+            self._tell_the_agent(
+                f"{entity.name} is dying and owes a death saving throw. It is "
+                "theirs to roll and the host resolves it. Take no turn for "
+                "them, propose nothing, and do not say how it comes out."
+            )
         self._waiting_on = combatant.id
         self._turn_clock.start(STILL_YOUR_TURN_MS)
         self._send_to_account(
@@ -2833,9 +2864,12 @@ class SessionServer(QObject):
         owed = self._owed_by
         combatant = self.repos.encounters.combatant(owed) if owed else None
         entity = self._entity_of(owed) if owed else None
+        encounter = self._the_running_fight()
         if (
             combatant is None
             or entity is None
+            or encounter is None
+            or encounter.turn_combatant_id != combatant.id
             or entity.owner_account_id != session.account_id
             or not self._is_dying(combatant)
         ):
