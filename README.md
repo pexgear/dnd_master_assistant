@@ -415,9 +415,12 @@ Each row in the order is two lines: the name and the initiative on top, and
 what is true of them underneath — hit points, dying and how close it is, off the
 map, played by autopilot, not yet shared.
 
-**A monster at zero is dead; a player character at zero is dying.** They roll a
-death save at the start of each of their turns, on the host's dice and in front
-of everybody — three made and they are stable, three failed and they are gone.
+**A monster at zero is dead; a player character at zero is dying.** At the
+start of each of their turns the table is told a death save is owed, and their
+player rolls it — on the host's dice and in front of everybody. It is not
+optional: take your time or ignore it, and when the clock runs out the host
+rolls it for you and says so. Three made and they are stable, three failed and
+they are gone.
 A natural twenty puts them back up on one hit point with the turn still theirs,
 a natural one costs two, and hitting somebody who is already down costs them a
 save. The initiative order carries the running count, so the table can see how

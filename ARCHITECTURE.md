@@ -596,6 +596,17 @@ them and they neither die nor recover, which is worse than either. Monsters get
 no saves — three more d20s to confirm the orc is finished is a rule that costs
 a table more than it gives.
 
+**The save is asked for, not taken.** The host puts it in the chat — where
+`panels/table/rolls.py` turns it into the roll the owner presses — and the turn
+waits on them, because the save *is* the turn. It is asked by the rule rather
+than by autopilot: nobody decides a death save happens. It is also **forced**:
+the turn clock is the backstop, and when it runs out the host rolls it and says
+so, because a save nobody rolls is a character who neither dies nor recovers.
+With nobody there to ask — an unowned character, or one a machine plays — it is
+rolled at once. `DEATH_SAVE` carries nothing: the host already knows whose save
+is owed, and a client naming its own would be a client deciding when one
+happens.
+
 **A move is a route, and there is no teleport.** `grid.route_between` finds the
 shortest way that touches nothing solid — creatures standing and terrain alike,
 eight ways, one square a step. It returns the straight line unchanged whenever

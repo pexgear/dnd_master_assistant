@@ -86,6 +86,29 @@ creature has spent its reaction is a new thing said over it.
   route, the movement, the swings it provokes. It is not authority over the
   fight — no passing the turn, no initiative, nobody else's creature.
 
+### Death saves are put to the player, and cannot be dodged
+
+- **Falling unconscious now asks you for the save**, in the chat, as a roll you
+  press. The host used to take it the instant your turn came round, so the
+  loudest moment the game has was a number quietly changing in a list. The
+  whole table sees it asked, which is most of what makes a death save one.
+- **Asked by the rule, not by autopilot.** Nobody decides a death save
+  happens; the book does. It appears whether or not anyone is running an agent.
+- **You cannot dodge it.** Take your time, or ignore it — when the clock runs
+  out the host rolls it for you and says so. A save nobody rolls is a character
+  who neither dies nor recovers, which is worse than either. With nobody there
+  to ask, it is rolled at once, as it always was.
+- The rules are unchanged and were already right: ten or better on a bare d20,
+  no modifier of any kind, three either way, a natural twenty puts you back up
+  on one hit point and a natural one costs two.
+
+### Fixes
+
+- **A creature could swing more than once in a turn.** The rule was enforced on
+  the DM's own map and not on the door everything else comes through, which
+  spent the action without ever checking it. Movement and the action are still
+  separate: having swung does not stop you walking.
+
 ### The fight moves again instead of jumping
 
 - **Walks and swings are animated with nobody connected.** Since combat
